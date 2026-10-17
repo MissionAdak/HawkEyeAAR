@@ -1,142 +1,178 @@
-/**
- * DRISHTI-CUAS Zustand Session Store Facade
- *
- * Rules: R-5, DT-1, DT-4
- * Store facade with action stubs that push to inputQueue.
- * uiSnapshot is capped at 150 rows.
- * Dispatching actions leaves sim state untouched until the next tick.
- */
-
 import { create } from 'zustand';
-import type { SimEngine, UiSnapshot } from '../sim/engine';
-import type { TrackClass } from '../sim/taxonomy';
-import type { EffectorId, SensorMode } from '../sim/types';
+import type { UiSnapshot } from '@/sim/engine';
+import { SimEngine } from '@/sim/engine';
+import { SimClock } from '@/sim/clock';
+import type {
+  ScenarioSpec,
+  SensorMode,
+  EffectorId,
+  TrackClass,
+} from '@/sim/types';
 
-const INITIAL_SNAPSHOT: UiSnapshot = {
+// Global singleton instances of SimEngine and SimClock
+export const engineInstance = new SimEngine();
+export const clockInstance = new SimClock();
+
+const initialSnapshot: UiSnapshot = {
   tick: 0,
   simTimeMs: 0,
-  sensorMode: 'RADAR',
+  formattedClock: 'T+00:00.000',
+  activeSensor: 'RADAR',
   selectedTrackNo: null,
-  activeEffector: null,
-  tracks: [],
+  selectedTrack: null,
+  trackRows: [],
   sensorHealth: {
-    radar: 'OK',
-    eoir: 'OK',
-    rf: 'OK',
+    RADAR: 'OK',
+    EOIR: 'OK',
+    RF: 'OK',
   },
-  recentEvents: [],
-  roeBanner: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
-  isComplete: false,
+  roeText: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
   isPaused: false,
+  recentEvents: [],
+  mode: 'TRAIN',
+  difficulty: 0.3,
+  activeEffector: 'RF_SOFTKILL',
 };
 
-export interface SessionStoreState {
+export interface SessionState {
   ui: UiSnapshot;
-  engine: SimEngine | null;
+  isSimRunning: boolean;
 
-  // Actions pushed to inputQueue (never mutate state directly)
-  setEngine: (engine: SimEngine) => void;
-  syncSnapshot: (snapshot: UiSnapshot) => void;
-
+  // Actions pushing onto InputQueue
   designate: (trackNo: string, via?: 'KEY' | 'CLICK') => void;
   classify: (trackNo: string, label: TrackClass) => void;
-  selectEffector: (effector: EffectorId | null) => void;
-  fire: (trackNo: string, effector: EffectorId) => void;
+  selectEffector: (effectorId: EffectorId) => void;
+  fire: (trackNo: string) => void;
   assess: (trackNo: string, result: 'KILL' | 'NO_KILL' | 'UNKNOWN') => void;
   setSensor: (mode: SensorMode) => void;
+  setEoirAzimuth: (deg: number) => void;
+  cycleTrack: (direction: 'NEXT' | 'PREV') => void;
   pause: () => void;
   resume: () => void;
+
+  // Session lifecycle
+  loadScenario: (spec: ScenarioSpec) => void;
+  setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
 
-export const useSessionStore = create<SessionStoreState>((set, get) => ({
-  ui: INITIAL_SNAPSHOT,
-  engine: null,
+function getQuantisedTick(): { tRawMs: number; applyTick: number } {
+  const currentTick = engineInstance.tickIndex;
+  const tRawMs = typeof performance !== 'undefined'
+    ? clockInstance.getRawMs()
+    : currentTick * 50;
+  const applyTick = Math.max(Math.ceil(tRawMs / 50), currentTick + 1);
+  return { tRawMs, applyTick };
+}
 
-  setEngine: (engine: SimEngine) => {
-    set({ engine, ui: engine.snapshot() });
-  },
+export const useSessionStore = create<SessionState>((set) => ({
+  ui: initialSnapshot,
+  isSimRunning: false,
 
-  syncSnapshot: (snapshot: UiSnapshot) => {
-    set({ ui: snapshot });
-  },
-
-  designate: (trackNo: string, via = 'KEY') => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'DESIGNATE', trackNo, via },
-      ui.simTimeMs,
-      ui.tick
-    );
+  designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'DESIGNATE', trackNo, via },
+    });
   },
 
   classify: (trackNo: string, label: TrackClass) => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'CLASSIFY', trackNo, label },
-      ui.simTimeMs,
-      ui.tick
-    );
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'CLASSIFY', trackNo, label },
+    });
   },
 
-  selectEffector: (effector: EffectorId | null) => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'SELECT_EFFECTOR', effector },
-      ui.simTimeMs,
-      ui.tick
-    );
+  selectEffector: (effectorId: EffectorId) => {
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'SELECT_EFFECTOR', effectorId },
+    });
   },
 
-  fire: (trackNo: string, effector: EffectorId) => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'ENGAGE', trackNo, effector },
-      ui.simTimeMs,
-      ui.tick
-    );
+  fire: (trackNo: string) => {
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'FIRE', trackNo },
+    });
   },
 
   assess: (trackNo: string, result: 'KILL' | 'NO_KILL' | 'UNKNOWN') => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'ASSESS', trackNo, result },
-      ui.simTimeMs,
-      ui.tick
-    );
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'ASSESS', trackNo, result },
+    });
   },
 
   setSensor: (mode: SensorMode) => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'SENSOR_SWITCH', mode },
-      ui.simTimeMs,
-      ui.tick
-    );
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'SET_SENSOR', mode },
+    });
+    set((s) => ({ ui: { ...s.ui, activeSensor: mode } }));
+  },
+
+  setEoirAzimuth: (deg: number) => {
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'SET_EOIR_AZIMUTH', deg },
+    });
+  },
+
+  cycleTrack: (direction: 'NEXT' | 'PREV') => {
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'CYCLE_TRACK', direction },
+    });
   },
 
   pause: () => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'PAUSE' },
-      ui.simTimeMs,
-      ui.tick
-    );
+    clockInstance.pause();
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'PAUSE' },
+    });
+    set((s) => ({ ui: { ...s.ui, isPaused: true } }));
   },
 
   resume: () => {
-    const { engine, ui } = get();
-    if (!engine) return;
-    engine.inputQueue.push(
-      { type: 'RESUME' },
-      ui.simTimeMs,
-      ui.tick
-    );
+    clockInstance.resume();
+    const { tRawMs, applyTick } = getQuantisedTick();
+    engineInstance.inputQueue.push({
+      tRawMs,
+      applyTick,
+      action: { type: 'RESUME' },
+    });
+    set((s) => ({ ui: { ...s.ui, isPaused: false } }));
+  },
+
+  loadScenario: (spec: ScenarioSpec) => {
+    engineInstance.load(spec);
+    clockInstance.reset();
+    set({
+      isSimRunning: true,
+      ui: engineInstance.buildUiSnapshot(),
+    });
+  },
+
+  setUiSnapshot: (snapshot: UiSnapshot) => {
+    set({ ui: snapshot });
   },
 }));

@@ -1,0 +1,106 @@
+{
+  "id": "DEMO-1",
+  "schemaVersion": 1,
+  "simVersion": "1.1.0",
+  "configHash": "inlined",
+  "mode": "DEMO",
+  "seed": 1337,
+  "difficulty": 0.3,
+  "dayNight": "DAY",
+  "durationMs": 120000,
+  "asset": {
+    "x": 0,
+    "y": 0,
+    "rMinM": 500
+  },
+  "zones": [
+    {
+      "id": "U1",
+      "type": "URBAN",
+      "polygon": [
+        [1157, 1378],
+        [1928, 2298],
+        [2819, 1026],
+        [1691, 616]
+      ],
+      "heightM": 40,
+      "shadowM": 800,
+      "rho": 0.8
+    }
+  ],
+  "threats": [
+    {
+      "id": "H-1",
+      "droneType": "FPV_ATTACK",
+      "trueClass": "HOSTILE_ATTACK",
+      "spawnTMs": 0,
+      "waypoints": [
+        { "x": 2836, "y": 2216, "z": 120 },
+        { "x": 0, "y": 0, "z": 20 }
+      ],
+      "speedMps": 40,
+      "profile": "TERRAIN_HUG",
+      "rcsM2": 0.01,
+      "valueInr": 100000,
+      "emitsRf": true,
+      "remoteId": false,
+      "iff": false
+    }
+  ],
+  "decoys": [
+    {
+      "id": "B-1",
+      "droneType": "BIRD",
+      "trueClass": "BIRD",
+      "spawnTMs": 9000,
+      "waypoints": [{ "x": 444, "y": 1221, "z": 50 }],
+      "speedMps": 6,
+      "profile": "ERRATIC",
+      "rcsM2": 0.003,
+      "valueInr": null,
+      "emitsRf": false,
+      "remoteId": false,
+      "iff": false
+    },
+    {
+      "id": "C-1",
+      "droneType": "CIVIL_UAS",
+      "trueClass": "CIVIL_UAS",
+      "spawnTMs": 9000,
+      "waypoints": [{ "x": 1600, "y": 1600, "z": 60 }],
+      "speedMps": 10,
+      "profile": "LOITER",
+      "rcsM2": 0.02,
+      "valueInr": null,
+      "emitsRf": true,
+      "remoteId": true,
+      "iff": false
+    }
+  ],
+  "chaos": [
+    {
+      "type": "FOG",
+      "tStartMs": 28000,
+      "tEndMs": 46000,
+      "severity": 1.0
+    },
+    {
+      "type": "JAMMING",
+      "tStartMs": 64000,
+      "tEndMs": 79000,
+      "severity": 1.0
+    }
+  ],
+  "triggers": [],
+  "roeText": "WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED",
+  "levers": [
+    {
+      "id": "TERRAIN_HUG",
+      "reason": "Baseline terrain masking demo scenario"
+    }
+  ],
+  "features": [
+    0.08, 0.66, 0, 1, 0, 0, 0.33, 0, 0, 0.33, 0.33, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+    0.5, 0.5, 0, 0, 0.29, 1, 0, 0, 0.25, 0.75, -2, 0, 0.3
+  ]
+}

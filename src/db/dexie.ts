@@ -1,84 +1,44 @@
-/**
- * DRISHTI-CUAS IndexedDB Persistence with Dexie.js
- *
- * Rules: ZS-1, ZS-4, DT-7, DT-8
- * Schema per ARCHITECTURE.md Section 4.1
- */
-
 import Dexie, { type Table } from 'dexie';
-import type { Grade } from '../sim/types';
+import type { SimEvent, AARMetrics, Grade, TrueClass } from '@/sim/types';
 
-export interface Unit {
+export interface UnitRow {
   uid: string;
   name: string;
 }
 
-export interface Trainee {
+export interface TraineeRow {
   uid: string;
   unitUid: string;
   callsign: string;
-  role?: string;
-  createdAt: number;
 }
 
-export interface ScenarioRecord {
+export interface ScenarioRow {
   uid: string;
   seed: number;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   benchId?: string;
   createdAt: number;
   specJson: string;
-  leversJson: string;
-  featureVec: number[];
 }
 
-export interface SessionRecord {
+export interface SessionRow {
   uid: string;
   traineeUid: string;
-  scenarioId: string;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   startedAt: number;
   durationMs: number;
-  dStart: number;
   score: number;
   grade: Grade;
-  simVersion: string;
-  configHash: string;
-  metMs: number | null;
-  mdtMs: number | null;
-  mctMs: number | null;
-  s2sMs: number | null;
-  clsAccuracy: number;
-  hostileRecall: number;
-  aggregateCer: number | null;
-  unfavourableExchanges: number;
-  collateralIncidents: number;
-  roeViolations: number;
-  leakers: number;
-  salMs: number | null;
-  swarmSat: number | null;
+  dStart: number;
+  metrics: AARMetrics;
 }
 
-export interface TrackResult {
+export interface TrackResultRow {
   id?: number;
   sessionUid: string;
   trackNo: string;
-  trueClass: string;
+  trueClass: TrueClass;
   predClass: string;
-  rcsM2: number;
-  valueInr: number | null;
-  tSpawnMs: number;
-  tVisMs: number | null;
-  tTrkMs: number | null;
-  tDesigMs: number | null;
-  tClsMs: number | null;
-  tEngMs: number | null;
-  tPnrMs: number | null;
-  effector: string | null;
-  oracleEffector: string | null;
-  cer: number | null;
-  outcome: 'NEUTRALISED' | 'LEAKED' | 'HELD' | 'ENGAGED_NONHOSTILE';
-  collateral: number;
   dScore: number;
   cScore: number;
   gScore: number;
@@ -86,19 +46,12 @@ export interface TrackResult {
   sTrack: number;
 }
 
-export interface EventRecord {
+export interface StoredSimEvent extends SimEvent {
   id?: number;
   sessionUid: string;
-  seq: number;
-  tMs: number;
-  tRawMs?: number;
-  type: string;
-  trackNo?: string;
-  entityId?: string;
-  payload: Record<string, unknown>;
 }
 
-export interface ChaosLog {
+export interface ChaosLogRow {
   id?: number;
   sessionUid: string;
   type: string;
@@ -107,7 +60,7 @@ export interface ChaosLog {
   tSwitchMs?: number;
 }
 
-export interface TraineeProfile {
+export interface TraineeProfileRow {
   traineeUid: string;
   metric: string;
   ema: number;
@@ -115,32 +68,31 @@ export interface TraineeProfile {
   updatedAt: number;
 }
 
-export interface DifficultyState {
+export interface DifficultyRow {
   traineeUid: string;
   d: number;
   lastScore: number;
 }
 
-export interface Setting {
+export interface SettingRow {
   key: string;
   value: unknown;
 }
 
 export class DrishtiDatabase extends Dexie {
-  units!: Table<Unit, string>;
-  trainees!: Table<Trainee, string>;
-  scenarios!: Table<ScenarioRecord, string>;
-  sessions!: Table<SessionRecord, string>;
-  trackResults!: Table<TrackResult, number>;
-  events!: Table<EventRecord, number>;
-  chaosLog!: Table<ChaosLog, number>;
-  traineeProfile!: Table<TraineeProfile, [string, string]>;
-  difficulty!: Table<DifficultyState, string>;
-  settings!: Table<Setting, string>;
+  public units!: Table<UnitRow, string>;
+  public trainees!: Table<TraineeRow, string>;
+  public scenarios!: Table<ScenarioRow, string>;
+  public sessions!: Table<SessionRow, string>;
+  public trackResults!: Table<TrackResultRow, number>;
+  public events!: Table<StoredSimEvent, number>;
+  public chaosLog!: Table<ChaosLogRow, number>;
+  public traineeProfile!: Table<TraineeProfileRow, [string, string]>;
+  public difficulty!: Table<DifficultyRow, string>;
+  public settings!: Table<SettingRow, string>;
 
   constructor() {
-    super('drishti_cuas_db');
-
+    super('DrishtiCuasDb');
     this.version(1).stores({
       units: 'uid, name',
       trainees: 'uid, unitUid, &callsign',

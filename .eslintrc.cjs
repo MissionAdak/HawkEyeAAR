@@ -1,75 +1,44 @@
 module.exports = {
   root: true,
-  env: {
-    browser: true,
-    es2022: true,
-    node: true,
-  },
-  parser: '@typescript-eslint/parser',
-  parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    ecmaFeatures: {
-      jsx: true,
-    },
-  },
-  plugins: ['@typescript-eslint'],
+  env: { browser: true, es2022: true, node: true },
   extends: [
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
   ],
+  ignorePatterns: ['dist', '.eslintrc.cjs', 'src/config/config.generated.ts'],
+  parser: '@typescript-eslint/parser',
+  plugins: ['@typescript-eslint'],
   rules: {
-    // Zero-Server Rule (ZS-1)
-    'no-restricted-globals': [
-      'error',
-      { name: 'fetch', message: 'ZS-1: fetch is banned. DRISHTI-CUAS is strictly offline air-gapped.' },
-      { name: 'XMLHttpRequest', message: 'ZS-1: XMLHttpRequest is banned.' },
-      { name: 'WebSocket', message: 'ZS-1: WebSocket is banned.' },
-      { name: 'EventSource', message: 'ZS-1: EventSource is banned.' },
-    ],
-    // Deterministic Simulation & Zero-Server (DT-2, ZS-1, DT-5)
+    'no-restricted-globals': ['error', 'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource'],
     'no-restricted-properties': [
       'error',
-      { object: 'Math', property: 'random', message: 'DT-2: Math.random() is FATAL. Use mulberry32 streams in src/sim/rng.ts.' },
-      { object: 'navigator', property: 'sendBeacon', message: 'ZS-1: navigator.sendBeacon is banned.' },
-      { object: 'Date', property: 'now', message: 'DT-5: Date.now() is banned in sim logic. Allowed only in src/db and src/ui.' },
-      { object: 'performance', property: 'now', message: 'DT-5: performance.now() is banned in sim logic. Allowed only in src/sim/clock.ts.' },
+      { object: 'Math', property: 'random', message: 'Math.random() is banned in sim/render/director. Use mulberry32 streams.' },
+      { object: 'navigator', property: 'sendBeacon', message: 'Network beaconing is banned.' },
+      { object: 'Date', property: 'now', message: 'Date.now() is banned in sim. Allowed only in src/db and src/ui via override.' },
+      { object: 'performance', property: 'now', message: 'performance.now() is allowed only in src/sim/clock.ts to feed accumulator.' },
     ],
-    '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-    '@typescript-eslint/no-explicit-any': 'warn',
+    '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
   },
   overrides: [
-    // Override 1: src/db and src/ui allow Date.now()
     {
-      files: ['src/db/**/*', 'src/ui/**/*'],
+      files: ['src/db/**/*', 'src/ui/**/*', 'scripts/**/*', 'tests/**/*'],
       rules: {
         'no-restricted-properties': [
           'error',
-          { object: 'Math', property: 'random', message: 'DT-2: Math.random() is FATAL.' },
-          { object: 'navigator', property: 'sendBeacon', message: 'ZS-1: navigator.sendBeacon is banned.' },
-          { object: 'performance', property: 'now', message: 'DT-5: performance.now() is banned outside clock.ts.' },
+          { object: 'Math', property: 'random', message: 'Math.random() is banned. Use seeded RNG.' },
+          { object: 'navigator', property: 'sendBeacon', message: 'Network beaconing is banned.' },
         ],
       },
     },
-    // Override 2: src/sim/clock.ts allows performance.now()
     {
       files: ['src/sim/clock.ts'],
       rules: {
         'no-restricted-properties': [
           'error',
-          { object: 'Math', property: 'random', message: 'DT-2: Math.random() is FATAL.' },
-          { object: 'navigator', property: 'sendBeacon', message: 'ZS-1: navigator.sendBeacon is banned.' },
-          { object: 'Date', property: 'now', message: 'DT-5: Date.now() is banned in sim logic.' },
+          { object: 'Math', property: 'random', message: 'Math.random() is banned in sim. Use mulberry32 streams.' },
+          { object: 'navigator', property: 'sendBeacon', message: 'Network beaconing is banned.' },
+          { object: 'Date', property: 'now', message: 'Date.now() is banned in sim.' },
         ],
-      },
-    },
-    // Override 3: scripts, tests, and tool config files
-    {
-      files: ['scripts/**/*', 'tests/**/*', '*.config.ts', '*.config.js'],
-      rules: {
-        'no-restricted-properties': 'off',
-        'no-restricted-globals': 'off',
-        '@typescript-eslint/no-explicit-any': 'off',
       },
     },
   ],

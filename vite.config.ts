@@ -1,27 +1,13 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'node:path';
+import path from 'path';
 
-function productionCspPlugin(): Plugin {
-  return {
-    name: 'production-csp',
-    apply: 'build',
-    transformIndexHtml(html) {
-      const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; worker-src 'self' blob:;";
-      const metaTag = `<meta http-equiv="Content-Security-Policy" content="${csp}">`;
-      return html.replace('<!-- CSP_INJECTION -->', metaTag);
-    },
-  };
-}
-
+// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [
-    react(),
-    productionCspPlugin(),
-  ],
+  plugins: [react()],
   resolve: {
     alias: {
-      '@': path.resolve('./src'),
+      '@': path.resolve(__dirname, './src'),
     },
   },
   server: {
@@ -35,9 +21,9 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
-    target: 'esnext',
+    target: 'es2022',
     outDir: 'dist',
-    assetsInlineLimit: 0,
-    chunkSizeWarningLimit: 1000,
+    assetsInlineLimit: 4096,
+    chunkSizeWarningLimit: 2000,
   },
 });

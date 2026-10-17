@@ -1,9 +1,3 @@
-@import '@fontsource/jetbrains-mono/400.css';
-@import '@fontsource/jetbrains-mono/700.css';
-@import '@fontsource/chakra-petch/600.css';
-@import '@fontsource/chakra-petch/700.css';
-@import '@fontsource/share-tech-mono/400.css';
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -12,32 +6,76 @@
   --radar: min(520px, calc(100vh - 190px));
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: #0d1117;
-  color: #c9d1d9;
-  font-family: 'JetBrains Mono', monospace;
-  font-variant-numeric: tabular-nums;
-  -webkit-font-smoothing: antialiased;
+  background-color: #0D1117;
 }
 
-/* Custom thin scrollbar for tactical rails */
-::-webkit-scrollbar {
+/* DESIGN.md Section 2 Viewport Geometry Grid */
+.console {
+  display: grid;
+  height: 100vh;
+  width: 100vw;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  grid-template-rows: 45px minmax(0, 1fr) 110px;
+  grid-template-areas:
+    "top top top"
+    "left center right"
+    "bottom bottom bottom";
+}
+.console-top {
+  grid-area: top;
+  height: 45px;
+}
+.console-left {
+  grid-area: left;
+  width: 240px;
+  overflow: hidden;
+}
+.console-center {
+  grid-area: center;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.console-right {
+  grid-area: right;
+  width: 320px;
+  overflow: hidden;
+}
+.console-bottom {
+  grid-area: bottom;
+  height: 110px;
+}
+.radar-frame {
+  position: relative;
+  width: var(--radar);
+  height: var(--radar);
+}
+.radar-frame canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Custom 4px tactical scrollbar in phosphor-dim */
+.custom-scrollbar::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
-::-webkit-scrollbar-track {
-  background: #0d1117;
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #161B22;
 }
-::-webkit-scrollbar-thumb {
-  background: #003b1a;
-  border-radius: 0px;
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #003B1A;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #00ff66;
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #00FF66;
 }

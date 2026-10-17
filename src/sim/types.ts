@@ -1,9 +1,6 @@
-/**
- * DRISHTI-CUAS Simulation Contracts & Types
- * Source of truth: ARCHITECTURE.md Section 3.2
- */
-
 import type { TrackClass, TrueClass } from './taxonomy';
+export type { TrackClass, TrueClass };
+
 
 export type SensorMode = 'RADAR' | 'EOIR' | 'RF';
 export type ZoneType = 'URBAN' | 'RIDGE' | 'FOREST';
@@ -11,16 +8,6 @@ export type Profile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE
 export type EffectorId = 'RF_SOFTKILL' | 'LASER' | 'GUN' | 'INTERCEPTOR' | 'MISSILE';
 export type ChaosType = 'FOG' | 'JAMMING' | 'RAIN' | 'RADAR_DROPOUT';
 
-export type DroneType =
-  | 'RECON_QUAD'
-  | 'FPV_ATTACK'
-  | 'SWARM_ELEMENT'
-  | 'LOITERING_MUNITION'
-  | 'CIVIL_UAS'
-  | 'BIRD'
-  | 'FRIENDLY_UAS';
-
-/** F2T2EA per track. FIND=plot seen, FIX=designated, TRACK=firm (q>=Q_min), TARGET=classified + effector chosen. */
 export type F2T2EAStep =
   | 'UNDETECTED'
   | 'FIND'
@@ -34,18 +21,25 @@ export type F2T2EAStep =
 export interface Vec3 {
   x: number;
   y: number;
-  z: number; // metres; z is scalar altitude, used for masking math
+  z: number;
 }
 
-export type TrackLifecycle = 'DORMANT' | 'ACTIVE' | 'NEUTRALISED' | 'LEAKED' | 'DEPARTED';
+export type DroneType =
+  | 'RECON_QUAD'
+  | 'FPV_ATTACK'
+  | 'SWARM_ELEMENT'
+  | 'LOITERING_MUNITION'
+  | 'CIVIL_UAS'
+  | 'BIRD'
+  | 'FRIENDLY_UAS';
 
 export interface TrackEntity {
-  id: string; // ground-truth id 'H-1', 'B-1', 'C-1'
-  trackNo: string | null; // 'T-01', assigned at TRACK_INIT
+  id: string;
+  trackNo: string | null;
   trueClass: TrueClass;
   droneType: DroneType;
   pos: Vec3;
-  prev: Vec3; // used for render interpolation
+  prev: Vec3;
   vel: Vec3;
   rcsM2: number;
   valueInr: number | null;
@@ -54,19 +48,15 @@ export interface TrackEntity {
   iff: boolean;
   profile: Profile;
   spawnTMs: number;
-  lifecycle: TrackLifecycle;
-
-  // trainee-facing picture (the only data the renderer may draw as classification)
-  traineeLabel: TrackClass; // default UNKNOWN_EVIDENCE_INSUFFICIENT
+  lifecycle: 'DORMANT' | 'ACTIVE' | 'NEUTRALISED' | 'LEAKED' | 'DEPARTED';
+  traineeLabel: TrackClass;
   step: F2T2EAStep;
-  q: number; // track quality 0..1 (position data only)
-  cCls: number; // classification confidence hint 0..1 (never gates fire)
+  q: number;
+  cCls: number;
   masked: boolean;
   coastingSinceMs: number | null;
   ghostSigmaM: number;
-  hitHistory: boolean[]; // last 3 sweeps, 2-of-3 initiation
-
-  // timestamps (sim ms, tick-quantised); null until reached
+  hitHistory: boolean[];
   tVis: number | null;
   tTrk: number | null;
   tDesig: number | null;
@@ -80,10 +70,10 @@ export interface TrackEntity {
 export interface ZoneSpec {
   id: string;
   type: ZoneType;
-  polygon: [number, number][]; // metres, CCW
+  polygon: [number, number][];
   heightM: number;
   shadowM: number;
-  rho: number; // rho 0..1 (ridge/forest = 0)
+  rho: number;
 }
 
 export interface ThreatSpawn {
@@ -132,20 +122,16 @@ export interface ScenarioSpec {
   difficulty: number;
   dayNight: 'DAY' | 'NIGHT';
   durationMs: 120_000 | 30_000;
-  asset: {
-    x: 0;
-    y: 0;
-    rMinM: number;
-  };
+  asset: { x: 0; y: 0; rMinM: number };
   zones: ZoneSpec[];
   threats: ThreatSpawn[];
   decoys: ThreatSpawn[];
   chaos: ChaosSpec[];
   triggers: TriggerSpec[];
   roeText: string;
-  levers: { id: string; reason: string }[]; // shown in AAR "Red Team plan"
-  features: number[]; // 33-dim vector
-  benchId?: string; // EVAL pack only
+  levers: { id: string; reason: string }[];
+  features: number[];
+  benchId?: string;
 }
 
 export type SimEventType =
@@ -173,28 +159,28 @@ export type SimEventType =
   | 'SESSION_END';
 
 export interface SimEvent {
-  seq: number; // monotonic per session; breaks ties at equal tMs
-  tMs: number; // tick-quantised sim time (scored)
-  tRawMs?: number; // raw input time, user actions only
+  seq: number;
+  tMs: number;
+  tRawMs?: number;
   type: SimEventType;
   trackNo?: string;
   entityId?: string;
-  payload: Record<string, unknown>; // fully self-describing
+  payload: Record<string, unknown>;
 }
 
 export type Grade = 'PROFICIENT_IN_SIMULATION' | 'DEVELOPING' | 'NEEDS_RETRAINING';
 
 export interface AARMetrics {
   sessionUid: string;
-  mode: 'TRAIN' | 'EVAL';
+  mode: 'TRAIN' | 'EVAL' | 'DEMO';
   score: number;
   grade: Grade;
-  metMs: number | null; // mean(tEng - tTrk), engaged hostiles
-  mdtMs: number | null; // mean(tDesig - tTrk)
-  mctMs: number | null; // mean(tCls - tDesig)
-  s2sMs: number | null; // mean(tEng - tDesig)
-  detToTrackMs: number | null; // mean(tTrk - tVis), diagnostic only
-  clsAccuracy: number; // correct / all tracks that existed
+  metMs: number | null;
+  mdtMs: number | null;
+  mctMs: number | null;
+  s2sMs: number | null;
+  detToTrackMs: number | null;
+  clsAccuracy: number;
   clsCoverage: number;
   hostileRecall: number;
   hostilePrecision: number;
@@ -211,5 +197,21 @@ export interface AARMetrics {
   cScore: number;
   econScore: number;
   rScore: number;
-  confusion: number[][]; // 7x7, rows true (UNKNOWN row always 0), cols predicted
+  confusion: number[][];
+}
+
+export interface UserAction {
+  tRawMs: number;
+  applyTick: number;
+  action:
+    | { type: 'DESIGNATE'; trackNo: string; via: 'KEY' | 'CLICK' }
+    | { type: 'CLASSIFY'; trackNo: string; label: TrackClass }
+    | { type: 'SELECT_EFFECTOR'; effectorId: EffectorId }
+    | { type: 'FIRE'; trackNo: string }
+    | { type: 'ASSESS'; trackNo: string; result: 'KILL' | 'NO_KILL' | 'UNKNOWN' }
+    | { type: 'SET_SENSOR'; mode: SensorMode }
+    | { type: 'SET_EOIR_AZIMUTH'; deg: number }
+    | { type: 'CYCLE_TRACK'; direction: 'NEXT' | 'PREV' }
+    | { type: 'PAUSE' }
+    | { type: 'RESUME' };
 }

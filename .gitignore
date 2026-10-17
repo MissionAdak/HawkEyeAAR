@@ -1,21 +1,21 @@
 # Dependencies
 node_modules/
 
-# Production build output
+# Production build artifacts
 dist/
 
-# Test artifacts
-coverage/
-playwright-report/
+# Playwright & test reports
 test-results/
+playwright-report/
+blob-report/
 
-# Environment and editor
-.env
-.env.local
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS and editor files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
-# Auto-generated config (generated at build time via scripts/inline-config.mjs)
-src/config/config.generated.ts

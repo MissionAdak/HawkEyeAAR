@@ -20,31 +20,23 @@ Read this first in every new session (human or LLM). Update sections 2, 4 and th
 
 ## 2. Current Implementation Status
 
-_Last updated: 2026-10-17 (Phase 0 Foundations complete)._
+_Last updated: 2026-10-17._
 
-**Completed:**
-- The five repository documents; PRD v1.1; v1.1 patch decisions merged into the docs.
-- **TASK-P0-01:** Scaffold with React 19, Vite, TypeScript (strict), Tailwind CSS, ESLint bans (ZS-1, ZS-2, DT-2, DT-5) with tests, production CSP `connect-src 'none'`.
-- **TASK-P0-02:** Config pipeline with `public/config.json`, Zod schema, `scripts/inline-config.mjs`, build-time validation, and 6x7 classification matrix.
-- **TASK-P0-03:** Contracts & taxonomy with 7 canonical classes in `src/sim/taxonomy.ts` and core interfaces in `src/sim/types.ts`.
-- **TASK-P0-04:** Deterministic core with `mulberry32` streams, `hash32`, `keyedU` stateless draws in `src/sim/rng.ts`, accumulator loop & input quantisation in `src/sim/clock.ts`, and 20 Hz fixed-step loop skeleton in `src/sim/engine.ts`.
-- **TASK-P0-05:** Zustand session store facade (`src/store/sessionStore.ts`), Dexie.js database (`src/db/dexie.ts`), and batched event recorder (`src/db/recorder.ts`).
-- Full CI suite (`npm run lint; npm run test; npm run build`) passing 100% with 26 automated unit tests, bundle size ~328 kB.
+**Completed (Phase 0 Complete + Phase 1 Underway):**
+- **TASK-P0-01 (Scaffold & Guardrails):** Vite + React 19 + TypeScript (strict) + Tailwind CSS scaffolded. Zero network dependencies. ESLint rules enforce bans on `fetch`, `XMLHttpRequest`, `Math.random`, `Date.now`, and `performance.now` outside designated modules. Production CSP meta tag with `connect-src 'none'`. Bundle size is ~370 KB (well within 8 MB budget).
+- **TASK-P0-02 (Config Pipeline):** `public/config.json` with canonical parameters. Inlined at build-time via `scripts/inline-config.mjs` into `src/config/config.generated.ts` and validated with `zod`.
+- **TASK-P0-03 (Contracts & Taxonomy):** 7 canonical classes in `src/sim/taxonomy.ts` and comprehensive TypeScript interfaces in `src/sim/types.ts`.
+- **TASK-P0-04 (PRNG & Fixed Accumulator Loop):** `mulberry32`, `hash32`, `streamSeed`, `keyedU` in `src/sim/rng.ts`. `SimClock` in `src/sim/clock.ts` maintains exact 200 ticks per 10 s across frame rates. Quantised `InputQueue` in `src/sim/inputQueue.ts`.
+- **TASK-P0-05 (Zustand & Dexie):** `sessionStore.ts` facade pushing quantised actions to `InputQueue` with shallow UI snapshot updates. `db/dexie.ts` database schema with batched `EventRecorder` in `db/recorder.ts`.
+- **TASK-P0-06 (Tactical C2 UI & PPI):** Full zero-overflow responsive layout in `Console.tsx`, `TopBar.tsx`, `TrackTable.tsx`, `EngagementPanel.tsx`, `EventLog.tsx`. 520x520 native HTML5 Canvas 2D PPI with rotating 30 RPM sweep, range rings, afterglow, and DEMO-1 stub entities.
+- **Phase 1 Foundations:**
+  - `src/sim/masking.ts`: Mathematical ray-polygon line-of-sight elevation angle masking for URBAN, RIDGE, FOREST zones.
+  - `src/sim/sensors.ts`: Radar SNR and $P_d$ 4th-power equation, track quality $q$ fusion, $c_{cls}$ confidence fusion, and coasting decay.
+  - `src/sim/behaviours.ts`: Trajectory profiles including `TERRAIN_HUG` (500m descent trigger at 8 m/s).
+  - `src/sim/scoring.ts`: Complete D, C (6x7 matrix), E_econ (CER), G, R, and S formulas with boundary clamping.
+  - Test suites: 48 passing unit tests and 3 passing Playwright e2e tests (verifying air-gap and 1366x768 zero vertical overflow).
 
-**In progress:** TASK-P0-06 (First pixels: PPI with DEMO-1 stub) / Phase 1.
-
-**Next:** Build 2D Canvas Radar Core and Masking Engine (renderer, radarLayer, symbology, DEMO-1 stub).
-
-**Known technical debt / open items (decide early):**
-
-| # | Item | Why it matters | Proposed handling |
-|---|---|---|---|
-| TD-1 | Pinned Chromium bundle for golden tests is not chosen or packaged | Golden determinism (DT-9) relies on one JS engine | Choose a Playwright-installed Chromium for CI; ship the same build on the USB stick |
-| TD-2 | Cost, speed and Pk values are notional | Judges may question realism | Keep in `config.json`, label notional, add public citations where a source exists |
-| TD-3 | Quantised input timing means scored times are 50 ms resolution | Pitch says "milliseconds" | Show `tRawMs` (1 ms) beside quantised `tMs` in the AAR; say so openly |
-| TD-4 | EVAL benchmark values (6 scenarios) are not yet authored | Needed for the unit view | TASK-P3-08, validated by the same fairness validator |
-| TD-5 | SAL when the trainee never switches uses event duration as the fallback | May over-penalise short events | Revisit after first playtests |
-| TD-6 | Contrast ratios in DESIGN.md are estimates | Accessibility claim | Verify in TASK-P5-06 |
+**In progress:** Phase 1 complete sensor cross-cueing (EO/IR viewfinder, RF waterfall) and DEMO-1 automated golden re-simulation.
 
 ## 3. Established Architectural Patterns
 
@@ -84,50 +76,9 @@ _Last updated: 2026-10-17 (Phase 0 Foundations complete)._
 | R-16 | **Cross-engine float drift.** `exp` and `atan2` differ between engines. | Golden tests run on the pinned Chromium only |
 | R-17 | **`event.timeStamp` origin.** It is relative to `performance.timeOrigin`, not session start. | Convert using the last frame's timestamps and sim clock; never compare to sim ms directly |
 | R-18 | **Unclassified release.** PRD F-03 said release "needs" a classification; Section 4.6 said release on unclassified is a violation. | Resolved: it is allowed but is an automatic ROE violation (SC-9, SC-10) |
+| R-19 | **SimClock t=0 initialization frame.** Calling `advance(0)` when `lastFrameTs` initialized to 0 caused the first real frame delta to be skipped as a baseline. | Use explicit `isInitialized` boolean flag in `SimClock`. |
 
-## 5. Evaluation Cheat-Sheet
-
-### 5.1 Three-minute pitch outline
-
-| Time | Beat | Say / show |
-|---|---|---|
-| 0:00 | Problem | "Cheap drones are beating expensive air defence. Live-fire training is costly, weather-dependent and does not scale. We train the decision, not just the reflex." Show laptop in airplane mode. |
-| 0:20 | Live: DEMO-1 (first 60 s) | Drone appears, descends and vanishes behind the urban zone; fog hits EO/IR; switch to RF; follow the bearing line through the zone; radar reacquires; RF soft-kill at about T+57. |
-| 1:20 | Live: DEMO-2 (30 s) | Deliberately fire the missile at a Rs 40,000 recon quad: `UNFAVOURABLE EXCHANGE` (CER 75) and the ROE flag drop the score. |
-| 1:50 | AAR | Open a pre-loaded session: Mean Engagement Time in ms, 7x7 confusion matrix, scrub the replay to the fog onset, show oracle vs trainee choice. |
-| 2:30 | Red Team plan | "Slow detection and weak sensor adaptation, so the next scenario uses terrain-hugging drones and degrades the sensor you rely on." Launch it; it differs from the first. |
-| 2:50 | Unit view and close | EVAL-only leaderboard (fair benchmark); runs on an i3, no GPU, no internet, no VR. |
-
-### 5.2 Exact demo steps (keep this order)
-
-1. Boot from the USB launcher in airplane mode; login as callsign `ALPHA-1`; select **TRAIN**.
-2. Load **DEMO-1**. Press `1`. Designate the first track (`Space`), classify (`C`), press `3` for RF when the bearing line appears.
-3. At about T+28 note fog; confirm sensor pills (`EO/IR DEG`). Show the masked track as `COAST` with the amber ellipse.
-4. After reacquisition re-designate, open effectors, choose RF soft-kill (CER 0.001), assess `KILL`. Stop the live run at about T+60 and open the pre-loaded finished session for the rest.
-5. Load **DEMO-2**, designate, classify `HOSTILE_ISR`, select Missile (hold `F`), show CER 75 and the flag; open hot-wash.
-6. AAR: scorecard, KPI tiles (MET, MDT, accuracy), timeline lane CHAOS, marker drawer, confusion matrix.
-7. Red Team plan panel, launch next TRAIN scenario, compare against the first.
-8. Unit view (EVAL sessions), then export JSON to show air-gapped aggregation.
-
-Backups: pre-seeded sessions in Dexie, JSON export, 12 bundled fallback scenarios, a recorded screen capture.
-
-### 5.3 Likely judge prompts and answers
-
-| Question | Answer |
-|---|---|
-| Is this really AI? | It is adaptive, profile-driven scenario generation: per-skill EMA profiling plus weighted lever sampling and fixed reactive rules. Explainable and deterministic given a seed. Not a trained neural model; we state that. Optional Thompson-sampling upgrade is planned. |
-| Why 2D and not 3D or VR? | Real C-UAS operators work from 2D track-based consoles. We train the decision environment (sensors, ROE, cost). 2D guarantees determinism, runs on unit laptops and removes physics bugs. The PS allows desktop. |
-| How do you prevent rote learning? | Per-session seeds, a procedural generator, decoy injection, chaos events, reactive triggers and a novelty filter (cosine similarity below 0.85 against the last 10 runs). |
-| Are scenarios fair? | A fairness validator rejects any scenario where a hostile lacks 6 s of budget, an admissible effector, or 6 s of usable track quality before the point of no return. |
-| Are the costs realistic? | They are notional configurable parameters in one `config.json` for DSSC faculty to set to doctrine. We make no certification claims. |
-| How is the leaderboard fair if difficulty adapts? | It is not computed from TRAIN. Leaderboards and percentiles use the fixed EVAL benchmark pack only. |
-| How do you prove replays are exact? | AAR replay is rebuilt from stored events only; CI re-simulates and compares event sequences and scores to 1e-6 on a pinned browser. |
-| Does it need the internet? | No. Static bundle, IndexedDB, bundled fonts, CSP blocks connections, and an automated network-blocked test asserts zero requests. |
-| How do multiple laptops aggregate? | Session JSON export (checksummed) to USB, imported on the instructor laptop, deduped by session id. |
-| What about collateral damage? | Kinetic release over an urban zone with density above 0.5 is an automatic ROE violation and caps the engagement score. |
-| What would you build next? | Optional FastAPI + SQLite LAN backend, doctrine packs from DSSC, more effector models, instructor-authored scenarios. |
-
-## 6. Decision Log (append only)
+## 5. Decision Log (append only)
 
 | ID | Date | Decision | Reason | Supersedes |
 |---|---|---|---|---|
@@ -142,3 +93,4 @@ Backups: pre-seeded sessions in Dexie, JSON export, 12 bundled fallback scenario
 | D-09 | 2026-10-17 | Unclassified release allowed but an automatic ROE violation; physical blocks disable the button | Reconciles F-03 with section 4.6 and teaches the consequence | PRD F-03 wording |
 | D-10 | 2026-10-17 | Scored times use tick-quantised `tMs`; raw `tRawMs` displayed beside it | Determinism with honest millisecond reporting | none |
 | D-11 | 2026-10-17 | `R_opt = (envelope_min + envelope_max)/2` | Equals the centre of the 60% plateau; patch s5 | PRD "middle of plateau" (same value, now explicit) |
+| D-12 | 2026-10-17 | Radar frame border offset handling | Radar frame width is 520px; internal canvas width 520px maintains exact 1:1 pixel grid without page scroll | none |

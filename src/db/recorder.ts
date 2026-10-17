@@ -1,94 +1,60 @@
-/**
- * DRISHTI-CUAS Batched IndexedDB Event Recorder
- *
- * Rules: DT-7, DT-8, ZS-1
- * Buffers SimEvents and writes in transactions of up to 200 via bulkAdd.
- * Flushes periodically (every 1 s) and on session completion.
- */
-
-import { db, type EventRecord } from './dexie';
-import type { SimEvent } from '../sim/types';
+import { db, type StoredSimEvent } from './dexie';
+import type { SimEvent } from '@/sim/types';
 
 export class EventRecorder {
   private sessionUid: string;
-  private buffer: EventRecord[] = [];
-  private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private isFlushing = false;
-  private flushIntervalMs = 1000;
-  private maxBatchSize = 200;
+  private buffer: StoredSimEvent[] = [];
+  private flushIntervalId: number | null = null;
+  private isFlushing: boolean = false;
 
-  constructor(sessionUid: string, flushIntervalMs = 1000) {
+  constructor(sessionUid: string) {
     this.sessionUid = sessionUid;
-    this.flushIntervalMs = flushIntervalMs;
   }
 
-  /**
-   * Starts periodic background flushing.
-   */
   public start(): void {
-    if (this.flushTimer !== null) return;
-    this.flushTimer = setInterval(() => {
-      void this.flush();
-    }, this.flushIntervalMs);
-  }
-
-  /**
-   * Buffers a simulation event.
-   */
-  public record(event: SimEvent): void {
-    const record: EventRecord = {
-      sessionUid: this.sessionUid,
-      seq: event.seq,
-      tMs: event.tMs,
-      tRawMs: event.tRawMs,
-      type: event.type,
-      trackNo: event.trackNo,
-      entityId: event.entityId,
-      payload: event.payload,
-    };
-    this.buffer.push(record);
-
-    if (this.buffer.length >= this.maxBatchSize) {
-      void this.flush();
+    if (this.flushIntervalId === null && typeof window !== 'undefined') {
+      this.flushIntervalId = window.setInterval(() => {
+        this.flush();
+      }, 1000);
     }
   }
 
-  /**
-   * Flushes all buffered events to Dexie in transactional batches of at most 200.
-   */
-  public async flush(): Promise<void> {
-    if (this.buffer.length === 0 || this.isFlushing) return;
-    this.isFlushing = true;
+  public record(event: SimEvent): void {
+    this.buffer.push({
+      ...event,
+      sessionUid: this.sessionUid,
+    });
 
-    const toWrite = this.buffer.splice(0, this.buffer.length);
+    if (this.buffer.length >= 200 || event.type === 'SESSION_END') {
+      this.flush();
+    }
+  }
+
+  public async flush(): Promise<void> {
+    if (this.isFlushing || this.buffer.length === 0) return;
+
+    this.isFlushing = true;
+    const batch = [...this.buffer];
+    this.buffer = [];
+
     try {
-      for (let i = 0; i < toWrite.length; i += this.maxBatchSize) {
-        const chunk = toWrite.slice(i, i + this.maxBatchSize);
-        await db.transaction('rw', db.events, async () => {
-          await db.events.bulkAdd(chunk);
-        });
-      }
+      await db.transaction('rw', db.events, async () => {
+        await db.events.bulkAdd(batch);
+      });
     } catch (err) {
-      // Re-insert unsaved events at the front of buffer
-      this.buffer.unshift(...toWrite);
-      console.error('[EventRecorder] Error persisting events to IndexedDB:', err);
+      console.error('[Recorder Error] Failed to bulkAdd events:', err);
+      // Re-queue items that failed to persist
+      this.buffer.unshift(...batch);
     } finally {
       this.isFlushing = false;
     }
   }
 
-  /**
-   * Stops the background timer and performs a final synchronous flush.
-   */
   public async stop(): Promise<void> {
-    if (this.flushTimer !== null) {
-      clearInterval(this.flushTimer);
-      this.flushTimer = null;
+    if (this.flushIntervalId !== null && typeof window !== 'undefined') {
+      window.clearInterval(this.flushIntervalId);
+      this.flushIntervalId = null;
     }
     await this.flush();
-  }
-
-  public getBufferedCount(): number {
-    return this.buffer.length;
   }
 }

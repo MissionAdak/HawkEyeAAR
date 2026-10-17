@@ -1,23 +1,17 @@
-/**
- * DRISHTI-CUAS Simulation Engine (20 Hz Fixed Timestep Core)
- *
- * Rules: DT-1, DT-2, DT-3, DT-4, DT-5, DT-6, DT-7
- * State changes only inside engine.step() once per 50 ms tick.
- * Render code is read-only.
- * All trainee inputs are drained and applied at their quantised tick boundaries.
- */
-
 import type {
   ScenarioSpec,
   TrackEntity,
   SimEvent,
   SimEventType,
+  UserAction,
   SensorMode,
   EffectorId,
 } from './types';
-import { TICK_MS, DT } from './clock';
-import { InputQueue, type TraineeAction } from './inputQueue';
-import { createStream } from './rng';
+import { InputQueue } from './inputQueue';
+import { streamSeed, mulberry32 } from './rng';
+import { clockInstance } from './clock';
+import { SHORT_CODES, isHostile } from './taxonomy';
+import { CONFIG } from '@/config';
 
 export interface UiTrackRow {
   trackNo: string;
@@ -26,108 +20,118 @@ export interface UiTrackRow {
   rangeKm: number;
   bearingDeg: number;
   speedMps: number;
-  status: string;
+  step: string;
+  statusPill: string;
+  timeToPnrSec: number;
   q: number;
   cCls: number;
-  step: string;
   isHostile: boolean;
-  masked: boolean;
 }
 
 export interface UiSnapshot {
   tick: number;
   simTimeMs: number;
-  sensorMode: SensorMode;
+  formattedClock: string;
+  activeSensor: SensorMode;
   selectedTrackNo: string | null;
-  activeEffector: EffectorId | null;
-  tracks: UiTrackRow[];
+  selectedTrack: UiTrackRow | null;
+  trackRows: UiTrackRow[];
   sensorHealth: {
-    radar: 'OK' | 'DEG' | 'OUT';
-    eoir: 'OK' | 'DEG' | 'OUT';
-    rf: 'OK' | 'DEG' | 'OUT';
+    RADAR: 'OK' | 'DEG' | 'OUT';
+    EOIR: 'OK' | 'DEG' | 'OUT';
+    RF: 'OK' | 'DEG' | 'OUT';
   };
-  recentEvents: SimEvent[];
-  roeBanner: string;
-  isComplete: boolean;
+  roeText: string;
   isPaused: boolean;
+  recentEvents: SimEvent[];
+  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  difficulty: number;
+  activeEffector: EffectorId;
 }
 
 export class SimEngine {
+  public spec: ScenarioSpec | null = null;
+  public tickIndex: number = 0;
   public curr: TrackEntity[] = [];
   public prev: TrackEntity[] = [];
   public events: SimEvent[] = [];
+  public eventSeq: number = 0;
+  public inputQueue: InputQueue = new InputQueue();
 
-  public currentTick = 0;
-  public simTimeMs = 0;
-  public spec: ScenarioSpec | null = null;
-  public inputQueue = new InputQueue();
-
+  public activeSensor: SensorMode = 'RADAR';
   public selectedTrackNo: string | null = null;
-  public sensorMode: SensorMode = 'RADAR';
-  public activeEffector: EffectorId | null = null;
+  public activeEffector: EffectorId = 'RF_SOFTKILL';
+  public eoirAzimuthDeg: number = 0;
 
-  public isPaused = false;
-  public isComplete = false;
+  public sensorHealth = {
+    RADAR: 'OK' as const,
+    EOIR: 'OK' as const,
+    RF: 'OK' as const,
+  };
 
-  private eventSeq = 0;
-  private nextTrackIdNum = 1;
+  private killRng: (() => number) | null = null;
 
-  // PRNG streams
-  private killStream: (() => number) | null = null;
-
-  /**
-   * Initializes and loads a scenario specification into the engine.
-   */
   public load(spec: ScenarioSpec): void {
     this.spec = spec;
-    this.currentTick = 0;
-    this.simTimeMs = 0;
+    this.tickIndex = 0;
     this.eventSeq = 0;
-    this.nextTrackIdNum = 1;
-    this.selectedTrackNo = null;
-    this.sensorMode = 'RADAR';
-    this.activeEffector = null;
-    this.isPaused = false;
-    this.isComplete = false;
-
-    this.inputQueue.clear();
     this.events = [];
+    this.inputQueue.clear();
+    this.activeSensor = 'RADAR';
+    this.selectedTrackNo = null;
+    this.activeEffector = 'RF_SOFTKILL';
+    this.eoirAzimuthDeg = 0;
+    this.killRng = mulberry32(streamSeed(spec.seed, 'kill'));
+    clockInstance.reset();
+
     this.curr = [];
     this.prev = [];
 
-    // Initialize PRNG streams
-    this.killStream = createStream(spec.seed, 'kill');
+    // Spawn threats from spec
+    let trackCounter = 1;
+    const allSpawns = [...(spec.threats || []), ...(spec.decoys || [])];
 
-    // Spawn dormant threats from spec
-    const allSpawns = [...spec.threats, ...spec.decoys];
-    for (const spawn of allSpawns) {
-      const initialPos = spawn.waypoints[0] ?? { x: 0, y: 0, z: 100 };
+    for (const s of allSpawns) {
+      const initialPos = s.waypoints.length > 0 ? { ...s.waypoints[0] } : { x: 2000, y: 2000, z: 120 };
+      const targetPos = s.waypoints.length > 1 ? s.waypoints[s.waypoints.length - 1] : { x: 0, y: 0, z: 20 };
+      const dx = targetPos.x - initialPos.x;
+      const dy = targetPos.y - initialPos.y;
+      const dist = Math.hypot(dx, dy);
+
+      const vel = {
+        x: dist > 0 ? (dx / dist) * s.speedMps : 0,
+        y: dist > 0 ? (dy / dist) * s.speedMps : 0,
+        z: 0,
+      };
+
+      const trackNo = `T-${String(trackCounter++).padStart(2, '0')}`;
+
       const entity: TrackEntity = {
-        id: spawn.id,
-        trackNo: null,
-        trueClass: spawn.trueClass,
-        droneType: spawn.droneType,
-        pos: { ...initialPos },
+        id: s.id,
+        trackNo,
+        trueClass: s.trueClass,
+        droneType: s.droneType,
+        pos: initialPos,
         prev: { ...initialPos },
-        vel: { x: 0, y: 0, z: 0 },
-        rcsM2: spawn.rcsM2,
-        valueInr: spawn.valueInr,
-        emitsRf: spawn.emitsRf,
-        remoteId: spawn.remoteId,
-        iff: spawn.iff,
-        profile: spawn.profile,
-        spawnTMs: spawn.spawnTMs,
-        lifecycle: 'DORMANT',
+        vel,
+        rcsM2: s.rcsM2,
+        valueInr: s.valueInr,
+        emitsRf: s.emitsRf,
+        remoteId: s.remoteId,
+        iff: s.iff,
+        profile: s.profile,
+        spawnTMs: s.spawnTMs,
+        lifecycle: 'ACTIVE',
         traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
-        step: 'UNDETECTED',
-        q: 0,
-        cCls: 0,
+        step: 'FIND',
+        q: 0.8,
+        cCls: 0.5,
         masked: false,
         coastingSinceMs: null,
         ghostSigmaM: 0,
-        hitHistory: [],
-        tVis: null,
-        tTrk: null,
+        hitHistory: [true, true, true],
+        tVis: s.spawnTMs,
+        tTrk: s.spawnTMs,
         tDesig: null,
         tCls: null,
         tEng: null,
@@ -135,219 +139,36 @@ export class SimEngine {
         engagements: 0,
         weaponUsed: null,
       };
+
       this.curr.push(entity);
-      this.prev.push({ ...entity, pos: { ...entity.pos }, prev: { ...entity.prev }, vel: { ...entity.vel } });
+      this.prev.push({ ...entity, pos: { ...entity.pos }, vel: { ...entity.vel } });
     }
 
-    this.logEvent('SIM_START', {
+    // Default select first track
+    if (this.curr.length > 0) {
+      this.selectedTrackNo = this.curr[0].trackNo;
+    }
+
+    // Log SIM_START event
+    this.appendEvent('SIM_START', {
       scenarioId: spec.id,
       seed: spec.seed,
-      difficulty: spec.difficulty,
       mode: spec.mode,
+      difficulty: spec.difficulty,
     });
   }
 
-  /**
-   * Advances simulation by exactly one fixed 50 ms tick.
-   * Rule DT-1: Sim state changes only inside engine.step().
-   */
-  public step(): UiSnapshot {
-    if (!this.spec || this.isComplete || this.isPaused) {
-      return this.snapshot();
-    }
-
-    this.currentTick++;
-    this.simTimeMs = this.currentTick * TICK_MS;
-
-    // 1. Copy curr to prev for interpolation (avoiding full heap allocation)
-    for (let i = 0; i < this.curr.length; i++) {
-      const c = this.curr[i];
-      const p = this.prev[i];
-      p.pos.x = c.pos.x;
-      p.pos.y = c.pos.y;
-      p.pos.z = c.pos.z;
-      p.vel.x = c.vel.x;
-      p.vel.y = c.vel.y;
-      p.vel.z = c.vel.z;
-      p.q = c.q;
-      p.step = c.step;
-      p.lifecycle = c.lifecycle;
-      p.masked = c.masked;
-    }
-
-    // 2. Drain and apply inputs quantised to this tick
-    const inputs = this.inputQueue.drainForTick(this.currentTick);
-    for (const input of inputs) {
-      this.applyInput(input.action, input.tRawMs, input.applyTick);
-    }
-
-    // 3. Spawning and kinematics
-    for (const entity of this.curr) {
-      if (entity.lifecycle === 'DORMANT' && this.simTimeMs >= entity.spawnTMs) {
-        entity.lifecycle = 'ACTIVE';
-        entity.step = 'FIND';
-        // Compute initial velocity towards origin (asset)
-        const range = Math.hypot(entity.pos.x, entity.pos.y);
-        const spawnSpec = [...this.spec.threats, ...this.spec.decoys].find((s) => s.id === entity.id);
-        const speed = spawnSpec?.speedMps ?? 20;
-        if (range > 1) {
-          entity.vel.x = (-entity.pos.x / range) * speed;
-          entity.vel.y = (-entity.pos.y / range) * speed;
-        }
-        // Auto-assign track number on activation (Phase 0 skeleton)
-        if (!entity.trackNo) {
-          entity.trackNo = `T-${String(this.nextTrackIdNum++).padStart(2, '0')}`;
-          entity.tTrk = this.simTimeMs;
-          this.logEvent('TRACK_INIT', { trackNo: entity.trackNo, entityId: entity.id }, entity.trackNo, entity.id);
-        }
-        this.logEvent('SPAWN', { entityId: entity.id, droneType: entity.droneType }, entity.trackNo ?? undefined, entity.id);
-      }
-
-      if (entity.lifecycle === 'ACTIVE') {
-        entity.pos.x += entity.vel.x * DT;
-        entity.pos.y += entity.vel.y * DT;
-        entity.pos.z += entity.vel.z * DT;
-
-        // Check PNR (Point of No Return = asset.rMinM)
-        const dist = Math.hypot(entity.pos.x, entity.pos.y);
-        if (dist <= this.spec.asset.rMinM && entity.step !== 'CLOSED') {
-          entity.tPnr = this.simTimeMs;
-          entity.lifecycle = 'LEAKED';
-          entity.step = 'CLOSED';
-          this.logEvent('LEAK', { trackNo: entity.trackNo, entityId: entity.id, distM: dist }, entity.trackNo ?? undefined, entity.id);
-        }
-      }
-    }
-
-    // 4. Periodic Snapshot every 250 ms (5 ticks) for event-sourced instant scrub
-    if (this.currentTick % 5 === 0) {
-      const liveEntities = this.curr
-        .filter((e) => e.lifecycle === 'ACTIVE')
-        .map((e) => [e.id, Math.round(e.pos.x), Math.round(e.pos.y), Math.round(e.pos.z), e.step, Math.round(e.q * 100)]);
-
-      this.logEvent('SNAPSHOT', { entities: liveEntities });
-    }
-
-    // 5. Check session completion
-    if (this.simTimeMs >= this.spec.durationMs) {
-      this.isComplete = true;
-      this.logEvent('SESSION_END', { durationMs: this.simTimeMs });
-    }
-
-    return this.snapshot();
-  }
-
-  /**
-   * Applies trainee action to sim state.
-   */
-  public applyInput(action: TraineeAction, tRawMs?: number, _applyTick?: number): void {
-    switch (action.type) {
-      case 'DESIGNATE': {
-        const track = this.curr.find((t) => t.trackNo === action.trackNo);
-        if (track && track.step === 'FIND') {
-          track.step = 'FIX';
-          track.tDesig = this.simTimeMs;
-          this.selectedTrackNo = action.trackNo;
-          this.logEvent('DESIGNATE', { trackNo: action.trackNo, via: action.via }, action.trackNo, track.id, tRawMs);
-        }
-        break;
-      }
-      case 'CLASSIFY': {
-        const track = this.curr.find((t) => t.trackNo === action.trackNo);
-        if (track) {
-          track.traineeLabel = action.label;
-          track.tCls = this.simTimeMs;
-          if (track.step === 'FIX' || track.step === 'TRACK') {
-            track.step = 'TARGET';
-          }
-          this.logEvent(
-            'CLASSIFY',
-            { trackNo: action.trackNo, label: action.label, cClsShown: track.cCls },
-            action.trackNo,
-            track.id,
-            tRawMs
-          );
-        }
-        break;
-      }
-      case 'SELECT_EFFECTOR': {
-        this.activeEffector = action.effector;
-        break;
-      }
-      case 'ENGAGE': {
-        const track = this.curr.find((t) => t.trackNo === action.trackNo);
-        if (track && track.lifecycle === 'ACTIVE') {
-          track.tEng = this.simTimeMs;
-          track.engagements++;
-          track.weaponUsed = action.effector;
-          track.step = 'ENGAGE';
-
-          // Draw deterministic kill outcome
-          const u = this.killStream ? this.killStream() : 0.5;
-          const pk = 0.8; // Notional Pk baseline for Phase 0
-          const killed = u < pk;
-
-          this.logEvent(
-            'ENGAGE',
-            { trackNo: action.trackNo, effector: action.effector },
-            action.trackNo,
-            track.id,
-            tRawMs
-          );
-
-          if (killed) {
-            track.lifecycle = 'NEUTRALISED';
-          }
-          track.step = 'ASSESS';
-
-          this.logEvent(
-            'ENGAGE_RESULT',
-            { trackNo: action.trackNo, effector: action.effector, u, pk, killed },
-            action.trackNo,
-            track.id
-          );
-        }
-        break;
-      }
-      case 'ASSESS': {
-        const track = this.curr.find((t) => t.trackNo === action.trackNo);
-        if (track) {
-          track.step = 'CLOSED';
-          this.logEvent('ASSESS', { trackNo: action.trackNo, result: action.result }, action.trackNo, track.id, tRawMs);
-        }
-        break;
-      }
-      case 'SENSOR_SWITCH': {
-        this.sensorMode = action.mode;
-        this.logEvent('SENSOR_SWITCH', { mode: action.mode }, undefined, undefined, tRawMs);
-        break;
-      }
-      case 'PAUSE': {
-        this.isPaused = true;
-        this.logEvent('SESSION_PAUSE', {});
-        break;
-      }
-      case 'RESUME': {
-        this.isPaused = false;
-        this.logEvent('SESSION_RESUME', {});
-        break;
-      }
-    }
-  }
-
-  /**
-   * Logs a deterministic SimEvent with monotonic sequence and scored sim time tMs.
-   */
-  public logEvent(
+  public appendEvent(
     type: SimEventType,
     payload: Record<string, unknown>,
     trackNo?: string,
     entityId?: string,
     tRawMs?: number
   ): SimEvent {
+    this.eventSeq += 1;
     const event: SimEvent = {
-      seq: ++this.eventSeq,
-      tMs: this.simTimeMs,
+      seq: this.eventSeq,
+      tMs: this.tickIndex * 50,
       tRawMs,
       type,
       trackNo,
@@ -358,50 +179,244 @@ export class SimEngine {
     return event;
   }
 
-  /**
-   * Generates lightweight UI snapshot for Zustand store (capped at 150 rows).
-   */
-  public snapshot(): UiSnapshot {
-    const activeTracks = this.curr.filter((e) => e.lifecycle !== 'DORMANT');
-    const rows: UiTrackRow[] = activeTracks.slice(0, 150).map((t) => {
-      const rangeM = Math.hypot(t.pos.x, t.pos.y);
-      let bearingRad = Math.atan2(t.pos.x, t.pos.y);
-      if (bearingRad < 0) bearingRad += 2 * Math.PI;
-      const bearingDeg = Math.round((bearingRad * 180) / Math.PI);
-      const speedMps = Math.round(Math.hypot(t.vel.x, t.vel.y));
+  public step(): void {
+    if (!this.spec) return;
 
-      return {
-        trackNo: t.trackNo ?? 'T-??',
-        label: t.traineeLabel,
-        shortCode: t.traineeLabel === 'UNKNOWN_EVIDENCE_INSUFFICIENT' ? 'UNK' : t.traineeLabel.substring(0, 2),
-        rangeKm: Number((rangeM / 1000).toFixed(2)),
-        bearingDeg,
-        speedMps,
-        status: t.step,
-        q: t.q,
-        cCls: t.cCls,
-        step: t.step,
-        isHostile: t.traineeLabel.startsWith('HOSTILE') || t.traineeLabel === 'SWARM_ELEMENT',
-        masked: t.masked,
-      };
-    });
+    this.tickIndex += 1;
+    const currentSimMs = this.tickIndex * 50;
+
+    // 1. Drain quantised user inputs for this tick
+    const actions = this.inputQueue.drainForTick(this.tickIndex);
+    for (const item of actions) {
+      this.handleAction(item);
+    }
+
+    // 2. Clone previous state for interpolation
+    this.prev = this.curr.map((e) => ({
+      ...e,
+      pos: { ...e.pos },
+      vel: { ...e.vel },
+    }));
+
+    // 3. Update entity positions and state
+    for (const entity of this.curr) {
+      if (entity.lifecycle === 'ACTIVE') {
+        entity.pos.x += entity.vel.x * 0.05;
+        entity.pos.y += entity.vel.y * 0.05;
+        entity.pos.z += entity.vel.z * 0.05;
+
+        // Check distance to asset at (0, 0)
+        const rangeM = Math.hypot(entity.pos.x, entity.pos.y);
+        if (rangeM <= (this.spec.asset.rMinM || CONFIG.thresholds.rMinM) && entity.tPnr === null) {
+          entity.tPnr = currentSimMs;
+          if (entity.lifecycle === 'ACTIVE' && entity.trueClass !== 'FRIENDLY' && entity.trueClass !== 'CIVIL_UAS' && entity.trueClass !== 'BIRD') {
+            entity.lifecycle = 'LEAKED';
+            entity.step = 'CLOSED';
+            this.appendEvent('LEAK', { rangeM, trueClass: entity.trueClass }, entity.trackNo ?? undefined, entity.id);
+          }
+        }
+      }
+    }
+
+    // 4. Periodic snapshot keyframe every 250ms (5 ticks) for instant AAR scrubbing
+    if (this.tickIndex % 5 === 0) {
+      const liveEntities = this.curr
+        .filter((e) => e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
+        .map((e) => ({
+          id: e.id,
+          tNo: e.trackNo,
+          x: Math.round(e.pos.x),
+          y: Math.round(e.pos.y),
+          z: Math.round(e.pos.z),
+          step: e.step,
+          q: Number(e.q.toFixed(2)),
+          lbl: e.traineeLabel,
+        }));
+
+      this.appendEvent('SNAPSHOT', { entities: liveEntities });
+    }
+
+    // 5. Check session completion
+    if (currentSimMs >= this.spec.durationMs) {
+      this.appendEvent('SESSION_END', { durationMs: currentSimMs });
+    }
+  }
+
+  private handleAction(item: UserAction): void {
+    const { action, tRawMs } = item;
+    switch (action.type) {
+      case 'DESIGNATE': {
+        this.selectedTrackNo = action.trackNo;
+        const target = this.curr.find((e) => e.trackNo === action.trackNo);
+        if (target && target.tDesig === null) {
+          target.tDesig = this.tickIndex * 50;
+          if (target.step === 'FIND') target.step = 'FIX';
+        }
+        this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target?.id, tRawMs);
+        break;
+      }
+
+      case 'CLASSIFY': {
+        const target = this.curr.find((e) => e.trackNo === action.trackNo);
+        if (target) {
+          target.traineeLabel = action.label;
+          if (target.tCls === null) target.tCls = this.tickIndex * 50;
+          if (target.step === 'FIX' || target.step === 'TRACK') {
+            target.step = 'TARGET';
+          }
+          this.appendEvent(
+            'CLASSIFY',
+            { label: action.label, cCls: target.cCls },
+            action.trackNo,
+            target.id,
+            tRawMs
+          );
+        }
+        break;
+      }
+
+      case 'SELECT_EFFECTOR': {
+        this.activeEffector = action.effectorId;
+        break;
+      }
+
+      case 'FIRE': {
+        const target = this.curr.find((e) => e.trackNo === action.trackNo);
+        if (target) {
+          const rangeM = Math.hypot(target.pos.x, target.pos.y);
+          target.tEng = this.tickIndex * 50;
+          target.engagements += 1;
+          target.weaponUsed = this.activeEffector;
+
+          const u = this.killRng ? this.killRng() : 0.5;
+          const effConfig = CONFIG.effectors[this.activeEffector];
+          const pk = effConfig?.pk0 ?? 0.6;
+          const killed = u <= pk;
+
+          this.appendEvent(
+            'ENGAGE',
+            { effector: this.activeEffector, rangeM, pk, u, killed },
+            action.trackNo,
+            target.id,
+            tRawMs
+          );
+
+          if (killed) {
+            target.lifecycle = 'NEUTRALISED';
+            target.step = 'ASSESS';
+            this.appendEvent('ENGAGE_RESULT', { killed: true, u, pk }, action.trackNo, target.id);
+          } else {
+            this.appendEvent('ENGAGE_RESULT', { killed: false, u, pk }, action.trackNo, target.id);
+          }
+        }
+        break;
+      }
+
+      case 'ASSESS': {
+        const target = this.curr.find((e) => e.trackNo === action.trackNo);
+        if (target) {
+          target.step = 'CLOSED';
+          this.appendEvent('ASSESS', { result: action.result }, action.trackNo, target.id, tRawMs);
+        }
+        break;
+      }
+
+      case 'SET_SENSOR': {
+        this.activeSensor = action.mode;
+        this.appendEvent('SENSOR_SWITCH', { mode: action.mode }, undefined, undefined, tRawMs);
+        break;
+      }
+
+      case 'SET_EOIR_AZIMUTH': {
+        this.eoirAzimuthDeg = (action.deg + 360) % 360;
+        break;
+      }
+
+      case 'CYCLE_TRACK': {
+        const activeTracks = this.curr.filter((e) => e.trackNo && e.lifecycle === 'ACTIVE');
+        if (activeTracks.length > 0) {
+          const currentIndex = activeTracks.findIndex((e) => e.trackNo === this.selectedTrackNo);
+          let nextIndex = 0;
+          if (action.direction === 'NEXT') {
+            nextIndex = (currentIndex + 1) % activeTracks.length;
+          } else {
+            nextIndex = (currentIndex - 1 + activeTracks.length) % activeTracks.length;
+          }
+          this.selectedTrackNo = activeTracks[nextIndex].trackNo;
+        }
+        break;
+      }
+
+      case 'PAUSE': {
+        this.appendEvent('SESSION_PAUSE', {});
+        break;
+      }
+
+      case 'RESUME': {
+        this.appendEvent('SESSION_RESUME', {});
+        break;
+      }
+    }
+  }
+
+  public buildUiSnapshot(): UiSnapshot {
+    const simTimeMs = this.tickIndex * 50;
+    const totalSec = Math.floor(simTimeMs / 1000);
+    const msRemainder = simTimeMs % 1000;
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    const formattedClock = `T+${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(msRemainder).padStart(3, '0')}`;
+
+    const trackRows: UiTrackRow[] = this.curr
+      .filter((e) => e.trackNo && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED'))
+      .map((e) => {
+        const rangeM = Math.hypot(e.pos.x, e.pos.y);
+        const bearingRad = Math.atan2(e.pos.x, e.pos.y);
+        let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
+        if (bearingDeg < 0) bearingDeg += 360;
+
+        const speedMps = Math.round(Math.hypot(e.vel.x, e.vel.y));
+        const rMin = this.spec?.asset.rMinM ?? CONFIG.thresholds.rMinM;
+        const distToPnr = Math.max(0, rangeM - rMin);
+        const timeToPnrSec = speedMps > 0 ? Number((distToPnr / speedMps).toFixed(1)) : 999;
+
+        const shortCode = SHORT_CODES[e.traineeLabel] || 'UNK';
+
+        return {
+          trackNo: e.trackNo!,
+          label: e.traineeLabel,
+          shortCode,
+          rangeKm: Number((rangeM / 1000).toFixed(2)),
+          bearingDeg,
+          speedMps,
+          step: e.step,
+          statusPill: e.masked ? 'COAST' : e.step,
+          timeToPnrSec,
+          q: Number(e.q.toFixed(2)),
+          cCls: Number(e.cCls.toFixed(2)),
+          isHostile: isHostile(e.traineeLabel),
+        };
+      })
+      .sort((a, b) => a.timeToPnrSec - b.timeToPnrSec)
+      .slice(0, 150);
+
+    const selectedTrack = trackRows.find((r) => r.trackNo === this.selectedTrackNo) || null;
 
     return {
-      tick: this.currentTick,
-      simTimeMs: this.simTimeMs,
-      sensorMode: this.sensorMode,
+      tick: this.tickIndex,
+      simTimeMs,
+      formattedClock,
+      activeSensor: this.activeSensor,
       selectedTrackNo: this.selectedTrackNo,
-      activeEffector: this.activeEffector,
-      tracks: rows,
-      sensorHealth: {
-        radar: 'OK',
-        eoir: 'OK',
-        rf: 'OK',
-      },
+      selectedTrack,
+      trackRows,
+      sensorHealth: { ...this.sensorHealth },
+      roeText: this.spec?.roeText || 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
+      isPaused: clockInstance.getPaused(),
       recentEvents: this.events.slice(-8),
-      roeBanner: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
-      isComplete: this.isComplete,
-      isPaused: this.isPaused,
+      mode: this.spec?.mode || 'TRAIN',
+      difficulty: this.spec?.difficulty || 0.3,
+      activeEffector: this.activeEffector,
     };
   }
 }
