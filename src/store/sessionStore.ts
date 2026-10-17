@@ -120,6 +120,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       applyTick,
       action: { type: 'SET_SENSOR', mode },
     });
+    engineInstance.activeSensor = mode;
     set((s) => ({ ui: { ...s.ui, activeSensor: mode } }));
   },
 

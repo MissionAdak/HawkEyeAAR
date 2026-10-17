@@ -63,10 +63,14 @@ export class SimEngine {
   public activeEffector: EffectorId = 'RF_SOFTKILL';
   public eoirAzimuthDeg: number = 0;
 
-  public sensorHealth = {
-    RADAR: 'OK' as const,
-    EOIR: 'OK' as const,
-    RF: 'OK' as const,
+  public sensorHealth: {
+    RADAR: 'OK' | 'DEG' | 'OUT';
+    EOIR: 'OK' | 'DEG' | 'OUT';
+    RF: 'OK' | 'DEG' | 'OUT';
+  } = {
+    RADAR: 'OK',
+    EOIR: 'OK',
+    RF: 'OK',
   };
 
   private killRng: (() => number) | null = null;
