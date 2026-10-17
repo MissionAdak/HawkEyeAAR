@@ -82,4 +82,12 @@ describe('Oracle Decision Engine (School Solution & Cost Regret)', () => {
     expect(regret.regretInr).toBe(20000);
     expect(regret.text).toContain('ROE VIOLATION');
   });
+
+  it('labels non-matching effector with zero financial regret as suboptimal identifying the oracle choice', () => {
+    // Trainee fires RF_SOFTKILL (₹100), but Oracle required MISSILE (₹3,000,000)
+    const regret = computeCostRegret('RF_SOFTKILL', 'MISSILE');
+    expect(regret.isOptimal).toBe(false);
+    expect(regret.regretInr).toBe(0);
+    expect(regret.text).toBe('SUBOPTIMAL (ORACLE: MISSILE)');
+  });
 });

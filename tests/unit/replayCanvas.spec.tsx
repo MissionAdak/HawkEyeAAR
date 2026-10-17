@@ -97,4 +97,24 @@ describe('AAR ReplayCanvas (TASK-P3-05)', () => {
 
     expect(html).toContain('T+00:45.250');
   });
+
+  it('formats HUD scope label dynamically from maxRangeM', () => {
+    const html3500 = renderToString(
+      <ReplayCanvas
+        tMs={1000}
+        entities={dummyEntities}
+        maxRangeM={3500}
+      />
+    );
+    expect(html3500).toContain('SCOPE: 3.5 km');
+
+    const html10000 = renderToString(
+      <ReplayCanvas
+        tMs={1000}
+        entities={dummyEntities}
+        maxRangeM={10000}
+      />
+    );
+    expect(html10000).toContain('SCOPE: 10.0 km');
+  });
 });

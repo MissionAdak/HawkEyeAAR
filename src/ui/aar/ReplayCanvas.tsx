@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { PALETTE } from '@/render/palette';
 import { drawTrackSymbol, drawGroundTruthSymbol } from '@/render/symbols';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
-import type { TrueClass, TrackClass, EffectorId, ZoneSpec, SimEvent } from '@/sim/types';
+import type { TrueClass, TrackClass, EffectorId, ZoneSpec, SimEvent, DroneType } from '@/sim/types';
 
 export interface ReplayEntity {
   id: string;
@@ -16,6 +16,8 @@ export interface ReplayEntity {
   q?: number;
   ghostSigmaM?: number;
   lifecycle?: string;
+  droneType?: DroneType;
+  emitsRf?: boolean;
 }
 
 export interface ReplayCanvasProps {
@@ -34,12 +36,46 @@ export interface ReplayCanvasProps {
 const CANVAS_SIZE = 360;
 const SCOPE_RADIUS = 165;
 const SWEEP_PERIOD_MS = 2000;
+const EMPTY_ZONES: ZoneSpec[] = [];
+const EMPTY_EVENTS: SimEvent[] = [];
+
+function isPointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0];
+    const yi = polygon[i][1];
+    const xj = polygon[j][0];
+    const yj = polygon[j][1];
+    const intersect =
+      yi > point[1] !== yj > point[1] &&
+      point[0] < ((xj - xi) * (point[1] - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function isChaosTypeActiveAt(events: SimEvent[], tMs: number, type: 'FOG' | 'JAMMING'): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.tMs > tMs) continue;
+    const p = e.payload as { type?: string; chaosType?: string; durationMs?: number };
+    const cType = p.type ?? p.chaosType;
+    if (cType === type) {
+      if (e.type === 'CHAOS_OFF') return false;
+      if (e.type === 'CHAOS_ON') {
+        const duration = typeof p.durationMs === 'number' ? p.durationMs : 30000;
+        return tMs - e.tMs <= duration;
+      }
+    }
+  }
+  return false;
+}
 
 export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
   tMs,
   entities,
-  events = [],
-  zones = [],
+  events = EMPTY_EVENTS,
+  zones = EMPTY_ZONES,
   showGroundTruth: controlledGroundTruth,
   onToggleGroundTruth,
   selectedTrackNo,
@@ -49,6 +85,7 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const prevPrepareStaticLayerRef = useRef<((width: number, height: number) => HTMLCanvasElement | null) | null>(null);
 
   const [internalGroundTruth, setInternalGroundTruth] = useState<boolean>(false);
   const isGroundTruthActive = controlledGroundTruth ?? internalGroundTruth;
@@ -190,6 +227,11 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
     [maxRangeM, zones]
   );
 
+  // Invalidate static layer cache when prepareStaticLayer changes
+  useEffect(() => {
+    staticCanvasRef.current = null;
+  }, [prepareStaticLayer]);
+
   // Redraw Canvas on scrubbed state changes
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -205,7 +247,8 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
     const scale = SCOPE_RADIUS / maxRangeM;
 
     // 1. Prepare/cache static layer
-    if (!staticCanvasRef.current) {
+    if (!staticCanvasRef.current || prevPrepareStaticLayerRef.current !== prepareStaticLayer) {
+      prevPrepareStaticLayerRef.current = prepareStaticLayer;
       staticCanvasRef.current = prepareStaticLayer(width, height);
     }
     if (staticCanvasRef.current) {
@@ -311,24 +354,24 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
         rangeM?: number;
         killed?: boolean;
         trueClass?: TrueClass;
+        emitsRf?: boolean;
+        droneType?: DroneType;
+        isOverDenseZone?: boolean;
+        isJammingActive?: boolean;
+        isFogActive?: boolean;
+        fog?: boolean;
+        jamming?: boolean;
+        x?: number;
+        y?: number;
       };
 
       const matchingEntity = entities.find((e) => e.trackNo === ev.trackNo || e.id === ev.entityId);
-      const ex = matchingEntity ? cx + matchingEntity.pos.x * scale : cx;
-      const ey = matchingEntity ? cy - matchingEntity.pos.y * scale : cy;
+      const posX = matchingEntity?.pos.x ?? payload.x;
+      const posY = matchingEntity?.pos.y ?? payload.y;
+      const ex = posX !== undefined ? cx + posX * scale : cx;
+      const ey = posY !== undefined ? cy - posY * scale : cy;
 
       const alphaFade = Math.max(0.15, 1 - dt / 3000);
-      const effector = payload.effector ?? 'RF_SOFTKILL';
-      const rangeM = payload.rangeM ?? (matchingEntity ? Math.hypot(matchingEntity.pos.x, matchingEntity.pos.y) : 1500);
-      const trueClass = matchingEntity?.trueClass ?? payload.trueClass ?? 'HOSTILE_ATTACK';
-
-      // Compute Oracle Solution & Cost Regret
-      const oracle = computeOracleEffector({
-        rangeM,
-        trueClass,
-        emitsRf: true,
-      });
-      const regret = computeCostRegret(effector, oracle.oracleEffector);
 
       ctx.save();
       ctx.globalAlpha = alphaFade;
@@ -349,6 +392,42 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
       ctx.moveTo(ex, ey + sSize / 2);
       ctx.lineTo(ex, ey + sSize);
       ctx.stroke();
+
+      // Check if effector and trueClass are available without inventing values
+      const effector = payload.effector;
+      const trueClass = matchingEntity?.trueClass ?? payload.trueClass;
+
+      // Skip the regret badge when effector or trueClass is unavailable
+      if (!effector || !trueClass) {
+        ctx.restore();
+        continue;
+      }
+
+      const rangeM = payload.rangeM ?? (posX !== undefined && posY !== undefined ? Math.hypot(posX, posY) : 1500);
+      const emitsRf = typeof payload.emitsRf === 'boolean'
+        ? payload.emitsRf
+        : typeof matchingEntity?.emitsRf === 'boolean'
+          ? matchingEntity.emitsRf
+          : true;
+      const droneType = payload.droneType ?? matchingEntity?.droneType;
+      const isFogActive = Boolean(payload.isFogActive ?? payload.fog ?? isChaosTypeActiveAt(events, ev.tMs, 'FOG'));
+      const isJammingActive = Boolean(payload.isJammingActive ?? payload.jamming ?? isChaosTypeActiveAt(events, ev.tMs, 'JAMMING'));
+      const isOverDenseZone = Boolean(
+        payload.isOverDenseZone ??
+        (posX !== undefined && posY !== undefined && zones.some((z) => isPointInPolygon([posX, posY], z.polygon)))
+      );
+
+      // Compute Oracle Solution & Cost Regret
+      const oracle = computeOracleEffector({
+        rangeM,
+        trueClass,
+        emitsRf,
+        droneType,
+        isFogActive,
+        isJammingActive,
+        isOverDenseZone,
+      });
+      const regret = computeCostRegret(effector, oracle.oracleEffector);
 
       // Tactical Regret Badge Card
       const boxW = 140;
@@ -375,7 +454,7 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
 
       ctx.restore();
     }
-  }, [tMs, entities, events, isGroundTruthActive, selectedTrackNo, maxRangeM, prepareStaticLayer]);
+  }, [tMs, entities, events, isGroundTruthActive, selectedTrackNo, maxRangeM, zones, prepareStaticLayer]);
 
   // Click-to-select historical track
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -395,8 +474,26 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
 
     for (const entity of entities) {
       if (!entity.trackNo) continue;
+
+      // Apply the same visibility filters as the draw loop
+      if (entity.lifecycle === 'NEUTRALISED' && entity.step === 'CLOSED') {
+        continue;
+      }
+
+      const isMasked = entity.masked ?? false;
+      const isCoasting = (entity.ghostSigmaM ?? 0) > 0;
+
+      // In trainee mode (Ground Truth OFF), masked targets that are not coasting remain hidden
+      if (!isGroundTruthActive && isMasked && !isCoasting) {
+        continue;
+      }
+
       const ex = cx + entity.pos.x * scale;
       const ey = cy - entity.pos.y * scale;
+
+      const distFromCenter = Math.hypot(ex - cx, ey - cy);
+      if (distFromCenter > SCOPE_RADIUS) continue;
+
       const d = Math.hypot(clickX - ex, clickY - ey);
       if (d < nearestDist) {
         nearestDist = d;
@@ -428,7 +525,7 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
       {/* Top HUD Badges */}
       <div className="absolute top-2 left-2 pointer-events-none text-[9px] font-mono text-phosphor leading-tight">
         <span>AAR REPLAY // 360px</span>
-        <span className="block text-text-dim">SCOPE: 5.0 km</span>
+        <span className="block text-text-dim">{`SCOPE: ${(maxRangeM / 1000).toFixed(1)} km`}</span>
       </div>
 
       <div className="absolute top-2 right-2 flex flex-col items-end gap-1.5 z-10">

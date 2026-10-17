@@ -126,6 +126,8 @@ export function computeCostRegret(
     text = `ROE VIOLATION (+₹${traineeCost.toLocaleString('en-IN')})`;
   } else if (!isOptimal && regretInr > 0) {
     text = `+₹${regretInr.toLocaleString('en-IN')} REGRET`;
+  } else if (!isOptimal) {
+    text = `SUBOPTIMAL (ORACLE: ${oracleEffector})`;
   }
 
   return { regretInr, isOptimal, text };
