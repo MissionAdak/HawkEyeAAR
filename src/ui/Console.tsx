@@ -106,12 +106,12 @@ export const Console: React.FC = () => {
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left - 260; // relative to center
-    const y = 260 - (e.clientY - rect.top); // y-up
+    const dx = e.clientX - rect.left - 260; // relative to center
+    const dy = 260 - (e.clientY - rect.top); // y-up
 
     const scale = 245 / 5000; // 245px radius = 5000m
-    const rangeM = Math.hypot(x, y) / scale;
-    const bearingRad = Math.atan2(x, y);
+    const rangeM = Math.hypot(dx, dy) / scale;
+    const bearingRad = Math.atan2(dx, dy);
     let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
     if (bearingDeg < 0) bearingDeg += 360;
 
