@@ -1,34 +1,46 @@
 import { PALETTE } from './palette';
-import type { TrackClass } from '@/sim/taxonomy';
+import type { TrackClass, TrueClass } from '@/sim/taxonomy';
+
+const SafePath2D = typeof Path2D !== 'undefined'
+  ? Path2D
+  : class MockPath2D {
+      public moveTo(_x: number, _y: number): void { /* Headless stub */ }
+      public lineTo(_x: number, _y: number): void { /* Headless stub */ }
+      public arc(..._args: unknown[]): void { /* Headless stub */ }
+      public ellipse(..._args: unknown[]): void { /* Headless stub */ }
+      public quadraticCurveTo(..._args: unknown[]): void { /* Headless stub */ }
+      public closePath(): void { /* Headless stub */ }
+      public rect(..._args: unknown[]): void { /* Headless stub */ }
+    } as unknown as typeof Path2D;
 
 // Static Reusable Path2D Pools (Zero-Allocation Render Loop)
-const diamondPath = new Path2D();
+const diamondPath = new SafePath2D();
 diamondPath.moveTo(0, -10);
 diamondPath.lineTo(10, 0);
 diamondPath.lineTo(0, 10);
 diamondPath.lineTo(-10, 0);
 diamondPath.closePath();
 
-const circlePath = new Path2D();
+const circlePath = new SafePath2D();
 circlePath.arc(0, 0, 8, 0, Math.PI * 2);
 
-const civilSquarePath = new Path2D();
+const civilSquarePath = new SafePath2D();
 civilSquarePath.rect(-7, -7, 14, 14);
 
-const birdSquarePath = new Path2D();
+const birdSquarePath = new SafePath2D();
 birdSquarePath.rect(-6, -6, 12, 12);
 birdSquarePath.moveTo(-6, -6);
 birdSquarePath.lineTo(0, -10);
 birdSquarePath.lineTo(6, -6);
 
-const unknownSquarePath = new Path2D();
+const unknownSquarePath = new SafePath2D();
 unknownSquarePath.rect(-7, -7, 14, 14);
 
-const isrDotPath = new Path2D();
+const isrDotPath = new SafePath2D();
 isrDotPath.arc(0, 0, 2, 0, Math.PI * 2);
 
 // Reusable Selection Brackets Path Pool (4 corners)
-const selectionBracketsPath = new Path2D();
+const selectionBracketsPath = new SafePath2D();
 const b = 13;
 const l = 4;
 // Top-Left
@@ -165,3 +177,62 @@ export function drawTrackSymbol(
 
   ctx.restore();
 }
+
+/**
+ * Renders the NATO ground truth symbol in crisp white (#FFFFFF)
+ * for AAR overlay and audit verification.
+ */
+export function drawGroundTruthSymbol(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  trueClass: TrueClass,
+  isSelected: boolean = false
+): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.fillStyle = '#FFFFFF';
+
+  switch (trueClass) {
+    case 'HOSTILE_ATTACK':
+    case 'HOSTILE_ISR':
+    case 'SWARM_ELEMENT':
+      ctx.stroke(diamondPath);
+      if (trueClass === 'HOSTILE_ISR') {
+        ctx.fill(isrDotPath);
+      } else if (trueClass === 'SWARM_ELEMENT') {
+        ctx.font = '8px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('S', 0, 0);
+      }
+      break;
+
+    case 'FRIENDLY':
+      ctx.stroke(circlePath);
+      break;
+
+    case 'CIVIL_UAS':
+      ctx.stroke(civilSquarePath);
+      break;
+
+    case 'BIRD':
+      ctx.stroke(birdSquarePath);
+      break;
+
+    default:
+      ctx.stroke(unknownSquarePath);
+      break;
+  }
+
+  if (isSelected) {
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.5;
+    ctx.stroke(selectionBracketsPath);
+  }
+
+  ctx.restore();
+}
+

@@ -1,0 +1,463 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { PALETTE } from '@/render/palette';
+import { drawTrackSymbol, drawGroundTruthSymbol } from '@/render/symbols';
+import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
+import type { TrueClass, TrackClass, EffectorId, ZoneSpec, SimEvent } from '@/sim/types';
+
+export interface ReplayEntity {
+  id: string;
+  trackNo: string | null;
+  pos: { x: number; y: number; z?: number };
+  vel?: { x: number; y: number; z?: number };
+  trueClass: TrueClass;
+  traineeLabel: TrackClass;
+  step?: string;
+  masked?: boolean;
+  q?: number;
+  ghostSigmaM?: number;
+  lifecycle?: string;
+}
+
+export interface ReplayCanvasProps {
+  tMs: number;
+  entities: ReplayEntity[];
+  events?: SimEvent[];
+  zones?: ZoneSpec[];
+  showGroundTruth?: boolean;
+  onToggleGroundTruth?: () => void;
+  selectedTrackNo?: string | null;
+  onSelectTrack?: (trackNo: string | null) => void;
+  maxRangeM?: number;
+  className?: string;
+}
+
+const CANVAS_SIZE = 360;
+const SCOPE_RADIUS = 165;
+const SWEEP_PERIOD_MS = 2000;
+
+export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
+  tMs,
+  entities,
+  events = [],
+  zones = [],
+  showGroundTruth: controlledGroundTruth,
+  onToggleGroundTruth,
+  selectedTrackNo,
+  onSelectTrack,
+  maxRangeM = 5000,
+  className = '',
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [internalGroundTruth, setInternalGroundTruth] = useState<boolean>(false);
+  const isGroundTruthActive = controlledGroundTruth ?? internalGroundTruth;
+
+  const handleToggle = useCallback(() => {
+    if (onToggleGroundTruth) {
+      onToggleGroundTruth();
+    } else {
+      setInternalGroundTruth((prev) => !prev);
+    }
+  }, [onToggleGroundTruth]);
+
+  // Keyboard shortcut [G] for Ground Truth toggle
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key === 'g' || e.key === 'G') {
+        handleToggle();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleToggle]);
+
+  // Prepare static background radar PPI scope (once or on resize)
+  const prepareStaticLayer = useCallback(
+    (width: number, height: number) => {
+      if (typeof document === 'undefined') return null;
+
+      const staticCanvas = document.createElement('canvas');
+      staticCanvas.width = width;
+      staticCanvas.height = height;
+
+      const ctx = staticCanvas.getContext('2d');
+      if (!ctx) return null;
+
+      const cx = width / 2;
+      const cy = height / 2;
+      const scale = SCOPE_RADIUS / maxRangeM;
+
+      // 1. Carbon Base Fill
+      ctx.fillStyle = PALETTE.carbon950;
+      ctx.fillRect(0, 0, width, height);
+
+      // 2. Concentric Range Rings (every 1 km)
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = PALETTE.phosphorDim;
+      ctx.fillStyle = PALETTE.phosphorDim;
+      ctx.font = '9px "JetBrains Mono"';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+
+      for (let r = 1000; r <= maxRangeM; r += 1000) {
+        const ringRadius = r * scale;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const lx = cx + ringRadius * 0.707 + 3;
+        const ly = cy - ringRadius * 0.707 - 3;
+        ctx.fillText(`${r / 1000}k`, lx, ly);
+      }
+
+      // 3. Azimuth Ticks & Cardinal Headings
+      for (let deg = 0; deg < 360; deg += 10) {
+        const rad = ((deg - 90) * Math.PI) / 180;
+        const isCardinal = deg % 90 === 0;
+        const isMajor = deg % 30 === 0;
+        const tickLen = isCardinal ? 8 : isMajor ? 5 : 3;
+
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+
+        const x1 = cx + (SCOPE_RADIUS - tickLen) * cos;
+        const y1 = cy + (SCOPE_RADIUS - tickLen) * sin;
+        const x2 = cx + SCOPE_RADIUS * cos;
+        const y2 = cy + SCOPE_RADIUS * sin;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        if (isCardinal) {
+          ctx.fillStyle = PALETTE.phosphor;
+          ctx.font = 'bold 9px "Chakra Petch"';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const labelDist = SCOPE_RADIUS + 9;
+          const text = deg === 0 ? '000' : deg === 90 ? '090' : deg === 180 ? '180' : '270';
+          ctx.fillText(text, cx + labelDist * cos, cy + labelDist * sin);
+          ctx.fillStyle = PALETTE.phosphorDim;
+        }
+      }
+
+      // 4. Center Asset Crosshair at (0, 0)
+      ctx.strokeStyle = PALETTE.phosphor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - 6, cy);
+      ctx.lineTo(cx + 6, cy);
+      ctx.moveTo(cx, cy - 6);
+      ctx.lineTo(cx, cy + 6);
+      ctx.stroke();
+
+      // 5. Known Terrain Zones
+      for (const zone of zones) {
+        if (zone.polygon.length < 3) continue;
+
+        ctx.save();
+        ctx.strokeStyle = zone.type === 'URBAN' ? PALETTE.amber : PALETTE.phosphorDim;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+
+        ctx.beginPath();
+        ctx.moveTo(cx + zone.polygon[0][0] * scale, cy - zone.polygon[0][1] * scale);
+        for (let i = 1; i < zone.polygon.length; i++) {
+          ctx.lineTo(cx + zone.polygon[i][0] * scale, cy - zone.polygon[i][1] * scale);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        // Zone Tag Label
+        ctx.font = '8px "JetBrains Mono"';
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const lx = (zone.polygon[0][0] + zone.polygon[1][0]) / 2;
+        const ly = (zone.polygon[0][1] + zone.polygon[1][1]) / 2;
+        ctx.fillText(`${zone.id} H${zone.heightM}m`, cx + lx * scale, cy - ly * scale);
+        ctx.restore();
+      }
+
+      return staticCanvas;
+    },
+    [maxRangeM, zones]
+  );
+
+  // Redraw Canvas on scrubbed state changes
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+
+    const width = CANVAS_SIZE;
+    const height = CANVAS_SIZE;
+    const cx = width / 2;
+    const cy = height / 2;
+    const scale = SCOPE_RADIUS / maxRangeM;
+
+    // 1. Prepare/cache static layer
+    if (!staticCanvasRef.current) {
+      staticCanvasRef.current = prepareStaticLayer(width, height);
+    }
+    if (staticCanvasRef.current) {
+      ctx.drawImage(staticCanvasRef.current, 0, 0);
+    }
+
+    // 2. Render historical rotating radar sweep line driven by scrubbed tMs
+    const sweepProgress = (tMs % SWEEP_PERIOD_MS) / SWEEP_PERIOD_MS;
+    const sweepAngleRad = -Math.PI / 2 + sweepProgress * Math.PI * 2;
+    const wedgeAngleRad = (60 * Math.PI) / 180;
+    const sweepStart = sweepAngleRad - wedgeAngleRad;
+
+    ctx.save();
+    const grad = ctx.createRadialGradient(cx, cy, 10, cx, cy, SCOPE_RADIUS);
+    grad.addColorStop(0, 'rgba(0, 255, 102, 0.04)');
+    grad.addColorStop(1, 'rgba(0, 255, 102, 0.22)');
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, SCOPE_RADIUS, sweepStart, sweepAngleRad, false);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.strokeStyle = PALETTE.phosphor;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + SCOPE_RADIUS * Math.cos(sweepAngleRad), cy + SCOPE_RADIUS * Math.sin(sweepAngleRad));
+    ctx.stroke();
+    ctx.restore();
+
+    // 3. Render Historical Entities
+    for (const entity of entities) {
+      if (entity.lifecycle === 'NEUTRALISED' && entity.step === 'CLOSED') {
+        continue;
+      }
+
+      const isMasked = entity.masked ?? false;
+      const isCoasting = (entity.ghostSigmaM ?? 0) > 0;
+
+      // In trainee mode (Ground Truth OFF), masked targets that are not coasting remain hidden
+      if (!isGroundTruthActive && isMasked && !isCoasting) {
+        continue;
+      }
+
+      const sx = cx + entity.pos.x * scale;
+      const sy = cy - entity.pos.y * scale;
+
+      const distFromCenter = Math.hypot(sx - cx, sy - cy);
+      if (distFromCenter > SCOPE_RADIUS) continue;
+
+      const isSelected = entity.trackNo === selectedTrackNo;
+      const ghostSigmaPx = (entity.ghostSigmaM ?? 0) * scale;
+
+      if (!isGroundTruthActive) {
+        // Standard Trainee View: NATO symbols in canonical role colors
+        drawTrackSymbol(
+          ctx,
+          sx,
+          sy,
+          entity.traineeLabel,
+          isSelected,
+          isCoasting,
+          ghostSigmaPx,
+          entity.trackNo,
+          entity.step ?? ''
+        );
+      } else {
+        // Ground Truth Mode [G]: Overlay trueClass in crisp white (#FFFFFF)
+        drawGroundTruthSymbol(ctx, sx, sy, entity.trueClass, isSelected);
+
+        ctx.save();
+        ctx.font = '8px "JetBrains Mono"';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`TRUE: ${entity.trueClass}`, sx + 14, sy - 4);
+
+        // Indicate classification match or mistake
+        const isMatch = entity.traineeLabel === (entity.trueClass as unknown as TrackClass);
+        if (entity.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT' && !isMatch) {
+          ctx.fillStyle = PALETTE.threat;
+          ctx.fillText(`ERR: ${entity.traineeLabel}`, sx + 14, sy + 6);
+        } else {
+          ctx.fillStyle = PALETTE.textDim;
+          ctx.fillText(`LBL: ${entity.traineeLabel}`, sx + 14, sy + 6);
+        }
+        ctx.restore();
+      }
+    }
+
+    // 4. Render Engagement Markers & Oracle Cost Regret
+    for (const ev of events) {
+      if (ev.type !== 'ENGAGE') continue;
+
+      const dt = tMs - ev.tMs;
+      // Show engagement marker within 3.0s window [0, 3000ms]
+      if (dt < 0 || dt > 3000) continue;
+
+      const payload = ev.payload as {
+        effector?: EffectorId;
+        rangeM?: number;
+        killed?: boolean;
+        trueClass?: TrueClass;
+      };
+
+      const matchingEntity = entities.find((e) => e.trackNo === ev.trackNo || e.id === ev.entityId);
+      const ex = matchingEntity ? cx + matchingEntity.pos.x * scale : cx;
+      const ey = matchingEntity ? cy - matchingEntity.pos.y * scale : cy;
+
+      const alphaFade = Math.max(0.15, 1 - dt / 3000);
+      const effector = payload.effector ?? 'RF_SOFTKILL';
+      const rangeM = payload.rangeM ?? (matchingEntity ? Math.hypot(matchingEntity.pos.x, matchingEntity.pos.y) : 1500);
+      const trueClass = matchingEntity?.trueClass ?? payload.trueClass ?? 'HOSTILE_ATTACK';
+
+      // Compute Oracle Solution & Cost Regret
+      const oracle = computeOracleEffector({
+        rangeM,
+        trueClass,
+        emitsRf: true,
+      });
+      const regret = computeCostRegret(effector, oracle.oracleEffector);
+
+      ctx.save();
+      ctx.globalAlpha = alphaFade;
+
+      // Stadiametric Engagement Crosshair Reticle
+      ctx.strokeStyle = PALETTE.threat;
+      ctx.lineWidth = 1.5;
+      const sSize = 16;
+      ctx.strokeRect(ex - sSize / 2, ey - sSize / 2, sSize, sSize);
+
+      ctx.beginPath();
+      ctx.moveTo(ex - sSize, ey);
+      ctx.lineTo(ex - sSize / 2, ey);
+      ctx.moveTo(ex + sSize / 2, ey);
+      ctx.lineTo(ex + sSize, ey);
+      ctx.moveTo(ex, ey - sSize);
+      ctx.lineTo(ex, ey - sSize / 2);
+      ctx.moveTo(ex, ey + sSize / 2);
+      ctx.lineTo(ex, ey + sSize);
+      ctx.stroke();
+
+      // Tactical Regret Badge Card
+      const boxW = 140;
+      const boxH = 34;
+      const boxX = Math.min(width - boxW - 8, Math.max(8, ex + 14));
+      const boxY = Math.min(height - boxH - 8, Math.max(8, ey - 17));
+
+      ctx.fillStyle = 'rgba(13, 17, 23, 0.92)';
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+      ctx.strokeStyle = regret.isOptimal ? PALETTE.phosphor : PALETTE.amber;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+      ctx.font = 'bold 8px "JetBrains Mono"';
+      ctx.fillStyle = PALETTE.text;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`ENGAGE: ${effector}`, boxX + 4, boxY + 4);
+
+      ctx.font = '8px "JetBrains Mono"';
+      ctx.fillStyle = regret.isOptimal ? PALETTE.phosphor : PALETTE.threat;
+      ctx.fillText(`ORACLE: ${oracle.oracleEffector}`, boxX + 4, boxY + 14);
+      ctx.fillText(regret.text, boxX + 4, boxY + 23);
+
+      ctx.restore();
+    }
+  }, [tMs, entities, events, isGroundTruthActive, selectedTrackNo, maxRangeM, prepareStaticLayer]);
+
+  // Click-to-select historical track
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !onSelectTrack) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    const cx = CANVAS_SIZE / 2;
+    const cy = CANVAS_SIZE / 2;
+    const scale = SCOPE_RADIUS / maxRangeM;
+
+    let nearestTrackNo: string | null = null;
+    let nearestDist = 14;
+
+    for (const entity of entities) {
+      if (!entity.trackNo) continue;
+      const ex = cx + entity.pos.x * scale;
+      const ey = cy - entity.pos.y * scale;
+      const d = Math.hypot(clickX - ex, clickY - ey);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestTrackNo = entity.trackNo;
+      }
+    }
+
+    onSelectTrack(nearestTrackNo);
+  };
+
+  const totalSec = Math.floor(tMs / 1000);
+  const ms = tMs % 1000;
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  const clockFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+
+  return (
+    <div
+      className={`relative inline-block w-[360px] h-[360px] bg-carbon-950 border border-line select-none overflow-hidden ${className}`}
+    >
+      <canvas
+        ref={canvasRef}
+        width={CANVAS_SIZE}
+        height={CANVAS_SIZE}
+        onClick={handleCanvasClick}
+        className="block cursor-crosshair"
+      />
+
+      {/* Top HUD Badges */}
+      <div className="absolute top-2 left-2 pointer-events-none text-[9px] font-mono text-phosphor leading-tight">
+        <span>AAR REPLAY // 360px</span>
+        <span className="block text-text-dim">SCOPE: 5.0 km</span>
+      </div>
+
+      <div className="absolute top-2 right-2 flex flex-col items-end gap-1.5 z-10">
+        <div className="text-[10px] font-clock font-bold text-text-main bg-carbon-900/80 px-1.5 py-0.5 border border-line">
+          {`T+${clockFormatted}`}
+        </div>
+
+        {/* Ground Truth Toggle Button [G] */}
+        <button
+          type="button"
+          onClick={handleToggle}
+          title="Toggle Ground Truth Overlay [G]"
+          className={`px-2 py-0.5 text-[9px] font-mono font-bold tracking-wider border transition-colors ${
+            isGroundTruthActive
+              ? 'bg-white text-carbon-950 border-white shadow-none'
+              : 'bg-carbon-900 text-text-dim border-line hover:border-text-dim hover:text-text-main'
+          }`}
+        >
+          {`[G] GROUND TRUTH: ${isGroundTruthActive ? 'ON' : 'OFF'}`}
+        </button>
+      </div>
+
+      {/* Bottom Status Legend */}
+      <div className="absolute bottom-1.5 left-2 pointer-events-none text-[8px] font-mono text-text-dim">
+        <span>SWEEP: 30 RPM HISTORICAL</span>
+      </div>
+      <div className="absolute bottom-1.5 right-2 pointer-events-none text-[8px] font-mono text-text-dim">
+        <span>ORACLE: CER OPTIMAL ENGINE</span>
+      </div>
+    </div>
+  );
+};
