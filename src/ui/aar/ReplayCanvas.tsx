@@ -323,17 +323,20 @@ function drawCrosshairReticle(ctx: CanvasRenderingContext2D, ex: number, ey: num
   ctx.stroke();
 }
 
-function renderRegretBadge(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  ex: number,
-  ey: number,
-  effector: EffectorId,
-  oracleEffector: EffectorId | 'HOLD_FIRE',
-  regretText: string,
-  isOptimal: boolean
-): void {
+interface RegretBadgeParams {
+  ctx: CanvasRenderingContext2D;
+  width: number;
+  height: number;
+  ex: number;
+  ey: number;
+  effector: EffectorId;
+  oracleEffector: EffectorId | 'HOLD_FIRE';
+  regretText: string;
+  isOptimal: boolean;
+}
+
+function renderRegretBadge(params: RegretBadgeParams): void {
+  const { ctx, width, height, ex, ey, effector, oracleEffector, regretText, isOptimal } = params;
   const boxW = 140;
   const boxH = 34;
   const boxX = Math.min(width - boxW - 8, Math.max(8, ex + 14));
@@ -367,18 +370,21 @@ function resolveEmitsRf(payload: EngagePayload, matchingEntity?: ReplayEntity): 
   return true;
 }
 
-function drawHistoricalEngagements(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  cx: number,
-  cy: number,
-  scale: number,
-  tMs: number,
-  entities: ReplayEntity[],
-  events: SimEvent[],
-  zones: ZoneSpec[]
-): void {
+interface EngagementRenderParams {
+  ctx: CanvasRenderingContext2D;
+  width: number;
+  height: number;
+  cx: number;
+  cy: number;
+  scale: number;
+  tMs: number;
+  entities: ReplayEntity[];
+  events: SimEvent[];
+  zones: ZoneSpec[];
+}
+
+function drawHistoricalEngagements(params: EngagementRenderParams): void {
+  const { ctx, width, height, cx, cy, scale, tMs, entities, events, zones } = params;
   for (const ev of events) {
     if (ev.type !== 'ENGAGE') continue;
 
@@ -428,17 +434,17 @@ function drawHistoricalEngagements(
     });
     const regret = computeCostRegret(effector, oracle.oracleEffector);
 
-    renderRegretBadge(
+    renderRegretBadge({
       ctx,
       width,
       height,
       ex,
       ey,
       effector,
-      oracle.oracleEffector,
-      regret.text,
-      regret.isOptimal
-    );
+      oracleEffector: oracle.oracleEffector,
+      regretText: regret.text,
+      isOptimal: regret.isOptimal,
+    });
 
     ctx.restore();
   }
@@ -550,7 +556,18 @@ export const ReplayCanvas: React.FC<ReplayCanvasProps> = ({
     drawHistoricalEntities(ctx, cx, cy, scale, entities, isGroundTruthActive, selectedTrackNo);
 
     // 4. Render Engagement Markers & Oracle Cost Regret
-    drawHistoricalEngagements(ctx, width, height, cx, cy, scale, tMs, entities, events, zones);
+    drawHistoricalEngagements({
+      ctx,
+      width,
+      height,
+      cx,
+      cy,
+      scale,
+      tMs,
+      entities,
+      events,
+      zones,
+    });
   }, [tMs, entities, events, isGroundTruthActive, selectedTrackNo, maxRangeM, zones, prepareStaticLayer]);
 
   // Click-to-select historical track
