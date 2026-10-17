@@ -5,14 +5,16 @@ import type { TrackEntity, ZoneSpec } from '@/sim/types';
 export class RadarLayer {
   private staticCanvas: HTMLCanvasElement | null = null;
   private maxRangeM: number = 5000;
+  private prevMap: Map<string, TrackEntity> = new Map();
 
   constructor(maxRangeM: number = 5000) {
     this.maxRangeM = maxRangeM;
   }
 
   /**
-   * Pre-render static base layer (rings, cardinal ticks, terrain zones)
-   * to an off-screen canvas to avoid redraw cost each frame.
+   * Pre-renders the static PPI layer (concentric rings, bearing ticks, cardinal labels,
+   * asset crosshair, and terrain zones) onto an off-screen canvas.
+   * This executes only once or upon window resize, eliminating static draw cost at 60 fps.
    */
   public prepareStaticLayer(width: number, height: number, zones: ZoneSpec[] = []): void {
     if (!this.staticCanvas) {
@@ -47,23 +49,26 @@ export class RadarLayer {
       ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Label at 045 deg
+      // Range label at 045 deg bearing
       const lx = cx + ringRadius * 0.707 + 3;
       const ly = cy - ringRadius * 0.707 - 3;
       ctx.fillText(`${r / 1000}k`, lx, ly);
     }
 
-    // 3. Azimuth ticks & Cardinal labels
+    // 3. Azimuth ticks & Cardinal headings
     for (let deg = 0; deg < 360; deg += 10) {
       const rad = ((deg - 90) * Math.PI) / 180;
       const isCardinal = deg % 90 === 0;
       const isMajor = deg % 30 === 0;
       const tickLen = isCardinal ? 10 : isMajor ? 6 : 3;
 
-      const x1 = cx + (radius - tickLen) * Math.cos(rad);
-      const y1 = cy + (radius - tickLen) * Math.sin(rad);
-      const x2 = cx + radius * Math.cos(rad);
-      const y2 = cy + radius * Math.sin(rad);
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+
+      const x1 = cx + (radius - tickLen) * cos;
+      const y1 = cy + (radius - tickLen) * sin;
+      const x2 = cx + radius * cos;
+      const y2 = cy + radius * sin;
 
       ctx.beginPath();
       ctx.moveTo(x1, y1);
@@ -76,15 +81,15 @@ export class RadarLayer {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const labelRadius = radius + 10;
-        const lx = cx + labelRadius * Math.cos(rad);
-        const ly = cy + labelRadius * Math.sin(rad);
+        const lx = cx + labelRadius * cos;
+        const ly = cy + labelRadius * sin;
         const text = deg === 0 ? '000' : deg === 90 ? '090' : deg === 180 ? '180' : '270';
         ctx.fillText(text, lx, ly);
         ctx.fillStyle = PALETTE.phosphorDim;
       }
     }
 
-    // 4. Center asset crosshair
+    // 4. Center asset crosshair at (0, 0)
     ctx.strokeStyle = PALETTE.phosphor;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -103,30 +108,35 @@ export class RadarLayer {
       ctx.setLineDash([4, 4]);
 
       ctx.beginPath();
-      const [startPx, startPy] = this.worldToScreen(zone.polygon[0][0], zone.polygon[0][1], cx, cy, scale);
+      const startPx = cx + zone.polygon[0][0] * scale;
+      const startPy = cy - zone.polygon[0][1] * scale;
       ctx.moveTo(startPx, startPy);
 
       for (let i = 1; i < zone.polygon.length; i++) {
-        const [px, py] = this.worldToScreen(zone.polygon[i][0], zone.polygon[i][1], cx, cy, scale);
+        const px = cx + zone.polygon[i][0] * scale;
+        const py = cy - zone.polygon[i][1] * scale;
         ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.stroke();
 
-      // Zone tag
+      // Zone tag label
       ctx.font = '9px "JetBrains Mono"';
       ctx.fillStyle = ctx.strokeStyle;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const labelX = (zone.polygon[0][0] + zone.polygon[1][0]) / 2;
       const labelY = (zone.polygon[0][1] + zone.polygon[1][1]) / 2;
-      const [tagPx, tagPy] = this.worldToScreen(labelX, labelY, cx, cy, scale);
-      ctx.fillText(`${zone.id} H${zone.heightM}m`, tagPx, tagPy);
+      ctx.fillText(`${zone.id} H${zone.heightM}m`, cx + labelX * scale, cy - labelY * scale);
 
       ctx.restore();
     }
   }
 
+  /**
+   * Dynamic frame rendering at 60 fps.
+   * Performs zero object allocations during the loop to maintain 60 fps on Intel i3 GPUs.
+   */
   public renderDynamic(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -143,16 +153,16 @@ export class RadarLayer {
     const radius = Math.min(cx, cy) - 15;
     const scale = radius / this.maxRangeM;
 
-    // 1. Prepare static layer if not cached or resized
+    // 1. Ensure static background layer is ready
     if (!this.staticCanvas || this.staticCanvas.width !== width || this.staticCanvas.height !== height) {
       this.prepareStaticLayer(width, height, zones);
     }
 
-    // 2. Phosphor afterglow fade overlay
-    ctx.fillStyle = 'rgba(13, 17, 23, 0.12)';
+    // 2. Phosphor afterglow fade overlay: exact rgba(13,17,23,0.08)
+    ctx.fillStyle = 'rgba(13, 17, 23, 0.08)';
     ctx.fillRect(0, 0, width, height);
 
-    // Composite static background
+    // Composite static background underneath afterglow
     if (this.staticCanvas) {
       ctx.save();
       ctx.globalCompositeOperation = 'destination-over';
@@ -160,7 +170,7 @@ export class RadarLayer {
       ctx.restore();
     }
 
-    // 3. Render 30 RPM rotating radar sweep (60-deg fading wedge)
+    // 3. Render 30 RPM rotating radar sweep line with phosphor wedge
     ctx.save();
     const wedgeAngleRad = (60 * Math.PI) / 180;
     const sweepStart = sweepAngleRad - wedgeAngleRad;
@@ -176,7 +186,7 @@ export class RadarLayer {
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Leading sweep line
+    // Leading phosphor sweep line
     ctx.strokeStyle = PALETTE.phosphor;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -185,29 +195,38 @@ export class RadarLayer {
     ctx.stroke();
     ctx.restore();
 
-    // 4. Render Tracks and Entities
+    // 4. Update lookup map for prev entities (zero per-entity closure allocations)
+    this.prevMap.clear();
+    for (let i = 0; i < prevEntities.length; i++) {
+      this.prevMap.set(prevEntities[i].id, prevEntities[i]);
+    }
+
+    // 5. Render Tracks and Entities with 60 fps lerp
     for (let i = 0; i < currEntities.length; i++) {
       const curr = currEntities[i];
       if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED' && curr.lifecycle !== 'NEUTRALISED') {
         continue;
       }
 
-      // Find matching prev entity for lerping
-      const prev = prevEntities.find((p) => p.id === curr.id) || curr;
-
+      // Linear position interpolation between prev and curr ticks
+      const prev = this.prevMap.get(curr.id) ?? curr;
       const lerpedX = prev.pos.x * (1 - alpha) + curr.pos.x * alpha;
       const lerpedY = prev.pos.y * (1 - alpha) + curr.pos.y * alpha;
 
-      const [sx, sy] = this.worldToScreen(lerpedX, lerpedY, cx, cy, scale);
+      // Inlined world-to-screen (zero array allocations)
+      const sx = cx + lerpedX * scale;
+      const sy = cy - lerpedY * scale;
 
-      // Check within scope bounds
-      if (Math.hypot(sx - cx, sy - cy) > radius) {
+      // Scope clipping check
+      const distFromCenter = Math.hypot(sx - cx, sy - cy);
+      if (distFromCenter > radius) {
         continue;
       }
 
       const isSelected = curr.trackNo === selectedTrackNo;
       const ghostSigmaPx = curr.ghostSigmaM * scale;
 
+      // Draw NATO track symbol (using pooled Path2D templates)
       drawTrackSymbol(
         ctx,
         sx,
@@ -220,11 +239,13 @@ export class RadarLayer {
         curr.step
       );
 
-      // Velocity vector (10s travel projection)
-      if (curr.lifecycle === 'ACTIVE' && Math.hypot(curr.vel.x, curr.vel.y) > 0.5) {
+      // Velocity projection vector (10s travel prediction line)
+      const speedSq = curr.vel.x * curr.vel.x + curr.vel.y * curr.vel.y;
+      if (curr.lifecycle === 'ACTIVE' && speedSq > 0.25) {
         const projX = lerpedX + curr.vel.x * 10;
         const projY = lerpedY + curr.vel.y * 10;
-        const [px, py] = this.worldToScreen(projX, projY, cx, cy, scale);
+        const px = cx + projX * scale;
+        const py = cy - projY * scale;
 
         ctx.save();
         ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphorDim;
@@ -236,17 +257,5 @@ export class RadarLayer {
         ctx.restore();
       }
     }
-  }
-
-  private worldToScreen(
-    wx: number,
-    wy: number,
-    cx: number,
-    cy: number,
-    scale: number
-  ): [number, number] {
-    // wx: east-positive, wy: north-positive
-    // screen: cx + wx * scale, cy - wy * scale
-    return [cx + wx * scale, cy - wy * scale];
   }
 }
