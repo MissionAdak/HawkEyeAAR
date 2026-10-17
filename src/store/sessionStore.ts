@@ -57,8 +57,9 @@ export interface SessionState {
 
 function getQuantisedTick(): { tRawMs: number; applyTick: number } {
   const currentTick = engineInstance.tickIndex;
-  const currentSimMs = currentTick * 50;
-  const tRawMs = currentSimMs; // In tick loop context
+  const tRawMs = typeof performance !== 'undefined'
+    ? clockInstance.getRawMs()
+    : currentTick * 50;
   const applyTick = Math.max(Math.ceil(tRawMs / 50), currentTick + 1);
   return { tRawMs, applyTick };
 }

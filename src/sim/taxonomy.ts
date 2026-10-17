@@ -18,7 +18,7 @@ export const HOSTILE: ReadonlySet<TrackClass> = new Set([
 ]);
 
 export const SHORT_CODES: Record<TrackClass, string> = {
-  UNKNOWN_EVIDENCE_INSUFFICIENT: '?',
+  UNKNOWN_EVIDENCE_INSUFFICIENT: 'UNK',
   HOSTILE_ATTACK: 'HA',
   HOSTILE_ISR: 'HI',
   SWARM_ELEMENT: 'SW',

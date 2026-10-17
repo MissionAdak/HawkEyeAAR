@@ -10,7 +10,7 @@ import type {
 import { InputQueue } from './inputQueue';
 import { streamSeed, mulberry32 } from './rng';
 import { clockInstance } from './clock';
-import { SHORT_CODES } from './taxonomy';
+import { SHORT_CODES, isHostile } from './taxonomy';
 import { CONFIG } from '@/config';
 
 export interface UiTrackRow {
@@ -82,6 +82,7 @@ export class SimEngine {
     this.activeEffector = 'RF_SOFTKILL';
     this.eoirAzimuthDeg = 0;
     this.killRng = mulberry32(streamSeed(spec.seed, 'kill'));
+    clockInstance.reset();
 
     this.curr = [];
     this.prev = [];
@@ -379,7 +380,7 @@ export class SimEngine {
         const distToPnr = Math.max(0, rangeM - rMin);
         const timeToPnrSec = speedMps > 0 ? Number((distToPnr / speedMps).toFixed(1)) : 999;
 
-        const shortCode = SHORT_CODES[e.traineeLabel] || '?';
+        const shortCode = SHORT_CODES[e.traineeLabel] || 'UNK';
 
         return {
           trackNo: e.trackNo!,
@@ -393,7 +394,7 @@ export class SimEngine {
           timeToPnrSec,
           q: Number(e.q.toFixed(2)),
           cCls: Number(e.cCls.toFixed(2)),
-          isHostile: e.trueClass === 'HOSTILE_ATTACK' || e.trueClass === 'HOSTILE_ISR' || e.trueClass === 'SWARM_ELEMENT',
+          isHostile: isHostile(e.traineeLabel),
         };
       })
       .sort((a, b) => a.timeToPnrSec - b.timeToPnrSec)

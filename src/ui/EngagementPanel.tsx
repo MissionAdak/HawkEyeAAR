@@ -25,8 +25,16 @@ export const EngagementPanel: React.FC = () => {
 
   const activeIdx = getStepIndex(currentStep);
 
-  // Compute live CER for each effector based on notional target value
-  const notionalThreatValue = selectedTrack?.isHostile ? 100000 : 40000;
+  // Compute live CER for each effector based on trainee classification (Rules.md TX-4, SC-1)
+  const selectedLabel = selectedTrack?.label;
+  const notionalThreatValue =
+    selectedLabel === 'HOSTILE_ATTACK'
+      ? (CONFIG.droneClasses.FPV_ATTACK.valueInr ?? 100000)
+      : selectedLabel === 'HOSTILE_ISR'
+        ? (CONFIG.droneClasses.RECON_QUAD.valueInr ?? 40000)
+        : selectedLabel === 'SWARM_ELEMENT'
+          ? (CONFIG.droneClasses.SWARM_ELEMENT.valueInr ?? 50000)
+          : (CONFIG.droneClasses.RECON_QUAD.valueInr ?? 40000);
 
   const calculateCer = (costInr: number) => {
     return Number((costInr / notionalThreatValue).toFixed(3));

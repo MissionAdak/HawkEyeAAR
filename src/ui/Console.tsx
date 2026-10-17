@@ -146,17 +146,20 @@ export const Console: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-screen bg-carbon-950 flex flex-col overflow-hidden select-none">
+    <div className="console bg-carbon-950 overflow-hidden select-none">
       {/* 1. Top Bar (45px) */}
-      <TopBar />
+      <div className="console-top">
+        <TopBar />
+      </div>
 
-      {/* 2. Middle Row: Left Rail (240px) | Center Radar Scope | Right Rail (320px) */}
-      <main className="flex-1 flex overflow-hidden">
-        {/* Left Rail: Track Table */}
+      {/* 2. Left Rail: Track Table (240px) */}
+      <div className="console-left">
         <TrackTable />
+      </div>
 
-        {/* Center Radar Scope Viewport */}
-        <section className="flex-1 bg-carbon-950 flex items-center justify-center relative min-w-0 overflow-hidden">
+      {/* 3. Center Radar Scope Viewport */}
+      <div className="console-center bg-carbon-950">
+        <div className="flex items-center justify-center w-full h-full relative">
           {/* Left Gutter: Range Rings Legend */}
           <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-4 select-none">
             <div className="border-l border-phosphorDim pl-2">
@@ -173,9 +176,9 @@ export const Console: React.FC = () => {
             </div>
           </div>
 
-          {/* 520px x 520px Canvas Frame with Responsive Clamping */}
+          {/* 520px x 520px Canvas Frame bounded by var(--radar) */}
           <div
-            className="radar-frame relative border border-line bg-carbon-950 shadow-2xl flex items-center justify-center"
+            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center"
             style={{
               width: 'var(--radar)',
               height: 'var(--radar)',
@@ -189,7 +192,7 @@ export const Console: React.FC = () => {
               onMouseMove={handleMouseMove}
               onMouseLeave={() => setMousePos(null)}
               onClick={handleCanvasClick}
-              className="w-full h-full cursor-crosshair block"
+              className="cursor-crosshair block"
             />
 
             {/* Overlaid Mode Selector Tabs Inside Canvas (Zero Height Consumption) */}
@@ -244,14 +247,18 @@ export const Console: React.FC = () => {
               <span>INTERPOLATED</span>
             </div>
           </div>
-        </section>
+        </div>
+      </div>
 
-        {/* Right Rail: F2T2EA & Effector Panel */}
+      {/* 4. Right Rail: F2T2EA & Effector Panel (320px) */}
+      <div className="console-right">
         <EngagementPanel />
-      </main>
+      </div>
 
-      {/* 3. Bottom Event Console (110px) */}
-      <EventLog />
+      {/* 5. Bottom Event Console (110px) */}
+      <div className="console-bottom">
+        <EventLog />
+      </div>
     </div>
   );
 };

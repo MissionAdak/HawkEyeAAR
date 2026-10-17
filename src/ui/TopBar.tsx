@@ -1,8 +1,18 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '@/store/sessionStore';
 
 export const TopBar: React.FC = () => {
-  const ui = useSessionStore((s) => s.ui);
+  const { roeText, sensorHealth, formattedClock, mode, difficulty, isPaused } = useSessionStore(
+    useShallow((s) => ({
+      roeText: s.ui.roeText,
+      sensorHealth: s.ui.sensorHealth,
+      formattedClock: s.ui.formattedClock,
+      mode: s.ui.mode,
+      difficulty: s.ui.difficulty,
+      isPaused: s.ui.isPaused,
+    }))
+  );
   const pause = useSessionStore((s) => s.pause);
   const resume = useSessionStore((s) => s.resume);
 
@@ -25,7 +35,7 @@ export const TopBar: React.FC = () => {
           ROE
         </span>
         <span className="text-amber font-mono text-[11px] font-semibold tracking-wide truncate">
-          {ui.roeText}
+          {roeText}
         </span>
       </div>
 
@@ -33,14 +43,14 @@ export const TopBar: React.FC = () => {
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1.5 font-mono text-[11px]">
           <span className="text-text-dim text-[10px]">SENSORS:</span>
-          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(ui.sensorHealth.RADAR)}`}>
-            RDR {ui.sensorHealth.RADAR}
+          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(sensorHealth.RADAR)}`}>
+            RDR {sensorHealth.RADAR}
           </span>
-          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(ui.sensorHealth.EOIR)}`}>
-            EO/IR {ui.sensorHealth.EOIR}
+          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(sensorHealth.EOIR)}`}>
+            EO/IR {sensorHealth.EOIR}
           </span>
-          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(ui.sensorHealth.RF)}`}>
-            RF {ui.sensorHealth.RF}
+          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(sensorHealth.RF)}`}>
+            RF {sensorHealth.RF}
           </span>
         </div>
       </div>
@@ -48,19 +58,19 @@ export const TopBar: React.FC = () => {
       {/* Right: Mission Clock, Mode, Controls */}
       <div className="flex items-center gap-3">
         <div className="font-clock text-lg text-phosphor tracking-widest bg-carbon-950 px-2.5 py-0.5 border border-line">
-          {ui.formattedClock}
+          {formattedClock}
         </div>
 
         <div className="text-[11px] font-mono text-text-dim border border-line px-2 py-0.5 bg-carbon-800">
-          <span className="text-text-main font-semibold">{ui.mode}</span> d={ui.difficulty.toFixed(2)}
+          <span className="text-text-main font-semibold">{mode}</span> d={difficulty.toFixed(2)}
         </div>
 
         <button
-          onClick={() => (ui.isPaused ? resume() : pause())}
+          onClick={() => (isPaused ? resume() : pause())}
           className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
           title="Pause / Resume Sim (P)"
         >
-          {ui.isPaused ? '[P] RESUME' : '[P] PAUSE'}
+          {isPaused ? '[P] RESUME' : '[P] PAUSE'}
         </button>
       </div>
     </header>

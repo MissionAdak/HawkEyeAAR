@@ -33,7 +33,7 @@ describe('Phase 0 Contracts & Guardrails', () => {
         expect(SHORT_CODES[cls]).toBeDefined();
         expect(SHORT_CODES[cls].length).toBeGreaterThanOrEqual(1);
       }
-      expect(SHORT_CODES['UNKNOWN_EVIDENCE_INSUFFICIENT']).toBe('?');
+      expect(SHORT_CODES['UNKNOWN_EVIDENCE_INSUFFICIENT']).toBe('UNK');
     });
   });
 

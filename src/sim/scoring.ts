@@ -152,7 +152,7 @@ export function computeRScore(params: {
 
   if (civilEngaged) deduction += 50;
   if (friendlyEngaged) deduction += 100;
-  if (unclassifiedFired) deduction += 20;
+  if (unclassifiedFired) deduction += CONFIG.scoringWeights.penalties.roeViolationDeduction;
 
   return clamp(100 - deduction);
 }
@@ -173,11 +173,19 @@ export function computeTrackScore(params: {
   const clampedG = clamp(g);
   const clampedR = clamp(r);
 
+  const { hostile, nonHostile } = CONFIG.scoringWeights;
   if (isHostile) {
-    const s = 0.25 * clampedD + 0.20 * clampedC + 0.35 * clampedG + 0.20 * clampedR;
+    const s =
+      hostile.d * clampedD +
+      hostile.c * clampedC +
+      hostile.g * clampedG +
+      hostile.r * clampedR;
     return clamp(s);
   } else {
-    const s = 0.50 * clampedC + 0.25 * clampedG + 0.25 * clampedR;
+    const s =
+      nonHostile.c * clampedC +
+      nonHostile.g * clampedG +
+      nonHostile.r * clampedR;
     return clamp(s);
   }
 }

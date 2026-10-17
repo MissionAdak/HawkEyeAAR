@@ -12,6 +12,7 @@ export class SimClock {
   private speed: number = 1.0;
   private isPaused: boolean = false;
   private isInitialized: boolean = false;
+  private sessionStartWallMs: number = 0;
 
   constructor() {
     this.reset();
@@ -23,6 +24,7 @@ export class SimClock {
     this.accumulatorMs = 0;
     this.speed = 1.0;
     this.isPaused = false;
+    this.sessionStartWallMs = typeof performance !== 'undefined' ? performance.now() : 0;
   }
 
   public setSpeed(speed: number): void {
@@ -74,11 +76,15 @@ export class SimClock {
   }
 
   /**
-   * Helper to compute raw milliseconds relative to the sim start
+   * Helper to compute raw milliseconds relative to the sim start (Rules.md DT-4, R-17)
    */
-  public getRawMs(eventTimeStamp: number, simClockAtLastFrame: number): number {
-    const elapsedSinceFrame = (eventTimeStamp - this.lastFrameTs) * this.speed;
-    return Math.max(0, Math.round(simClockAtLastFrame + elapsedSinceFrame));
+  public getRawMs(eventTimeStamp?: number): number {
+    if (typeof performance === 'undefined') return 0;
+    if (!this.sessionStartWallMs) {
+      this.sessionStartWallMs = performance.now();
+    }
+    const ts = eventTimeStamp ?? performance.now();
+    return Math.max(0, Math.round(ts - this.sessionStartWallMs));
   }
 }
 
