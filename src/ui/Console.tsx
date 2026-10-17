@@ -1,0 +1,257 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { TopBar } from './TopBar';
+import { TrackTable } from './TrackTable';
+import { EngagementPanel } from './EngagementPanel';
+import { EventLog } from './EventLog';
+import { ConsoleRenderer } from '@/render/renderer';
+import { useSessionStore, engineInstance } from '@/store/sessionStore';
+import type { SensorMode } from '@/sim/types';
+
+export const Console: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rendererRef = useRef<ConsoleRenderer | null>(null);
+
+  const activeSensor = useSessionStore((s) => s.ui.activeSensor);
+  const selectedTrack = useSessionStore((s) => s.ui.selectedTrack);
+  const setSensor = useSessionStore((s) => s.setSensor);
+  const designate = useSessionStore((s) => s.designate);
+  const cycleTrack = useSessionStore((s) => s.cycleTrack);
+  const fire = useSessionStore((s) => s.fire);
+  const pause = useSessionStore((s) => s.pause);
+  const resume = useSessionStore((s) => s.resume);
+  const isPaused = useSessionStore((s) => s.ui.isPaused);
+
+  const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
+  const [lowFi, setLowFi] = useState<boolean>(false);
+
+  // Initialize Canvas Renderer Loop
+  useEffect(() => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    // Set internal resolution matching CSS 520x520
+    canvas.width = 520;
+    canvas.height = 520;
+
+    const renderer = new ConsoleRenderer(canvas);
+    rendererRef.current = renderer;
+    renderer.start();
+
+    return () => {
+      renderer.stop();
+      rendererRef.current = null;
+    };
+  }, []);
+
+  // Keyboard navigation & Hotkeys
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if an input is focused
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      switch (e.key) {
+        case '1':
+          setSensor('RADAR');
+          break;
+        case '2':
+          setSensor('EOIR');
+          break;
+        case '3':
+          setSensor('RF');
+          break;
+        case 'Tab':
+          e.preventDefault();
+          cycleTrack(e.shiftKey ? 'PREV' : 'NEXT');
+          break;
+        case ' ':
+          e.preventDefault();
+          if (selectedTrack) {
+            designate(selectedTrack.trackNo, 'KEY');
+          } else {
+            cycleTrack('NEXT');
+          }
+          break;
+        case 'f':
+        case 'F':
+          if (selectedTrack && e.repeat === false) {
+            fire(selectedTrack.trackNo);
+          }
+          break;
+        case 'p':
+        case 'P':
+          if (isPaused) {
+            resume();
+          } else {
+            pause();
+          }
+          break;
+        case 'l':
+        case 'L':
+          setLowFi((prev) => {
+            const next = !prev;
+            rendererRef.current?.setLowFidelity(next);
+            return next;
+          });
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedTrack, isPaused, setSensor, cycleTrack, designate, fire, pause, resume]);
+
+  // Track cursor range/bearing on Canvas
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left - 260; // relative to center
+    const y = 260 - (e.clientY - rect.top); // y-up
+
+    const scale = 245 / 5000; // 245px radius = 5000m
+    const rangeM = Math.hypot(x, y) / scale;
+    const bearingRad = Math.atan2(x, y);
+    let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
+    if (bearingDeg < 0) bearingDeg += 360;
+
+    setMousePos({ brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) });
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left - 260;
+    const clickY = 260 - (e.clientY - rect.top);
+
+    const scale = 245 / 5000;
+    // Find nearest entity within 15px radius
+    let nearestTrackNo: string | null = null;
+    let nearestDist = 15;
+
+    for (const entity of engineInstance.curr) {
+      if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
+      const ex = entity.pos.x * scale;
+      const ey = entity.pos.y * scale;
+      const d = Math.hypot(clickX - ex, clickY - ey);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestTrackNo = entity.trackNo;
+      }
+    }
+
+    if (nearestTrackNo) {
+      designate(nearestTrackNo, 'CLICK');
+    }
+  };
+
+  return (
+    <div className="h-screen w-screen bg-carbon-950 flex flex-col overflow-hidden select-none">
+      {/* 1. Top Bar (45px) */}
+      <TopBar />
+
+      {/* 2. Middle Row: Left Rail (240px) | Center Radar Scope | Right Rail (320px) */}
+      <main className="flex-1 flex overflow-hidden">
+        {/* Left Rail: Track Table */}
+        <TrackTable />
+
+        {/* Center Radar Scope Viewport */}
+        <section className="flex-1 bg-carbon-950 flex items-center justify-center relative min-w-0 overflow-hidden">
+          {/* Left Gutter: Range Rings Legend */}
+          <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-4 select-none">
+            <div className="border-l border-phosphorDim pl-2">
+              <span className="text-phosphor block font-bold">5.0 km</span>
+              <span>MAX RADAR</span>
+            </div>
+            <div className="border-l border-phosphorDim pl-2">
+              <span className="text-text-main block">3.0 km</span>
+              <span>NOMINAL REF</span>
+            </div>
+            <div className="border-l border-amber pl-2">
+              <span className="text-amber block font-bold">0.5 km</span>
+              <span>POINT OF NO RETURN</span>
+            </div>
+          </div>
+
+          {/* 520px x 520px Canvas Frame with Responsive Clamping */}
+          <div
+            className="radar-frame relative border border-line bg-carbon-950 shadow-2xl flex items-center justify-center"
+            style={{
+              width: 'var(--radar)',
+              height: 'var(--radar)',
+            }}
+          >
+            {/* Native HTML5 2D Radar Canvas */}
+            <canvas
+              ref={canvasRef}
+              width={520}
+              height={520}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={() => setMousePos(null)}
+              onClick={handleCanvasClick}
+              className="w-full h-full cursor-crosshair block"
+            />
+
+            {/* Overlaid Mode Selector Tabs Inside Canvas (Zero Height Consumption) */}
+            <div className="absolute top-2 left-2 z-10 flex gap-1 font-display text-[10px]">
+              {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+                <button
+                  key={m}
+                  onClick={() => setSensor(m)}
+                  className={`px-2 py-0.5 border transition-colors ${
+                    activeSensor === m
+                      ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+                      : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+                  }`}
+                >
+                  [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+                </button>
+              ))}
+            </div>
+
+            {/* Overlaid Cursor Bearing / Range Readout */}
+            <div className="absolute top-2 right-2 z-10 font-mono text-[10px] text-text-dim bg-carbon-900/80 border border-line px-2 py-0.5">
+              {mousePos ? (
+                <span>
+                  AZ <span className="text-phosphor">{String(mousePos.brg).padStart(3, '0')}°</span> | RNG{' '}
+                  <span className="text-phosphor">{mousePos.rngKm.toFixed(2)} km</span>
+                </span>
+              ) : (
+                <span>PPI SCOPE 360°</span>
+              )}
+            </div>
+
+            {/* Low-Fidelity Indicator */}
+            {lowFi && (
+              <div className="absolute bottom-2 left-2 z-10 text-[9px] font-mono text-amber border border-amber px-1.5 py-0.5 bg-carbon-900/80">
+                LOW-FIDELITY MODE [L]
+              </div>
+            )}
+          </div>
+
+          {/* Right Gutter: Active Mode Telemetry */}
+          <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-4 select-none">
+            <div className="border-r border-line pr-2 text-right">
+              <span className="text-text-main block font-bold">30 RPM</span>
+              <span>SWEEP RATE</span>
+            </div>
+            <div className="border-r border-line pr-2 text-right">
+              <span className="text-text-main block font-bold">20 Hz</span>
+              <span>DETERMINISTIC SIM</span>
+            </div>
+            <div className="border-r border-line pr-2 text-right">
+              <span className="text-phosphor block font-bold">60 FPS</span>
+              <span>INTERPOLATED</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Right Rail: F2T2EA & Effector Panel */}
+        <EngagementPanel />
+      </main>
+
+      {/* 3. Bottom Event Console (110px) */}
+      <EventLog />
+    </div>
+  );
+};

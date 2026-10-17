@@ -1,0 +1,261 @@
+{
+  "_meta": {
+    "notional": true,
+    "disclaimer": "SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION",
+    "version": "1.1.0"
+  },
+  "droneClasses": {
+    "RECON_QUAD": {
+      "speedMps": 15,
+      "valueInr": 40000,
+      "rcsM2": 0.01,
+      "defaultClass": "HOSTILE_ISR"
+    },
+    "FPV_ATTACK": {
+      "speedMps": 40,
+      "valueInr": 100000,
+      "rcsM2": 0.01,
+      "defaultClass": "HOSTILE_ATTACK"
+    },
+    "SWARM_ELEMENT": {
+      "speedMps": 45,
+      "valueInr": 50000,
+      "rcsM2": 0.01,
+      "defaultClass": "SWARM_ELEMENT"
+    },
+    "LOITERING_MUNITION": {
+      "speedMps": 50,
+      "valueInr": 1000000,
+      "rcsM2": 0.05,
+      "defaultClass": "HOSTILE_ATTACK"
+    },
+    "CIVIL_UAS": {
+      "speedMps": 10,
+      "valueInr": null,
+      "rcsM2": 0.02,
+      "defaultClass": "CIVIL_UAS"
+    },
+    "BIRD": {
+      "speedMps": 6,
+      "valueInr": null,
+      "rcsM2": 0.003,
+      "defaultClass": "BIRD"
+    },
+    "FRIENDLY_UAS": {
+      "speedMps": 20,
+      "valueInr": null,
+      "rcsM2": 0.05,
+      "defaultClass": "FRIENDLY"
+    }
+  },
+  "effectors": {
+    "RF_SOFTKILL": {
+      "id": "RF_SOFTKILL",
+      "name": "RF Soft-Kill / GNSS Denial",
+      "costInr": 100,
+      "pk0": 0.8,
+      "pk0RfSilent": 0.1,
+      "envelopeMinM": 200,
+      "envelopeMaxM": 2000,
+      "we": 0.1,
+      "debrisRadiusM": 0,
+      "tier": "T1_NON_KINETIC",
+      "keyHint": "F",
+      "holdTimeMs": 0
+    },
+    "LASER": {
+      "id": "LASER",
+      "name": "Directed Energy (Laser)",
+      "costInr": 500,
+      "pk0": 0.7,
+      "pk0RfSilent": 0.7,
+      "envelopeMinM": 200,
+      "envelopeMaxM": 1500,
+      "we": 0.1,
+      "debrisRadiusM": 0,
+      "tier": "T1_NON_KINETIC",
+      "keyHint": "F",
+      "holdTimeMs": 0
+    },
+    "GUN": {
+      "id": "GUN",
+      "name": "Gun Burst (12.7/40mm)",
+      "costInr": 20000,
+      "pk0": 0.6,
+      "pk0Swarm": 0.35,
+      "pk0RfSilent": 0.6,
+      "envelopeMinM": 100,
+      "envelopeMaxM": 2000,
+      "we": 0.6,
+      "debrisRadiusM": 150,
+      "tier": "T2_KINETIC",
+      "keyHint": "F",
+      "holdTimeMs": 0
+    },
+    "INTERCEPTOR": {
+      "id": "INTERCEPTOR",
+      "name": "Interceptor Drone",
+      "costInr": 200000,
+      "pk0": 0.8,
+      "pk0RfSilent": 0.8,
+      "envelopeMinM": 500,
+      "envelopeMaxM": 4000,
+      "we": 0.3,
+      "debrisRadiusM": 100,
+      "tier": "T2_KINETIC",
+      "keyHint": "F",
+      "holdTimeMs": 0
+    },
+    "MISSILE": {
+      "id": "MISSILE",
+      "name": "SAM / MANPADS Missile",
+      "costInr": 3000000,
+      "pk0": 0.9,
+      "pk0RfSilent": 0.9,
+      "envelopeMinM": 1000,
+      "envelopeMaxM": 5000,
+      "we": 0.9,
+      "debrisRadiusM": 400,
+      "tier": "T3_HEAVY",
+      "keyHint": "F",
+      "holdTimeMs": 500
+    }
+  },
+  "thresholds": {
+    "qMin": 0.6,
+    "rMinM": 500,
+    "cerUnfavourableThreshold": 10,
+    "radarMaxRangeM": 5000,
+    "eoirMaxRangeDayM": 2500,
+    "eoirMaxRangeNightM": 1750,
+    "rfMaxRangeM": 4000,
+    "radarSweepPeriodMs": 2000,
+    "radarRpm": 30,
+    "antennaHeightM": 15
+  },
+  "zones": {
+    "URBAN": {
+      "defaultHeightM": 40,
+      "defaultShadowM": 800,
+      "defaultRho": 0.8
+    },
+    "RIDGE": {
+      "defaultHeightM": 80,
+      "defaultShadowM": 1200,
+      "defaultRho": 0.0
+    },
+    "FOREST": {
+      "defaultHeightM": 25,
+      "defaultShadowM": 300,
+      "defaultRho": 0.0
+    }
+  },
+  "scoringWeights": {
+    "hostile": {
+      "d": 0.25,
+      "c": 0.20,
+      "g": 0.35,
+      "r": 0.20
+    },
+    "nonHostile": {
+      "c": 0.50,
+      "g": 0.25,
+      "r": 0.25
+    },
+    "threatWeights": {
+      "HOSTILE_ATTACK": 1.0,
+      "HOSTILE_ISR": 0.6,
+      "SWARM_ELEMENT": 0.4,
+      "CIVIL_UAS": 0.3,
+      "BIRD": 0.3,
+      "FRIENDLY": 0.3
+    },
+    "penalties": {
+      "leakerSessionDeduction": 20,
+      "criticalEventDeduction": 25,
+      "roeViolationDeduction": 20
+    }
+  },
+  "classificationMatrix": {
+    "HOSTILE_ATTACK": {
+      "HOSTILE_ATTACK": 100,
+      "HOSTILE_ISR": 60,
+      "SWARM_ELEMENT": 60,
+      "CIVIL_UAS": 0,
+      "BIRD": 0,
+      "FRIENDLY": 0,
+      "UNKNOWN_EVIDENCE_INSUFFICIENT": 25
+    },
+    "HOSTILE_ISR": {
+      "HOSTILE_ATTACK": 60,
+      "HOSTILE_ISR": 100,
+      "SWARM_ELEMENT": 60,
+      "CIVIL_UAS": 0,
+      "BIRD": 0,
+      "FRIENDLY": 0,
+      "UNKNOWN_EVIDENCE_INSUFFICIENT": 25
+    },
+    "SWARM_ELEMENT": {
+      "HOSTILE_ATTACK": 60,
+      "HOSTILE_ISR": 60,
+      "SWARM_ELEMENT": 100,
+      "CIVIL_UAS": 0,
+      "BIRD": 0,
+      "FRIENDLY": 0,
+      "UNKNOWN_EVIDENCE_INSUFFICIENT": 25
+    },
+    "CIVIL_UAS": {
+      "HOSTILE_ATTACK": 20,
+      "HOSTILE_ISR": 20,
+      "SWARM_ELEMENT": 20,
+      "CIVIL_UAS": 100,
+      "BIRD": 50,
+      "FRIENDLY": 30,
+      "UNKNOWN_EVIDENCE_INSUFFICIENT": 40
+    },
+    "BIRD": {
+      "HOSTILE_ATTACK": 20,
+      "HOSTILE_ISR": 20,
+      "SWARM_ELEMENT": 20,
+      "CIVIL_UAS": 50,
+      "BIRD": 100,
+      "FRIENDLY": 30,
+      "UNKNOWN_EVIDENCE_INSUFFICIENT": 40
+    },
+    "FRIENDLY": {
+      "HOSTILE_ATTACK": 20,
+      "HOSTILE_ISR": 20,
+      "SWARM_ELEMENT": 20,
+      "CIVIL_UAS": 30,
+      "BIRD": 30,
+      "FRIENDLY": 100,
+      "UNKNOWN_EVIDENCE_INSUFFICIENT": 40
+    }
+  },
+  "chaos": {
+    "FOG": {
+      "eoirRangeMultiplier": 0.25,
+      "laserPkMultiplier": 0.5,
+      "minDurationMs": 12000,
+      "maxDurationMs": 25000
+    },
+    "JAMMING": {
+      "rfFunctional": false,
+      "softKillPkMultiplier": 0.0,
+      "minDurationMs": 10000,
+      "maxDurationMs": 20000
+    },
+    "RAIN": {
+      "aEnv": 0.6,
+      "falsePlotsMin": 1,
+      "falsePlotsMax": 3,
+      "minDurationMs": 15000,
+      "maxDurationMs": 30000
+    },
+    "RADAR_DROPOUT": {
+      "aEnv": 0.0,
+      "minDurationMs": 3000,
+      "maxDurationMs": 6000
+    }
+  }
+}

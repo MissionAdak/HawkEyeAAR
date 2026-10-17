@@ -1,0 +1,68 @@
+import React from 'react';
+import { useSessionStore } from '@/store/sessionStore';
+
+export const TopBar: React.FC = () => {
+  const ui = useSessionStore((s) => s.ui);
+  const pause = useSessionStore((s) => s.pause);
+  const resume = useSessionStore((s) => s.resume);
+
+  const getPillClass = (status: 'OK' | 'DEG' | 'OUT') => {
+    switch (status) {
+      case 'OK':
+        return 'text-phosphor border-phosphor bg-phosphorDim/30';
+      case 'DEG':
+        return 'text-amber border-amber bg-amber/20 animate-pulse';
+      case 'OUT':
+        return 'text-threat border-threat bg-threat/20 animate-pulse';
+    }
+  };
+
+  return (
+    <header className="h-[45px] w-full bg-carbon-900 border-b border-line px-3 flex items-center justify-between font-display text-xs select-none">
+      {/* Left: ROE Active Banner */}
+      <div className="flex items-center gap-2 max-w-[45%] truncate">
+        <span className="text-[10px] tracking-wider text-text-dim px-1.5 py-0.5 bg-carbon-800 border border-line">
+          ROE
+        </span>
+        <span className="text-amber font-mono text-[11px] font-semibold tracking-wide truncate">
+          {ui.roeText}
+        </span>
+      </div>
+
+      {/* Center: Sensor Health Indicators */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 font-mono text-[11px]">
+          <span className="text-text-dim text-[10px]">SENSORS:</span>
+          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(ui.sensorHealth.RADAR)}`}>
+            RDR {ui.sensorHealth.RADAR}
+          </span>
+          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(ui.sensorHealth.EOIR)}`}>
+            EO/IR {ui.sensorHealth.EOIR}
+          </span>
+          <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(ui.sensorHealth.RF)}`}>
+            RF {ui.sensorHealth.RF}
+          </span>
+        </div>
+      </div>
+
+      {/* Right: Mission Clock, Mode, Controls */}
+      <div className="flex items-center gap-3">
+        <div className="font-clock text-lg text-phosphor tracking-widest bg-carbon-950 px-2.5 py-0.5 border border-line">
+          {ui.formattedClock}
+        </div>
+
+        <div className="text-[11px] font-mono text-text-dim border border-line px-2 py-0.5 bg-carbon-800">
+          <span className="text-text-main font-semibold">{ui.mode}</span> d={ui.difficulty.toFixed(2)}
+        </div>
+
+        <button
+          onClick={() => (ui.isPaused ? resume() : pause())}
+          className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
+          title="Pause / Resume Sim (P)"
+        >
+          {ui.isPaused ? '[P] RESUME' : '[P] PAUSE'}
+        </button>
+      </div>
+    </header>
+  );
+};

@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --radar: min(520px, calc(100vh - 190px));
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #0D1117;
+}
+
+/* Custom 4px tactical scrollbar in phosphor-dim */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #161B22;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #003B1A;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #00FF66;
+}
