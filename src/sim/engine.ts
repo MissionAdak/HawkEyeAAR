@@ -6,12 +6,15 @@ import type {
   UserAction,
   SensorMode,
   EffectorId,
+  TrackClass,
 } from './types';
 import { InputQueue } from './inputQueue';
 import { streamSeed, mulberry32 } from './rng';
 import { clockInstance } from './clock';
 import { SHORT_CODES, isHostile } from './taxonomy';
 import { CONFIG } from '@/config';
+
+export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
 export interface UiTrackRow {
   trackNo: string;
@@ -37,9 +40,9 @@ export interface UiSnapshot {
   selectedTrack: UiTrackRow | null;
   trackRows: UiTrackRow[];
   sensorHealth: {
-    RADAR: 'OK' | 'DEG' | 'OUT';
-    EOIR: 'OK' | 'DEG' | 'OUT';
-    RF: 'OK' | 'DEG' | 'OUT';
+    RADAR: SensorHealthStatus;
+    EOIR: SensorHealthStatus;
+    RF: SensorHealthStatus;
   };
   roeText: string;
   isPaused: boolean;
@@ -64,9 +67,9 @@ export class SimEngine {
   public eoirAzimuthDeg: number = 0;
 
   public sensorHealth: {
-    RADAR: 'OK' | 'DEG' | 'OUT';
-    EOIR: 'OK' | 'DEG' | 'OUT';
-    RF: 'OK' | 'DEG' | 'OUT';
+    RADAR: SensorHealthStatus;
+    EOIR: SensorHealthStatus;
+    RF: SensorHealthStatus;
   } = {
     RADAR: 'OK',
     EOIR: 'OK',
@@ -97,7 +100,7 @@ export class SimEngine {
 
     for (const s of allSpawns) {
       const initialPos = s.waypoints.length > 0 ? { ...s.waypoints[0] } : { x: 2000, y: 2000, z: 120 };
-      const targetPos = s.waypoints.length > 1 ? s.waypoints[s.waypoints.length - 1] : { x: 0, y: 0, z: 20 };
+      const targetPos = s.waypoints.length > 1 ? (s.waypoints.at(-1) ?? { x: 0, y: 0, z: 20 }) : { x: 0, y: 0, z: 20 };
       const dx = targetPos.x - initialPos.x;
       const dy = targetPos.y - initialPos.y;
       const dist = Math.hypot(dx, dy);
@@ -202,42 +205,12 @@ export class SimEngine {
       vel: { ...e.vel },
     }));
 
-    // 3. Update entity positions and state
-    for (const entity of this.curr) {
-      if (entity.lifecycle === 'ACTIVE') {
-        entity.pos.x += entity.vel.x * 0.05;
-        entity.pos.y += entity.vel.y * 0.05;
-        entity.pos.z += entity.vel.z * 0.05;
-
-        // Check distance to asset at (0, 0)
-        const rangeM = Math.hypot(entity.pos.x, entity.pos.y);
-        if (rangeM <= (this.spec.asset.rMinM || CONFIG.thresholds.rMinM) && entity.tPnr === null) {
-          entity.tPnr = currentSimMs;
-          if (entity.lifecycle === 'ACTIVE' && entity.trueClass !== 'FRIENDLY' && entity.trueClass !== 'CIVIL_UAS' && entity.trueClass !== 'BIRD') {
-            entity.lifecycle = 'LEAKED';
-            entity.step = 'CLOSED';
-            this.appendEvent('LEAK', { rangeM, trueClass: entity.trueClass }, entity.trackNo ?? undefined, entity.id);
-          }
-        }
-      }
-    }
+    // 3. Update active entities and check leak conditions
+    this.updateEntities(currentSimMs);
 
     // 4. Periodic snapshot keyframe every 250ms (5 ticks) for instant AAR scrubbing
     if (this.tickIndex % 5 === 0) {
-      const liveEntities = this.curr
-        .filter((e) => e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
-        .map((e) => ({
-          id: e.id,
-          tNo: e.trackNo,
-          x: Math.round(e.pos.x),
-          y: Math.round(e.pos.y),
-          z: Math.round(e.pos.z),
-          step: e.step,
-          q: Number(e.q.toFixed(2)),
-          lbl: e.traineeLabel,
-        }));
-
-      this.appendEvent('SNAPSHOT', { entities: liveEntities });
+      this.emitPeriodicSnapshot();
     }
 
     // 5. Check session completion
@@ -246,76 +219,62 @@ export class SimEngine {
     }
   }
 
+  private updateEntities(currentSimMs: number): void {
+    if (!this.spec) return;
+    const rMinM = this.spec.asset.rMinM || CONFIG.thresholds.rMinM;
+
+    for (const entity of this.curr) {
+      if (entity.lifecycle !== 'ACTIVE') continue;
+
+      entity.pos.x += entity.vel.x * 0.05;
+      entity.pos.y += entity.vel.y * 0.05;
+      entity.pos.z += entity.vel.z * 0.05;
+
+      const rangeM = Math.hypot(entity.pos.x, entity.pos.y);
+      if (rangeM <= rMinM && entity.tPnr === null) {
+        entity.tPnr = currentSimMs;
+        const nonHostile = entity.trueClass === 'FRIENDLY' || entity.trueClass === 'CIVIL_UAS' || entity.trueClass === 'BIRD';
+        if (!nonHostile) {
+          entity.lifecycle = 'LEAKED';
+          entity.step = 'CLOSED';
+          this.appendEvent('LEAK', { rangeM, trueClass: entity.trueClass }, entity.trackNo ?? undefined, entity.id);
+        }
+      }
+    }
+  }
+
+  private emitPeriodicSnapshot(): void {
+    const liveEntities = this.curr
+      .filter((e) => e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
+      .map((e) => ({
+        id: e.id,
+        tNo: e.trackNo,
+        x: Math.round(e.pos.x),
+        y: Math.round(e.pos.y),
+        z: Math.round(e.pos.z),
+        step: e.step,
+        q: Number(e.q.toFixed(2)),
+        lbl: e.traineeLabel,
+      }));
+
+    this.appendEvent('SNAPSHOT', { entities: liveEntities });
+  }
+
   private handleAction(item: UserAction): void {
     const { action, tRawMs } = item;
     switch (action.type) {
-      case 'DESIGNATE': {
-        this.selectedTrackNo = action.trackNo;
-        const target = this.curr.find((e) => e.trackNo === action.trackNo);
-        if (target && target.tDesig === null) {
-          target.tDesig = this.tickIndex * 50;
-          if (target.step === 'FIND') target.step = 'FIX';
-        }
-        this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target?.id, tRawMs);
+      case 'DESIGNATE':
+        this.handleDesignate(action, tRawMs);
         break;
-      }
-
-      case 'CLASSIFY': {
-        const target = this.curr.find((e) => e.trackNo === action.trackNo);
-        if (target) {
-          target.traineeLabel = action.label;
-          if (target.tCls === null) target.tCls = this.tickIndex * 50;
-          if (target.step === 'FIX' || target.step === 'TRACK') {
-            target.step = 'TARGET';
-          }
-          this.appendEvent(
-            'CLASSIFY',
-            { label: action.label, cCls: target.cCls },
-            action.trackNo,
-            target.id,
-            tRawMs
-          );
-        }
+      case 'CLASSIFY':
+        this.handleClassify(action, tRawMs);
         break;
-      }
-
-      case 'SELECT_EFFECTOR': {
+      case 'SELECT_EFFECTOR':
         this.activeEffector = action.effectorId;
         break;
-      }
-
-      case 'FIRE': {
-        const target = this.curr.find((e) => e.trackNo === action.trackNo);
-        if (target) {
-          const rangeM = Math.hypot(target.pos.x, target.pos.y);
-          target.tEng = this.tickIndex * 50;
-          target.engagements += 1;
-          target.weaponUsed = this.activeEffector;
-
-          const u = this.killRng ? this.killRng() : 0.5;
-          const effConfig = CONFIG.effectors[this.activeEffector];
-          const pk = effConfig?.pk0 ?? 0.6;
-          const killed = u <= pk;
-
-          this.appendEvent(
-            'ENGAGE',
-            { effector: this.activeEffector, rangeM, pk, u, killed },
-            action.trackNo,
-            target.id,
-            tRawMs
-          );
-
-          if (killed) {
-            target.lifecycle = 'NEUTRALISED';
-            target.step = 'ASSESS';
-            this.appendEvent('ENGAGE_RESULT', { killed: true, u, pk }, action.trackNo, target.id);
-          } else {
-            this.appendEvent('ENGAGE_RESULT', { killed: false, u, pk }, action.trackNo, target.id);
-          }
-        }
+      case 'FIRE':
+        this.handleFire(action, tRawMs);
         break;
-      }
-
       case 'ASSESS': {
         const target = this.curr.find((e) => e.trackNo === action.trackNo);
         if (target) {
@@ -324,43 +283,88 @@ export class SimEngine {
         }
         break;
       }
-
-      case 'SET_SENSOR': {
+      case 'SET_SENSOR':
         this.activeSensor = action.mode;
         this.appendEvent('SENSOR_SWITCH', { mode: action.mode }, undefined, undefined, tRawMs);
         break;
-      }
-
-      case 'SET_EOIR_AZIMUTH': {
+      case 'SET_EOIR_AZIMUTH':
         this.eoirAzimuthDeg = (action.deg + 360) % 360;
         break;
-      }
-
-      case 'CYCLE_TRACK': {
-        const activeTracks = this.curr.filter((e) => e.trackNo && e.lifecycle === 'ACTIVE');
-        if (activeTracks.length > 0) {
-          const currentIndex = activeTracks.findIndex((e) => e.trackNo === this.selectedTrackNo);
-          let nextIndex = 0;
-          if (action.direction === 'NEXT') {
-            nextIndex = (currentIndex + 1) % activeTracks.length;
-          } else {
-            nextIndex = (currentIndex - 1 + activeTracks.length) % activeTracks.length;
-          }
-          this.selectedTrackNo = activeTracks[nextIndex].trackNo;
-        }
+      case 'CYCLE_TRACK':
+        this.handleCycleTrack(action.direction);
         break;
-      }
-
-      case 'PAUSE': {
+      case 'PAUSE':
         this.appendEvent('SESSION_PAUSE', {});
         break;
-      }
-
-      case 'RESUME': {
+      case 'RESUME':
         this.appendEvent('SESSION_RESUME', {});
         break;
-      }
     }
+  }
+
+  private handleDesignate(action: { trackNo: string; via: 'KEY' | 'CLICK' }, tRawMs?: number): void {
+    this.selectedTrackNo = action.trackNo;
+    const target = this.curr.find((e) => e.trackNo === action.trackNo);
+    if (target?.tDesig === null) {
+      target.tDesig = this.tickIndex * 50;
+      if (target.step === 'FIND') target.step = 'FIX';
+    }
+    this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target?.id, tRawMs);
+  }
+
+  private handleClassify(action: { trackNo: string; label: TrackClass }, tRawMs?: number): void {
+    const target = this.curr.find((e) => e.trackNo === action.trackNo);
+    if (!target) return;
+
+    target.traineeLabel = action.label;
+    target.tCls ??= this.tickIndex * 50;
+    if (target.step === 'FIX' || target.step === 'TRACK') {
+      target.step = 'TARGET';
+    }
+    this.appendEvent(
+      'CLASSIFY',
+      { label: action.label, cCls: target.cCls },
+      action.trackNo,
+      target.id,
+      tRawMs
+    );
+  }
+
+  private handleFire(action: { trackNo: string }, tRawMs?: number): void {
+    const target = this.curr.find((e) => e.trackNo === action.trackNo);
+    if (!target) return;
+
+    const rangeM = Math.hypot(target.pos.x, target.pos.y);
+    target.tEng = this.tickIndex * 50;
+    target.engagements += 1;
+    target.weaponUsed = this.activeEffector;
+
+    const u = this.killRng ? this.killRng() : 0.5;
+    const effConfig = CONFIG.effectors[this.activeEffector];
+    const pk = effConfig?.pk0 ?? 0.6;
+    const killed = u <= pk;
+
+    this.appendEvent(
+      'ENGAGE',
+      { effector: this.activeEffector, rangeM, pk, u, killed },
+      action.trackNo,
+      target.id,
+      tRawMs
+    );
+
+    target.step = killed ? 'ASSESS' : target.step;
+    if (killed) target.lifecycle = 'NEUTRALISED';
+    this.appendEvent('ENGAGE_RESULT', { killed, u, pk }, action.trackNo, target.id);
+  }
+
+  private handleCycleTrack(direction: 'NEXT' | 'PREV'): void {
+    const activeTracks = this.curr.filter((e) => e.trackNo && e.lifecycle === 'ACTIVE');
+    if (activeTracks.length === 0) return;
+
+    const currentIndex = activeTracks.findIndex((e) => e.trackNo === this.selectedTrackNo);
+    const stepOffset = direction === 'NEXT' ? 1 : -1;
+    const nextIndex = (currentIndex + stepOffset + activeTracks.length) % activeTracks.length;
+    this.selectedTrackNo = activeTracks[nextIndex].trackNo;
   }
 
   public buildUiSnapshot(): UiSnapshot {

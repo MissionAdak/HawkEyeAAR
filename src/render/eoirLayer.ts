@@ -6,13 +6,13 @@ import type { TrackEntity, ScenarioSpec } from '@/sim/types';
 const SafePath2D = typeof Path2D !== 'undefined'
   ? Path2D
   : class MockPath2D {
-      moveTo() {}
-      lineTo() {}
-      arc() {}
-      ellipse() {}
-      quadraticCurveTo() {}
-      closePath() {}
-      rect() {}
+      public moveTo(_x: number, _y: number): void { /* Headless stub */ }
+      public lineTo(_x: number, _y: number): void { /* Headless stub */ }
+      public arc(..._args: unknown[]): void { /* Headless stub */ }
+      public ellipse(..._args: unknown[]): void { /* Headless stub */ }
+      public quadraticCurveTo(..._args: unknown[]): void { /* Headless stub */ }
+      public closePath(): void { /* Headless stub */ }
+      public rect(..._args: unknown[]): void { /* Headless stub */ }
     } as unknown as typeof Path2D;
 
 const quadcopterPath = new SafePath2D();
@@ -77,8 +77,18 @@ birdSilhouettePath.lineTo(-5, 12);
 birdSilhouettePath.lineTo(5, 12);
 birdSilhouettePath.lineTo(3, 7);
 
+export interface EoirRenderOptions {
+  currEntities: TrackEntity[];
+  prevEntities: TrackEntity[];
+  alpha: number;
+  azimuthDeg: number;
+  spec: ScenarioSpec | null;
+  fogSeverity?: number;
+  selectedTrackNo?: string | null;
+}
+
 export class EoirLayer {
-  private prevMap: Map<string, TrackEntity> = new Map();
+  private readonly prevMap: Map<string, TrackEntity> = new Map();
   private noiseCanvas: HTMLCanvasElement | null = null;
 
   constructor() {
@@ -97,7 +107,7 @@ export class EoirLayer {
     const data = imgData.data;
     const rng = mulberry32(0x454f4952); // Deterministic seed for EOIR noise
     for (let i = 0; i < data.length; i += 4) {
-      const v = (rng() * 255) | 0;
+      const v = Math.trunc(rng() * 255);
       data[i] = v;
       data[i + 1] = v;
       data[i + 2] = v;
@@ -110,68 +120,88 @@ export class EoirLayer {
     ctx: CanvasRenderingContext2D,
     width: number,
     height: number,
-    currEntities: TrackEntity[],
-    prevEntities: TrackEntity[],
-    alpha: number,
-    azimuthDeg: number,
-    spec: ScenarioSpec | null,
-    fogSeverity: number = 0,
-    selectedTrackNo: string | null = null
+    opts: EoirRenderOptions
   ): void {
-    const isNight = spec?.dayNight === 'NIGHT';
-    const cx = width / 2;
-    const cy = height / 2;
-
-    // 1. Theme Color Tokens
+    const isNight = opts.spec?.dayNight === 'NIGHT';
     const bgFill = isNight ? '#080808' : '#0B1510';
     const reticleColor = isNight ? '#444444' : '#214232';
     const primaryGlow = isNight ? '#FFFFFF' : '#7AE6AC';
     const dimText = isNight ? '#888888' : '#4C8A69';
     const targetHot = isNight ? '#FFFFFF' : '#88FFBA';
 
-    // 2. Base Viewfinder Canvas Fill
+    // 1. Base Viewfinder Canvas Fill & Noise
+    this.drawBackground(ctx, width, height, bgFill);
+
+    // 2. Static Reticle, 30° Tape & Badges
+    this.drawReticleAndHud(ctx, width, height, opts.azimuthDeg, isNight, {
+      reticleColor,
+      primaryGlow,
+      dimText,
+    });
+
+    // 3. Render In-Cone Entities
+    this.drawEntities(ctx, width, height, opts, targetHot, isNight);
+
+    // 4. Fog Chaos Overlay
+    const fogSeverity = opts.fogSeverity ?? 0;
+    if (fogSeverity > 0) {
+      this.drawFogOverlay(ctx, width, height, fogSeverity, isNight);
+    }
+  }
+
+  private drawBackground(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    bgFill: string
+  ): void {
     ctx.fillStyle = bgFill;
     ctx.fillRect(0, 0, width, height);
 
-    // Subtle thermal sensor raster noise
     if (this.noiseCanvas) {
       ctx.save();
       ctx.globalAlpha = 0.2;
       ctx.drawImage(this.noiseCanvas, 0, 0, width, height);
       ctx.restore();
     }
+  }
 
-    // 3. Static HUD & 30° Horizontal FOV Tape
-    ctx.save();
-    ctx.strokeStyle = reticleColor;
-    ctx.lineWidth = 1;
-
-    // Viewfinder Outer Bounding Bracket Frame
+  private drawReticleAndHud(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    azimuthDeg: number,
+    isNight: boolean,
+    colors: { reticleColor: string; primaryGlow: string; dimText: string }
+  ): void {
+    const cx = width / 2;
+    const cy = height / 2;
     const pad = 24;
     const brkLen = 20;
-    // Top-Left
+
+    ctx.save();
+    ctx.strokeStyle = colors.reticleColor;
+    ctx.lineWidth = 1;
+
+    // Viewfinder Bracket Frame
     ctx.beginPath();
     ctx.moveTo(pad, pad + brkLen);
     ctx.lineTo(pad, pad);
     ctx.lineTo(pad + brkLen, pad);
-    // Top-Right
     ctx.moveTo(width - pad - brkLen, pad);
     ctx.lineTo(width - pad, pad);
     ctx.lineTo(width - pad, pad + brkLen);
-    // Bottom-Left
     ctx.moveTo(pad, height - pad - brkLen);
     ctx.lineTo(pad, height - pad);
     ctx.lineTo(pad + brkLen, height - pad);
-    // Bottom-Right
     ctx.moveTo(width - pad - brkLen, height - pad);
     ctx.lineTo(width - pad, height - pad);
     ctx.lineTo(width - pad, height - pad - brkLen);
     ctx.stroke();
 
     // Central Mil-Dot Crosshair
-    ctx.strokeStyle = primaryGlow;
+    ctx.strokeStyle = colors.primaryGlow;
     ctx.beginPath();
-    // Open center gap 12px
     ctx.moveTo(cx - 36, cy);
     ctx.lineTo(cx - 8, cy);
     ctx.moveTo(cx + 8, cy);
@@ -180,7 +210,7 @@ export class EoirLayer {
     ctx.lineTo(cx, cy - 8);
     ctx.moveTo(cx, cy + 8);
     ctx.lineTo(cx, cy + 36);
-    // Stadia tick marks
+
     ctx.moveTo(cx - 20, cy - 3);
     ctx.lineTo(cx - 20, cy + 3);
     ctx.moveTo(cx + 20, cy - 3);
@@ -191,134 +221,108 @@ export class EoirLayer {
     ctx.lineTo(cx + 3, cy + 20);
     ctx.stroke();
 
-    // Small Center Stadiametric Reticle Ring
     ctx.beginPath();
     ctx.arc(cx, cy, 5, 0, Math.PI * 2);
     ctx.stroke();
 
-    // 4. Azimuth Heading Tape at Top (30° FOV: ±15°)
+    // 30° FOV Azimuth Tape
     const tapeY = 38;
-    ctx.strokeStyle = reticleColor;
+    ctx.strokeStyle = colors.reticleColor;
     ctx.beginPath();
     ctx.moveTo(pad + 10, tapeY);
     ctx.lineTo(width - pad - 10, tapeY);
     ctx.stroke();
 
-    // Azimuth Ticks every 5°
-    const pxPerDeg = (width - pad * 2) / 30; // 30 deg cone span
+    const pxPerDeg = (width - pad * 2) / 30;
     for (let offset = -15; offset <= 15; offset += 5) {
       const tx = cx + offset * pxPerDeg;
       const degVal = (azimuthDeg + offset + 360) % 360;
       const isCenter = offset === 0;
 
-      ctx.strokeStyle = isCenter ? primaryGlow : reticleColor;
+      ctx.strokeStyle = isCenter ? colors.primaryGlow : colors.reticleColor;
       ctx.beginPath();
       ctx.moveTo(tx, tapeY - (isCenter ? 6 : 3));
       ctx.lineTo(tx, tapeY + (isCenter ? 6 : 3));
       ctx.stroke();
 
-      ctx.fillStyle = isCenter ? primaryGlow : dimText;
+      ctx.fillStyle = isCenter ? colors.primaryGlow : colors.dimText;
       ctx.font = '9px "JetBrains Mono"';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ctx.fillText(`${String(Math.round(degVal)).padStart(3, '0')}°`, tx, tapeY - 7);
     }
 
-    // 5. Telemetry Badges
+    // Telemetry Badges
     ctx.font = '10px "JetBrains Mono"';
-    ctx.fillStyle = primaryGlow;
+    ctx.fillStyle = colors.primaryGlow;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText('EO/IR THERMAL FLIR', pad + 4, pad + 6);
 
     ctx.font = '9px "JetBrains Mono"';
-    ctx.fillStyle = dimText;
+    ctx.fillStyle = colors.dimText;
     ctx.fillText('FOV: 30° WFOV | NUC: CAL', pad + 4, pad + 18);
     ctx.fillText(isNight ? 'POLARITY: WHITE-HOT' : 'POLARITY: GREY-GREEN', pad + 4, height - pad - 18);
 
     ctx.textAlign = 'right';
-    ctx.fillStyle = primaryGlow;
+    ctx.fillStyle = colors.primaryGlow;
     ctx.fillText(`AZ: ${String(Math.round(azimuthDeg)).padStart(3, '0')}°`, width - pad - 4, pad + 6);
-    ctx.fillStyle = dimText;
+    ctx.fillStyle = colors.dimText;
     ctx.fillText('EL: -01.8° | ZOOM: 1.0x', width - pad - 4, pad + 18);
 
     ctx.restore();
+  }
 
-    // 6. Update Lookup Map for previous entity positions (Zero closure allocations)
+  private drawEntities(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    opts: EoirRenderOptions,
+    targetHot: string,
+    isNight: boolean
+  ): void {
+    const cx = width / 2;
+    const cy = height / 2;
+    const pad = 24;
+
     this.prevMap.clear();
-    for (let i = 0; i < prevEntities.length; i++) {
-      this.prevMap.set(prevEntities[i].id, prevEntities[i]);
+    for (const prev of opts.prevEntities) {
+      this.prevMap.set(prev.id, prev);
     }
 
-    // 7. Render Entities in 30° Viewfinder Cone
-    for (let i = 0; i < currEntities.length; i++) {
-      const curr = currEntities[i];
+    for (const curr of opts.currEntities) {
       if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED') continue;
 
       const prev = this.prevMap.get(curr.id) ?? curr;
-      const lerpedX = prev.pos.x * (1 - alpha) + curr.pos.x * alpha;
-      const lerpedY = prev.pos.y * (1 - alpha) + curr.pos.y * alpha;
-      const lerpedZ = prev.pos.z * (1 - alpha) + curr.pos.z * alpha;
+      const lerpedX = prev.pos.x * (1 - opts.alpha) + curr.pos.x * opts.alpha;
+      const lerpedY = prev.pos.y * (1 - opts.alpha) + curr.pos.y * opts.alpha;
+      const lerpedZ = prev.pos.z * (1 - opts.alpha) + curr.pos.z * opts.alpha;
 
       const rangeM = Math.hypot(lerpedX, lerpedY);
       if (rangeM < 1) continue;
 
-      // Entity Azimuth (East = X, North = Y)
       const targetAzRad = Math.atan2(lerpedX, lerpedY);
       let targetAzDeg = (targetAzRad * 180) / Math.PI;
       if (targetAzDeg < 0) targetAzDeg += 360;
 
-      // Delta relative to sensor boresight
-      let deltaAz = targetAzDeg - azimuthDeg;
+      let deltaAz = targetAzDeg - opts.azimuthDeg;
       while (deltaAz > 180) deltaAz -= 360;
       while (deltaAz < -180) deltaAz += 360;
 
       // 30° Bounding Cone Filter (±15°)
       if (Math.abs(deltaAz) > 15) continue;
 
-      // Calculate Screen X and Screen Y from elevation
       const sx = cx + (deltaAz / 15) * ((width - pad * 2) / 2);
       const elevRad = Math.atan2(lerpedZ - 15, rangeM);
       const elevDeg = (elevRad * 180) / Math.PI;
       const sy = cy - (elevDeg / 10) * ((height - pad * 2) / 2);
 
-      // Inverse Range Scaling: 200m -> scale 1.8, 1000m -> scale 0.6, 2500m -> scale 0.2
       const scale = Math.max(0.2, Math.min(2.2, 500 / Math.max(120, rangeM)));
 
-      ctx.save();
-      ctx.translate(sx, sy);
+      this.drawSilhouette(ctx, curr, sx, sy, scale, targetHot, isNight);
 
-      // Thermal Halo Bloom
-      const haloGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, 18 * scale);
-      haloGrad.addColorStop(0, isNight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(122, 230, 172, 0.5)');
-      haloGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = haloGrad;
-      ctx.beginPath();
-      ctx.arc(0, 0, 18 * scale, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Procedural Vector Silhouette based on Drone Type
-      ctx.scale(scale, scale);
-      ctx.fillStyle = targetHot;
-      ctx.strokeStyle = targetHot;
-      ctx.lineWidth = 1.2;
-
-      if (curr.droneType === 'BIRD') {
-        ctx.fill(birdSilhouettePath);
-        ctx.stroke(birdSilhouettePath);
-      } else if (curr.droneType === 'LOITERING_MUNITION') {
-        ctx.fill(fixedWingPath);
-        ctx.stroke(fixedWingPath);
-      } else {
-        // Quadcopter / Recon Quad / Swarm Element
-        ctx.fill(quadcopterPath);
-        ctx.stroke(quadcopterPath);
-      }
-
-      ctx.restore();
-
-      // Thermal Target Lock Box & Distance Telemetry
-      const isSelected = curr.trackNo === selectedTrackNo;
+      // Target lock box & distance tag
+      const isSelected = curr.trackNo === opts.selectedTrackNo;
       const boxSize = Math.max(16, 24 * scale);
 
       ctx.save();
@@ -335,33 +339,76 @@ export class EoirLayer {
       ctx.fillText(`${curr.trackNo ?? 'TRK'} ${Math.round(rangeM)}m`, sx + boxSize / 2 + 3, sy - boxSize / 2);
       ctx.restore();
     }
+  }
 
-    // 8. Visual Sensor Chaos: Fog Attenuation & White-Noise Haze Overlay
-    if (fogSeverity > 0) {
-      ctx.save();
-      const hazeAlpha = Math.min(0.85, Math.max(0.25, 0.25 + fogSeverity * 0.45));
-      ctx.fillStyle = isNight
-        ? `rgba(200, 200, 200, ${hazeAlpha * 0.5})`
-        : `rgba(140, 175, 155, ${hazeAlpha * 0.5})`;
-      ctx.fillRect(0, 0, width, height);
+  private drawSilhouette(
+    ctx: CanvasRenderingContext2D,
+    entity: TrackEntity,
+    sx: number,
+    sy: number,
+    scale: number,
+    targetHot: string,
+    isNight: boolean
+  ): void {
+    ctx.save();
+    ctx.translate(sx, sy);
 
-      // Composite white-noise grain haze overlay driven by event severity
-      if (this.noiseCanvas) {
-        ctx.globalAlpha = hazeAlpha;
-        ctx.drawImage(this.noiseCanvas, 0, 0, width, height);
-      }
+    const haloGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, 18 * scale);
+    haloGrad.addColorStop(0, isNight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(122, 230, 172, 0.5)');
+    haloGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = haloGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, 18 * scale, 0, Math.PI * 2);
+    ctx.fill();
 
-      // Fog Density Alarm Banner
-      ctx.font = 'bold 10px "Chakra Petch"';
-      ctx.fillStyle = PALETTE.amber;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(
-        `[EO/IR DEG - FOG ACTIVE // THERMAL TRANSMITTANCE ${(100 - fogSeverity * 75).toFixed(0)}%]`,
-        cx,
-        height - 35
-      );
-      ctx.restore();
+    ctx.scale(scale, scale);
+    ctx.fillStyle = targetHot;
+    ctx.strokeStyle = targetHot;
+    ctx.lineWidth = 1.2;
+
+    if (entity.droneType === 'BIRD') {
+      ctx.fill(birdSilhouettePath);
+      ctx.stroke(birdSilhouettePath);
+    } else if (entity.droneType === 'LOITERING_MUNITION') {
+      ctx.fill(fixedWingPath);
+      ctx.stroke(fixedWingPath);
+    } else {
+      ctx.fill(quadcopterPath);
+      ctx.stroke(quadcopterPath);
     }
+
+    ctx.restore();
+  }
+
+  private drawFogOverlay(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    fogSeverity: number,
+    isNight: boolean
+  ): void {
+    const cx = width / 2;
+    ctx.save();
+    const hazeAlpha = Math.min(0.85, Math.max(0.25, 0.25 + fogSeverity * 0.45));
+    ctx.fillStyle = isNight
+      ? `rgba(200, 200, 200, ${hazeAlpha * 0.5})`
+      : `rgba(140, 175, 155, ${hazeAlpha * 0.5})`;
+    ctx.fillRect(0, 0, width, height);
+
+    if (this.noiseCanvas) {
+      ctx.globalAlpha = hazeAlpha;
+      ctx.drawImage(this.noiseCanvas, 0, 0, width, height);
+    }
+
+    ctx.font = 'bold 10px "Chakra Petch"';
+    ctx.fillStyle = PALETTE.amber;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      `[EO/IR DEG - FOG ACTIVE // THERMAL TRANSMITTANCE ${(100 - fogSeverity * 75).toFixed(0)}%]`,
+      cx,
+      height - 35
+    );
+    ctx.restore();
   }
 }

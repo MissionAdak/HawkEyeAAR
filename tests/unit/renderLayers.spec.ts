@@ -80,34 +80,28 @@ describe('EO/IR Thermal Viewfinder Layer (Task P1-06)', () => {
 
     // Day Mode with 0 fog
     expect(() => {
-      layer.render(
-        mockCtx,
-        520,
-        520,
-        entities,
-        entities,
-        0.5,
-        0, // Azimuth 000°
-        { ...demo1Spec, dayNight: 'DAY' } as unknown as ScenarioSpec,
-        0, // fogSeverity = 0
-        'T-01'
-      );
+      layer.render(mockCtx, 520, 520, {
+        currEntities: entities,
+        prevEntities: entities,
+        alpha: 0.5,
+        azimuthDeg: 0,
+        spec: { ...demo1Spec, dayNight: 'DAY' } as unknown as ScenarioSpec,
+        fogSeverity: 0,
+        selectedTrackNo: 'T-01',
+      });
     }).not.toThrow();
 
     // Night Mode with Active Fog Chaos (severity = 0.8)
     expect(() => {
-      layer.render(
-        mockCtx,
-        520,
-        520,
-        entities,
-        entities,
-        0.5,
-        0,
-        { ...demo1Spec, dayNight: 'NIGHT' } as unknown as ScenarioSpec,
-        0.8, // Active Fog
-        'T-01'
-      );
+      layer.render(mockCtx, 520, 520, {
+        currEntities: entities,
+        prevEntities: entities,
+        alpha: 0.5,
+        azimuthDeg: 0,
+        spec: { ...demo1Spec, dayNight: 'NIGHT' } as unknown as ScenarioSpec,
+        fogSeverity: 0.8,
+        selectedTrackNo: 'T-01',
+      });
     }).not.toThrow();
 
     expect(mockCtx.fillRect).toHaveBeenCalled();
@@ -252,11 +246,25 @@ describe('RF Direction-Finding & Spectrum Waterfall Layer (Task P1-07)', () => {
     ];
 
     // Standard RF mode (no jamming)
-    rf.renderDynamic(mockCtx, 520, 520, entities, entities, 0.5, 1000, false, 'T-01');
+    rf.renderDynamic(mockCtx, 520, 520, {
+      currEntities: entities,
+      prevEntities: entities,
+      alpha: 0.5,
+      simTimeMs: 1000,
+      isJamming: false,
+      selectedTrackNo: 'T-01',
+    });
     expect(mockCtx.stroke).toHaveBeenCalled();
 
     // Jamming active (DF lines must be suppressed, jamming noise active)
-    rf.renderDynamic(mockCtx, 520, 520, entities, entities, 0.5, 1200, true, 'T-01');
+    rf.renderDynamic(mockCtx, 520, 520, {
+      currEntities: entities,
+      prevEntities: entities,
+      alpha: 0.5,
+      simTimeMs: 1200,
+      isJamming: true,
+      selectedTrackNo: 'T-01',
+    });
     expect(mockCtx.fillText).toHaveBeenCalled();
   });
 });

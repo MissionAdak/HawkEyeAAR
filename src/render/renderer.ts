@@ -119,30 +119,24 @@ export class ConsoleRenderer {
         }
       }
 
-      this.eoirLayer.render(
-        this.ctx,
-        width,
-        height,
-        engineInstance.curr,
-        engineInstance.prev,
+      this.eoirLayer.render(this.ctx, width, height, {
+        currEntities: engineInstance.curr,
+        prevEntities: engineInstance.prev,
         alpha,
-        eoirAzimuth,
-        engineInstance.spec,
+        azimuthDeg: eoirAzimuth,
+        spec: engineInstance.spec,
         fogSeverity,
-        engineInstance.selectedTrackNo
-      );
+        selectedTrackNo: engineInstance.selectedTrackNo,
+      });
     } else if (activeSensor === 'RF') {
-      this.rfLayer.renderDynamic(
-        this.ctx,
-        width,
-        height,
-        engineInstance.curr,
-        engineInstance.prev,
+      this.rfLayer.renderDynamic(this.ctx, width, height, {
+        currEntities: engineInstance.curr,
+        prevEntities: engineInstance.prev,
         alpha,
-        currentSimMs,
+        simTimeMs: currentSimMs,
         isJamming,
-        engineInstance.selectedTrackNo
-      );
+        selectedTrackNo: engineInstance.selectedTrackNo,
+      });
     }
   }
 }
