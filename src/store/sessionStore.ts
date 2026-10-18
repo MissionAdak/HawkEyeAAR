@@ -38,6 +38,9 @@ export interface SessionState {
   ui: UiSnapshot;
   isSimRunning: boolean;
 
+  isAarOpen: boolean;
+  simSpeed: number;
+
   // Actions pushing onto InputQueue
   designate: (trackNo: string, via?: 'KEY' | 'CLICK') => void;
   classify: (trackNo: string, label: TrackClass) => void;
@@ -49,6 +52,9 @@ export interface SessionState {
   cycleTrack: (direction: 'NEXT' | 'PREV') => void;
   pause: () => void;
   resume: () => void;
+  setSpeed: (speed: number) => void;
+  openAar: () => void;
+  closeAar: () => void;
 
   // Session lifecycle
   loadScenario: (spec: ScenarioSpec) => void;
@@ -57,16 +63,19 @@ export interface SessionState {
 
 function getQuantisedTick(): { tRawMs: number; applyTick: number } {
   const currentTick = engineInstance.tickIndex;
+  const currentSimMs = currentTick * 50;
   const tRawMs = typeof performance !== 'undefined'
-    ? clockInstance.getRawMs()
-    : currentTick * 50;
-  const applyTick = Math.max(Math.ceil(tRawMs / 50), currentTick + 1);
+    ? currentSimMs + (clockInstance.getRawMs() % 50)
+    : currentSimMs;
+  const applyTick = currentTick + 1;
   return { tRawMs, applyTick };
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
   ui: initialSnapshot,
   isSimRunning: false,
+  isAarOpen: false,
+  simSpeed: 1.0,
 
   designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
     const { tRawMs, applyTick } = getQuantisedTick();
@@ -169,8 +178,23 @@ export const useSessionStore = create<SessionState>((set) => ({
     clockInstance.reset();
     set({
       isSimRunning: true,
+      isAarOpen: false,
+      simSpeed: 1.0,
       ui: engineInstance.buildUiSnapshot(),
     });
+  },
+
+  setSpeed: (speed: number) => {
+    clockInstance.setSpeed(speed);
+    set({ simSpeed: speed });
+  },
+
+  openAar: () => {
+    set({ isAarOpen: true });
+  },
+
+  closeAar: () => {
+    set({ isAarOpen: false });
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {

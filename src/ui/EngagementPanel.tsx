@@ -250,6 +250,21 @@ export const EngagementPanel: React.FC = () => {
                   </span>
                 </div>
 
+                {/* In/Out of Envelope Indicator */}
+                {selectedTrack && (
+                  <div className="mt-1">
+                    {isOutOfEnvelope ? (
+                      <div className="text-[9px] text-amber font-mono">
+                        ⚡ TARGET OUT OF RANGE ({selectedTrack.rangeKm.toFixed(2)} km &gt; {(eff.envelopeMaxM / 1000).toFixed(1)} km)
+                      </div>
+                    ) : !isHardBlocked ? (
+                      <div className="text-[9px] text-phosphor font-mono font-bold">
+                        ✓ IN ENVELOPE (OPTIMAL ENGAGEMENT)
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
                 {/* Soft Warnings */}
                 {isUnclassifiedWarning && (
                   <div className="text-[9px] text-threat mt-0.5">
@@ -263,6 +278,10 @@ export const EngagementPanel: React.FC = () => {
                     {isHeavyMissile ? (
                       <button
                         disabled={isHardBlocked}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (selectedTrack && !isHardBlocked) fire(selectedTrack.trackNo);
+                        }}
                         onMouseDown={handleMissileMouseDown}
                         onMouseUp={handleMissileMouseUp}
                         onMouseLeave={handleMissileMouseUp}
@@ -279,7 +298,7 @@ export const EngagementPanel: React.FC = () => {
                             ? `MISSILE BLOCKED (${hardBlockReason})`
                             : missileHoldProgress > 0
                               ? `HOLDING... ${missileHoldProgress.toFixed(0)}%`
-                              : '[HOLD F 500ms] RELEASE MISSILE'}
+                              : '[F / CLICK] RELEASE HEAVY MISSILE'}
                         </span>
                       </button>
                     ) : (
