@@ -18,6 +18,7 @@ export const TopBar: React.FC = () => {
   const simSpeed = useSessionStore((s) => s.simSpeed);
   const setSpeed = useSessionStore((s) => s.setSpeed);
   const openAar = useSessionStore((s) => s.openAar);
+  const openQuickGuide = useSessionStore((s) => s.openQuickGuide);
 
   const getPillClass = (status: 'OK' | 'DEG' | 'OUT') => {
     switch (status) {
@@ -69,7 +70,8 @@ export const TopBar: React.FC = () => {
         </div>
 
         {/* Simulation Speed Toggle */}
-        <div className="flex items-center border border-line bg-carbon-800 text-[10px] font-mono">
+        <div className="flex items-center border border-line bg-carbon-800 text-[10px] font-mono px-1 gap-1">
+          <span className="text-text-dim text-[9px] font-bold">SPD:</span>
           {[1, 2, 4].map((spd) => (
             <button
               key={spd}
@@ -86,10 +88,19 @@ export const TopBar: React.FC = () => {
           ))}
         </div>
 
+        {/* Tactical Guide Button */}
+        <button
+          onClick={openQuickGuide}
+          className="px-2 py-0.5 border border-amber/70 bg-amber/10 text-amber hover:bg-amber hover:text-carbon-950 text-[11px] font-display font-bold tracking-wider transition-all"
+          title="Open Operator Quick-Start Guide & ROE"
+        >
+          [? GUIDE]
+        </button>
+
         {/* AAR Debrief Modal Button */}
         <button
           onClick={openAar}
-          className="px-2.5 py-0.5 border border-phosphor bg-phosphorDim/30 text-phosphor hover:bg-phosphor hover:text-carbon-950 text-[11px] font-display font-bold tracking-wider transition-all"
+          className="px-2 py-0.5 border border-phosphor bg-phosphorDim/30 text-phosphor hover:bg-phosphor hover:text-carbon-950 text-[11px] font-display font-bold tracking-wider transition-all"
           title="Open After Action Review & Scoring Debrief"
         >
           [AAR SCORECARD]

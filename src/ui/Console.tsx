@@ -4,6 +4,7 @@ import { TrackTable } from './TrackTable';
 import { EngagementPanel } from './EngagementPanel';
 import { EventLog } from './EventLog';
 import { HotWash } from './HotWash';
+import { QuickGuide } from './QuickGuide';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode } from '@/sim/types';
@@ -28,6 +29,9 @@ export const Console: React.FC = () => {
   const isAarOpen = useSessionStore((s) => s.isAarOpen);
   const openAar = useSessionStore((s) => s.openAar);
   const closeAar = useSessionStore((s) => s.closeAar);
+  const isQuickGuideOpen = useSessionStore((s) => s.isQuickGuideOpen);
+  const openQuickGuide = useSessionStore((s) => s.openQuickGuide);
+  const closeQuickGuide = useSessionStore((s) => s.closeQuickGuide);
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
@@ -105,6 +109,15 @@ export const Console: React.FC = () => {
         case 'M':
           openAar();
           break;
+        case '?':
+        case 'h':
+        case 'H':
+          openQuickGuide();
+          break;
+        case 'Escape':
+          closeQuickGuide();
+          closeAar();
+          break;
         case 'p':
         case 'P':
           if (isPaused) {
@@ -126,7 +139,7 @@ export const Console: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedTrack, isPaused, setSensor, cycleTrack, designate, classify, assess, fire, pause, resume, openAar]);
+  }, [selectedTrack, isPaused, setSensor, cycleTrack, designate, classify, assess, fire, pause, resume, openAar, openQuickGuide, closeQuickGuide, closeAar]);
 
   // Automatically trigger HotWash AAR when simulation session ends
   useEffect(() => {
@@ -296,6 +309,9 @@ export const Console: React.FC = () => {
 
       {/* 6. Hot-Wash / AAR Scoring Debrief Modal */}
       {isAarOpen && <HotWash onClose={closeAar} />}
+
+      {/* 7. Operator Quick-Start Guide Modal */}
+      {isQuickGuideOpen && <QuickGuide onClose={closeQuickGuide} />}
     </div>
   );
 };

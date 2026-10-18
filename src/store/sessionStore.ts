@@ -39,6 +39,7 @@ export interface SessionState {
   isSimRunning: boolean;
 
   isAarOpen: boolean;
+  isQuickGuideOpen: boolean;
   simSpeed: number;
 
   // Actions pushing onto InputQueue
@@ -55,6 +56,8 @@ export interface SessionState {
   setSpeed: (speed: number) => void;
   openAar: () => void;
   closeAar: () => void;
+  openQuickGuide: () => void;
+  closeQuickGuide: () => void;
 
   // Session lifecycle
   loadScenario: (spec: ScenarioSpec) => void;
@@ -75,6 +78,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   ui: initialSnapshot,
   isSimRunning: false,
   isAarOpen: false,
+  isQuickGuideOpen: false,
   simSpeed: 1.0,
 
   designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
@@ -195,6 +199,14 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   closeAar: () => {
     set({ isAarOpen: false });
+  },
+
+  openQuickGuide: () => {
+    set({ isQuickGuideOpen: true });
+  },
+
+  closeQuickGuide: () => {
+    set({ isQuickGuideOpen: false });
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {
