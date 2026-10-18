@@ -7,6 +7,7 @@ import type { EffectorId } from '@/sim/types';
 export const EngagementPanel: React.FC = () => {
   const selectedTrack = useSessionStore((s) => s.ui.selectedTrack);
   const activeEffector = useSessionStore((s) => s.ui.activeEffector);
+  const sensorHealth = useSessionStore((s) => s.ui.sensorHealth);
   const selectEffector = useSessionStore((s) => s.selectEffector);
   const classify = useSessionStore((s) => s.classify);
   const fire = useSessionStore((s) => s.fire);
@@ -189,13 +190,21 @@ export const EngagementPanel: React.FC = () => {
             const isWarning = cer > 1 && cer <= 10;
             const isHeavyMissile = effId === 'MISSILE';
 
-            // Gating checks
+            // Gating checks (Rules.md SC-10)
             const isTrackQualityBlocked = !selectedTrack || selectedTrack.q < 0.6;
             const isOutOfEnvelope =
               !selectedTrack ||
               selectedTrack.rangeKm * 1000 < eff.envelopeMinM ||
               selectedTrack.rangeKm * 1000 > eff.envelopeMaxM;
-            const isHardBlocked = isTrackQualityBlocked || isOutOfEnvelope;
+            const isRfJamBlocked = effId === 'RF_SOFTKILL' && sensorHealth?.RF === 'OUT';
+            const isHardBlocked = isTrackQualityBlocked || isOutOfEnvelope || isRfJamBlocked;
+            const hardBlockReason = isTrackQualityBlocked
+              ? 'Q < 0.6'
+              : isOutOfEnvelope
+                ? 'OUT ENV'
+                : isRfJamBlocked
+                  ? 'RF JAMMED'
+                  : 'BLOCKED';
 
             const isUnclassifiedWarning =
               selectedTrack?.label === 'UNKNOWN_EVIDENCE_INSUFFICIENT';
@@ -267,7 +276,7 @@ export const EngagementPanel: React.FC = () => {
                         />
                         <span className="relative z-10">
                           {isHardBlocked
-                            ? 'MISSILE HARD-BLOCKED'
+                            ? `MISSILE BLOCKED (${hardBlockReason})`
                             : missileHoldProgress > 0
                               ? `HOLDING... ${missileHoldProgress.toFixed(0)}%`
                               : '[HOLD F 500ms] RELEASE MISSILE'}
@@ -286,7 +295,7 @@ export const EngagementPanel: React.FC = () => {
                             : 'border-phosphor text-phosphor hover:bg-phosphorDim/40'
                         } ${isHardBlocked ? 'opacity-30 cursor-not-allowed' : ''}`}
                       >
-                        {isHardBlocked ? 'RELEASE HARD-BLOCKED' : `[F] RELEASE ${eff.name.toUpperCase()}`}
+                        {isHardBlocked ? `RELEASE BLOCKED (${hardBlockReason})` : `[F] RELEASE ${eff.name.toUpperCase()}`}
                       </button>
                     )}
                   </div>

@@ -6,6 +6,7 @@ import {
   computeGScore,
   computeRScore,
   computeTrackScore,
+  computeSessionScore,
   getGrade,
 } from '@/sim/scoring';
 
@@ -176,4 +177,54 @@ describe('Scoring Mathematics & Boundary Verification', () => {
       expect(getGrade(0)).toBe('NEEDS_RETRAINING');
     });
   });
+
+  describe('Session Score Aggregation (Rules.md SC-3)', () => {
+    it('calculates weighted score across hostile and decoy tracks', () => {
+      // 1 Hostile Attack (weight 1.0, score 100) and 1 Decoy Civil UAS (weight 0.3, score 100)
+      const score = computeSessionScore({
+        trackScores: [
+          { trackScore: 100, trueClass: 'HOSTILE_ATTACK' },
+          { trackScore: 100, trueClass: 'CIVIL_UAS' },
+        ],
+        leakersCount: 0,
+        criticalEventsCount: 0,
+      });
+      expect(score).toBe(100);
+    });
+
+    it('penalizes leakers by 20 points per leaker', () => {
+      const score = computeSessionScore({
+        trackScores: [
+          { trackScore: 100, trueClass: 'HOSTILE_ATTACK' },
+        ],
+        leakersCount: 1,
+        criticalEventsCount: 0,
+      });
+      expect(score).toBe(80);
+    });
+
+    it('penalizes critical events (civilian/friendly engaged) by 25 points', () => {
+      const score = computeSessionScore({
+        trackScores: [
+          { trackScore: 100, trueClass: 'HOSTILE_ATTACK' },
+        ],
+        leakersCount: 0,
+        criticalEventsCount: 1,
+      });
+      expect(score).toBe(75);
+    });
+
+    it('clamps session score strictly between 0 and 100', () => {
+      const score = computeSessionScore({
+        trackScores: [
+          { trackScore: 20, trueClass: 'HOSTILE_ATTACK' },
+        ],
+        leakersCount: 3, // -60
+        criticalEventsCount: 2, // -50
+      });
+      // 20 - 60 - 50 = -90 -> clamped to 0
+      expect(score).toBe(0);
+    });
+  });
 });
+

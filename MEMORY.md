@@ -22,19 +22,18 @@ Read this first in every new session (human or LLM). Update sections 2, 4 and th
 
 _Last updated: 2026-10-17._
 
-**Completed (Phase 0 Complete + Phase 1 Underway):**
+**Completed (Phase 0 Complete + Phase 1 & Sangeeta's Workstream Complete):**
 - **TASK-P0-01 (Scaffold & Guardrails):** Vite + React 19 + TypeScript (strict) + Tailwind CSS scaffolded. Zero network dependencies. ESLint rules enforce bans on `fetch`, `XMLHttpRequest`, `Math.random`, `Date.now`, and `performance.now` outside designated modules. Production CSP meta tag with `connect-src 'none'`. Bundle size is ~370 KB (well within 8 MB budget).
 - **TASK-P0-02 (Config Pipeline):** `public/config.json` with canonical parameters. Inlined at build-time via `scripts/inline-config.mjs` into `src/config/config.generated.ts` and validated with `zod`.
 - **TASK-P0-03 (Contracts & Taxonomy):** 7 canonical classes in `src/sim/taxonomy.ts` and comprehensive TypeScript interfaces in `src/sim/types.ts`.
 - **TASK-P0-04 (PRNG & Fixed Accumulator Loop):** `mulberry32`, `hash32`, `streamSeed`, `keyedU` in `src/sim/rng.ts`. `SimClock` in `src/sim/clock.ts` maintains exact 200 ticks per 10 s across frame rates. Quantised `InputQueue` in `src/sim/inputQueue.ts`.
 - **TASK-P0-05 (Zustand & Dexie):** `sessionStore.ts` facade pushing quantised actions to `InputQueue` with shallow UI snapshot updates. `db/dexie.ts` database schema with batched `EventRecorder` in `db/recorder.ts`.
 - **TASK-P0-06 (Tactical C2 UI & PPI):** Full zero-overflow responsive layout in `Console.tsx`, `TopBar.tsx`, `TrackTable.tsx`, `EngagementPanel.tsx`, `EventLog.tsx`. 520x520 native HTML5 Canvas 2D PPI with rotating 30 RPM sweep, range rings, afterglow, and DEMO-1 stub entities.
-- **Phase 1 Foundations:**
-  - `src/sim/masking.ts`: Mathematical ray-polygon line-of-sight elevation angle masking for URBAN, RIDGE, FOREST zones.
-  - `src/sim/sensors.ts`: Radar SNR and $P_d$ 4th-power equation, track quality $q$ fusion, $c_{cls}$ confidence fusion, and coasting decay.
-  - `src/sim/behaviours.ts`: Trajectory profiles including `TERRAIN_HUG` (500m descent trigger at 8 m/s).
-  - `src/sim/scoring.ts`: Complete D, C (6x7 matrix), E_econ (CER), G, R, and S formulas with boundary clamping.
-  - Test suites: 48 passing unit tests and 3 passing Playwright e2e tests (verifying air-gap and 1366x768 zero vertical overflow).
+- **TASK-P2-01 & TASK-P2-04 (Sangeeta - F2T2EA State Machine & ROE Transition Guards):** Strict transition guards and demotion rules in `src/sim/roe.ts`. `canTransition` enforces legal state flow. When `q < Q_min`, entities return to `FIX`. Hard blocks (q < 0.6, PNR, out of envelope, RF jamming/silent) vs soft gates (unclassified release, kinetic over dense urban zone with debris expansion, friendly/civil engagements) logging `ROE_VIOLATION` and `FLAG` events.
+- **TASK-P2-03 (Sangeeta - Effector Catalog, Pk Models & Seeded Combat Resolution):** Implemented in `src/sim/effectors.ts`. Range attenuation $g(R)$ with flat middle 60% envelope plateau and linear tapers to envelope edges. Base $Pk_0$ modifiers for swarm dispersion and RF-silent drones. Environmental chaos multipliers $h(chaos)$ for fog (laser halved) and jamming (soft-kill zeroed). Seeded `kill` PRNG draw resolution.
+- **TASK-P3-01 & TASK-P3-02 (Sangeeta - Scoring Engine & Oracle Comparison):** Fully verified D, C (6x7 matrix), E_econ, E_time ($R_{opt}$ midpoint), G (with urban collateral cap $G \le 40$), R (debris polygon overlap), track score S, and session score in `src/sim/scoring.ts`. Real-time Oracle engine and cost regret in `src/sim/oracle.ts`.
+- **TASK-P3-03 (Sangeeta - Event-Sourced AAR Metrics Aggregation):** Pure event-sourced aggregator in `src/sim/metrics.ts` reconstructing MET, MDT, MCT, S2S, detToTrack, 7x7 confusion matrix, accuracy, coverage, recall, precision, CER, leakers, leak rate, SAL (with event-duration fallback), and SAT.
+- **Test Suites:** 115 passing unit tests across 13 test suites (`effectors.spec.ts`, `roe.spec.ts`, `metrics.spec.ts`, `scoring.spec.ts`, `oracle.spec.ts`, etc.). Build and lint green.
 
 **In progress:** Phase 1 complete sensor cross-cueing (EO/IR viewfinder, RF waterfall) and DEMO-1 automated golden re-simulation.
 

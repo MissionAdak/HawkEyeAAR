@@ -13,6 +13,9 @@ import { streamSeed, mulberry32 } from './rng';
 import { clockInstance } from './clock';
 import { SHORT_CODES, isHostile } from './taxonomy';
 import { CONFIG } from '@/config';
+import { canTransition, evaluateReleaseGating } from './roe';
+import { resolveEngagement } from './effectors';
+import { aggregateAARMetrics } from './metrics';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
@@ -215,13 +218,15 @@ export class SimEngine {
 
     // 5. Check session completion
     if (currentSimMs >= this.spec.durationMs) {
-      this.appendEvent('SESSION_END', { durationMs: currentSimMs });
+      const finalMetrics = aggregateAARMetrics(this.events, this.spec);
+      this.appendEvent('SESSION_END', { durationMs: currentSimMs, metrics: finalMetrics });
     }
   }
 
   private updateEntities(currentSimMs: number): void {
     if (!this.spec) return;
     const rMinM = this.spec.asset.rMinM || CONFIG.thresholds.rMinM;
+    const qMin = CONFIG.thresholds.qMin;
 
     for (const entity of this.curr) {
       if (entity.lifecycle !== 'ACTIVE') continue;
@@ -239,6 +244,11 @@ export class SimEngine {
           entity.step = 'CLOSED';
           this.appendEvent('LEAK', { rangeM, trueClass: entity.trueClass }, entity.trackNo ?? undefined, entity.id);
         }
+      }
+
+      // Demotion Guard: q < Q_min returns tracked entities to FIX (Rules.md SC-10, R-14)
+      if (entity.q < qMin && (entity.step === 'TRACK' || entity.step === 'TARGET')) {
+        entity.step = 'FIX';
       }
     }
   }
@@ -278,7 +288,11 @@ export class SimEngine {
       case 'ASSESS': {
         const target = this.curr.find((e) => e.trackNo === action.trackNo);
         if (target) {
-          target.step = 'CLOSED';
+          if (action.result === 'KILL') {
+            target.step = 'CLOSED';
+          } else if (action.result === 'NO_KILL') {
+            target.step = target.lifecycle === 'NEUTRALISED' ? 'CLOSED' : 'TARGET';
+          }
           this.appendEvent('ASSESS', { result: action.result }, action.trackNo, target.id, tRawMs);
         }
         break;
@@ -305,11 +319,25 @@ export class SimEngine {
   private handleDesignate(action: { trackNo: string; via: 'KEY' | 'CLICK' }, tRawMs?: number): void {
     this.selectedTrackNo = action.trackNo;
     const target = this.curr.find((e) => e.trackNo === action.trackNo);
-    if (target?.tDesig === null) {
+    if (!target) return;
+
+    if (target.tDesig === null) {
       target.tDesig = this.tickIndex * 50;
-      if (target.step === 'FIND') target.step = 'FIX';
     }
-    this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target?.id, tRawMs);
+
+    if (
+      canTransition(target.step, 'FIX', {
+        q: target.q,
+        isDesignated: true,
+        hasNonUnknownLabel: target.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT',
+        isNeutralised: target.lifecycle === 'NEUTRALISED',
+        isLeaked: target.lifecycle === 'LEAKED',
+      })
+    ) {
+      target.step = 'FIX';
+    }
+
+    this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target.id, tRawMs);
   }
 
   private handleClassify(action: { trackNo: string; label: TrackClass }, tRawMs?: number): void {
@@ -318,9 +346,20 @@ export class SimEngine {
 
     target.traineeLabel = action.label;
     target.tCls ??= this.tickIndex * 50;
-    if (target.step === 'FIX' || target.step === 'TRACK') {
+
+    const hasNonUnknown = action.label !== 'UNKNOWN_EVIDENCE_INSUFFICIENT';
+    if (
+      canTransition(target.step, 'TARGET', {
+        q: target.q,
+        isDesignated: target.tDesig !== null,
+        hasNonUnknownLabel: hasNonUnknown,
+        isNeutralised: target.lifecycle === 'NEUTRALISED',
+        isLeaked: target.lifecycle === 'LEAKED',
+      })
+    ) {
       target.step = 'TARGET';
     }
+
     this.appendEvent(
       'CLASSIFY',
       { label: action.label, cCls: target.cCls },
@@ -335,26 +374,68 @@ export class SimEngine {
     if (!target) return;
 
     const rangeM = Math.hypot(target.pos.x, target.pos.y);
+    const zones = this.spec?.zones || [];
+    const isJammingActive = this.sensorHealth.RF === 'OUT';
+    const isFogActive = this.sensorHealth.EOIR === 'DEG';
+
+    // 1. Evaluate release gating (Hard blocks vs Soft gates)
+    const gating = evaluateReleaseGating({
+      target,
+      effectorId: this.activeEffector,
+      rangeM,
+      zones,
+      isJammingActive,
+    });
+
+    // Hard blocks prevent fire entirely
+    if (gating.isHardBlocked) {
+      return;
+    }
+
+    // 2. Log soft ROE violations
+    for (const v of gating.violations) {
+      this.appendEvent('ROE_VIOLATION', { reason: v, trackNo: action.trackNo }, action.trackNo, target.id);
+    }
+
+    // 3. Log live CER / Unfavourable exchange flag if CER > 10
+    if (gating.isUnfavourableCer) {
+      this.appendEvent('FLAG', { type: 'UNFAVOURABLE_EXCHANGE', cer: gating.cer, trackNo: action.trackNo }, action.trackNo, target.id);
+    }
+
+    // 4. Resolve combat with seeded kill PRNG
     target.tEng = this.tickIndex * 50;
     target.engagements += 1;
     target.weaponUsed = this.activeEffector;
 
-    const u = this.killRng ? this.killRng() : 0.5;
-    const effConfig = CONFIG.effectors[this.activeEffector];
-    const pk = effConfig?.pk0 ?? 0.6;
-    const killed = u <= pk;
+    const killDraw = resolveEngagement(
+      this.activeEffector,
+      rangeM,
+      target,
+      this.killRng ?? (() => 0.5),
+      { isFogActive, isJammingActive }
+    );
 
     this.appendEvent(
       'ENGAGE',
-      { effector: this.activeEffector, rangeM, pk, u, killed },
+      {
+        effector: this.activeEffector,
+        rangeM,
+        pk: killDraw.pk,
+        u: killDraw.u,
+        killed: killDraw.killed,
+        cer: gating.cer,
+        roeGate: gating.roeGate,
+        zoneId: gating.overlappingZone?.id,
+        rhoZone: gating.overlappingZone?.rho ?? 0,
+      },
       action.trackNo,
       target.id,
       tRawMs
     );
 
-    target.step = killed ? 'ASSESS' : target.step;
-    if (killed) target.lifecycle = 'NEUTRALISED';
-    this.appendEvent('ENGAGE_RESULT', { killed, u, pk }, action.trackNo, target.id);
+    target.step = killDraw.killed ? 'ASSESS' : 'TARGET';
+    if (killDraw.killed) target.lifecycle = 'NEUTRALISED';
+    this.appendEvent('ENGAGE_RESULT', { killed: killDraw.killed, u: killDraw.u, pk: killDraw.pk }, action.trackNo, target.id);
   }
 
   private handleCycleTrack(direction: 'NEXT' | 'PREV'): void {
