@@ -1,22 +1,27 @@
+
 import { db, type StoredSimEvent } from './dexie';
 import type { SimEvent } from '@/sim/types';
 
 export class EventRecorder {
-  private sessionUid: string;
+  private readonly sessionUid: string;
   private buffer: StoredSimEvent[] = [];
   private flushIntervalId: number | null = null;
-  private isFlushing: boolean = false;
+  private flushPromise: Promise<void> | null = null;
 
   constructor(sessionUid: string) {
     this.sessionUid = sessionUid;
   }
 
   public start(): void {
-    if (this.flushIntervalId === null && typeof window !== 'undefined') {
-      this.flushIntervalId = window.setInterval(() => {
-        this.flush();
-      }, 1000);
+    if (this.flushIntervalId !== null || typeof window === 'undefined') {
+      return;
     }
+
+    this.flushIntervalId = window.setInterval(() => {
+      void this.flush().catch(() => {
+        // The failed batch remains buffered for a later retry.
+      });
+    }, 1000);
   }
 
   public record(event: SimEvent): void {
@@ -26,27 +31,46 @@ export class EventRecorder {
     });
 
     if (this.buffer.length >= 200 || event.type === 'SESSION_END') {
-      this.flush();
+      void this.flush().catch(() => {
+        // Keep failed events buffered; retry on the next flush.
+      });
     }
   }
 
   public async flush(): Promise<void> {
-    if (this.isFlushing || this.buffer.length === 0) return;
+    // Reuse an in-progress flush instead of starting a competing write.
+    if (this.flushPromise) {
+      return this.flushPromise;
+    }
 
-    this.isFlushing = true;
-    const batch = [...this.buffer];
-    this.buffer = [];
+    this.flushPromise = this.flushPendingEvents();
 
     try {
-      await db.transaction('rw', db.events, async () => {
-        await db.events.bulkAdd(batch);
-      });
-    } catch (err) {
-      console.error('[Recorder Error] Failed to bulkAdd events:', err);
-      // Re-queue items that failed to persist
-      this.buffer.unshift(...batch);
+      await this.flushPromise;
     } finally {
-      this.isFlushing = false;
+      this.flushPromise = null;
+    }
+  }
+
+  private async flushPendingEvents(): Promise<void> {
+    while (this.buffer.length > 0) {
+      const batch = this.buffer.splice(0, this.buffer.length);
+
+      try {
+        await db.transaction('rw', db.events, async () => {
+          await db.events.bulkAdd(batch);
+        });
+      } catch (error) {
+        // Restore the failed batch before events recorded during the write.
+        this.buffer = [...batch, ...this.buffer];
+
+        console.error(
+          '[Recorder Error] Failed to persist events; batch retained:',
+          error
+        );
+
+        throw error;
+      }
     }
   }
 
@@ -55,6 +79,8 @@ export class EventRecorder {
       window.clearInterval(this.flushIntervalId);
       this.flushIntervalId = null;
     }
+
+    // Wait for any existing write and drain all remaining buffered events.
     await this.flush();
   }
 }

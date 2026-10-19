@@ -60,6 +60,7 @@ export class SimEngine {
   public events: SimEvent[] = [];
   public eventSeq: number = 0;
   public inputQueue: InputQueue = new InputQueue();
+  public onEvent: ((event: SimEvent) => void) | null = null;
 
   public activeSensor: SensorMode = 'RADAR';
   public selectedTrackNo: string | null = null;
@@ -77,11 +78,13 @@ export class SimEngine {
   };
 
   private killRng: (() => number) | null = null;
+  private sessionEnded: boolean = false;
 
   public load(spec: ScenarioSpec): void {
     this.spec = spec;
     this.tickIndex = 0;
     this.eventSeq = 0;
+    this.sessionEnded = false;
     this.events = [];
     this.inputQueue.clear();
     this.activeSensor = 'RADAR';
@@ -183,6 +186,13 @@ export class SimEngine {
       payload,
     };
     this.events.push(event);
+
+    try {
+      this.onEvent?.(event);
+    } catch (error) {
+      console.error('[Engine] Event listener failed:', error);
+    }
+
     return event;
   }
 
@@ -214,9 +224,10 @@ export class SimEngine {
     }
 
     // 5. Check session completion
-    if (currentSimMs >= this.spec.durationMs) {
+    if (currentSimMs >= this.spec.durationMs && !this.sessionEnded) {
+      this.sessionEnded = true;
       this.appendEvent('SESSION_END', { durationMs: currentSimMs });
-    }
+}
   }
 
   private updateEntities(currentSimMs: number): void {
@@ -255,6 +266,7 @@ export class SimEngine {
         step: e.step,
         q: Number(e.q.toFixed(2)),
         lbl: e.traineeLabel,
+        trueClass: e.trueClass,
       }));
 
     this.appendEvent('SNAPSHOT', { entities: liveEntities });

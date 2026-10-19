@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { UiSnapshot } from '@/sim/engine';
 import { SimEngine } from '@/sim/engine';
 import { SimClock } from '@/sim/clock';
+import { EventRecorder } from '@/db/recorder';
 import type {
   ScenarioSpec,
   SensorMode,
@@ -12,6 +13,7 @@ import type {
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
 export const clockInstance = new SimClock();
+let activeRecorder: EventRecorder | null = null;
 
 const initialSnapshot: UiSnapshot = {
   tick: 0,
@@ -165,13 +167,46 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   loadScenario: (spec: ScenarioSpec) => {
-    engineInstance.load(spec);
-    clockInstance.reset();
-    set({
-      isSimRunning: true,
-      ui: engineInstance.buildUiSnapshot(),
+  // Stop the previous recorder and preserve its pending events.
+  engineInstance.onEvent = null;
+
+  if (activeRecorder) {
+    void activeRecorder.stop().catch((error) => {
+      console.error('[Recorder] Failed to finish previous session:', error);
     });
-  },
+  }
+
+  // Create a unique ID for this simulation session.
+  const sessionUid =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const recorderForSession = new EventRecorder(sessionUid);
+activeRecorder = recorderForSession;
+
+// Connect this session's recorder before loading the scenario,
+// so that SIM_START is captured too.
+engineInstance.onEvent = (event) => {
+  recorderForSession.record(event);
+
+  if (event.type === 'SESSION_END') {
+    void recorderForSession.stop().catch((error) => {
+      console.error('[Recorder] Failed to finish session:', error);
+    });
+  }
+};
+
+recorderForSession.start();
+
+  engineInstance.load(spec);
+  clockInstance.reset();
+
+  set({
+    isSimRunning: true,
+    ui: engineInstance.buildUiSnapshot(),
+  });
+},
 
   setUiSnapshot: (snapshot: UiSnapshot) => {
     set({ ui: snapshot });
