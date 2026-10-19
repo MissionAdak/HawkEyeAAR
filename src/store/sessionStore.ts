@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { UiSnapshot } from '@/sim/engine';
 import { SimEngine } from '@/sim/engine';
 import { SimClock } from '@/sim/clock';
+import { EventRecorder } from '@/db/recorder';
 import type {
   ScenarioSpec,
   SensorMode,
@@ -12,6 +13,7 @@ import type {
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
 export const clockInstance = new SimClock();
+let activeRecorder: EventRecorder | null = null;
 
 const initialSnapshot: UiSnapshot = {
   tick: 0,
@@ -38,6 +40,10 @@ export interface SessionState {
   ui: UiSnapshot;
   isSimRunning: boolean;
 
+  isAarOpen: boolean;
+  isQuickGuideOpen: boolean;
+  simSpeed: number;
+
   // Actions pushing onto InputQueue
   designate: (trackNo: string, via?: 'KEY' | 'CLICK') => void;
   classify: (trackNo: string, label: TrackClass) => void;
@@ -49,6 +55,11 @@ export interface SessionState {
   cycleTrack: (direction: 'NEXT' | 'PREV') => void;
   pause: () => void;
   resume: () => void;
+  setSpeed: (speed: number) => void;
+  openAar: () => void;
+  closeAar: () => void;
+  openQuickGuide: () => void;
+  closeQuickGuide: () => void;
 
   // Session lifecycle
   loadScenario: (spec: ScenarioSpec) => void;
@@ -67,6 +78,9 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } {
 export const useSessionStore = create<SessionState>((set) => ({
   ui: initialSnapshot,
   isSimRunning: false,
+  isAarOpen: false,
+  isQuickGuideOpen: false,
+  simSpeed: 1.0,
 
   designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
     const { tRawMs, applyTick } = getQuantisedTick();
@@ -165,12 +179,62 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   loadScenario: (spec: ScenarioSpec) => {
+    // Stop the previous recorder and preserve its pending events.
+    engineInstance.onEvent = null;
+
+    if (activeRecorder) {
+      void activeRecorder.stop().catch((error) => {
+        console.error('[Recorder] Failed to finish previous session:', error);
+      });
+    }
+
+    const recorderForSession = new EventRecorder();
+    activeRecorder = recorderForSession;
+
+    // Connect this session's recorder before loading the scenario,
+    // so that SIM_START is captured too.
+    engineInstance.onEvent = (event) => {
+      recorderForSession.record(event);
+
+      if (event.type === 'SESSION_END') {
+        void recorderForSession.stop().catch((error) => {
+          console.error('[Recorder] Failed to finish session:', error);
+        });
+      }
+    };
+
+    recorderForSession.start();
+
     engineInstance.load(spec);
     clockInstance.reset();
+
     set({
       isSimRunning: true,
+      isAarOpen: false,
+      simSpeed: 1.0,
       ui: engineInstance.buildUiSnapshot(),
     });
+  },
+
+  setSpeed: (speed: number) => {
+    clockInstance.setSpeed(speed);
+    set({ simSpeed: speed });
+  },
+
+  openAar: () => {
+    set({ isAarOpen: true });
+  },
+
+  closeAar: () => {
+    set({ isAarOpen: false });
+  },
+
+  openQuickGuide: () => {
+    set({ isQuickGuideOpen: true });
+  },
+
+  closeQuickGuide: () => {
+    set({ isQuickGuideOpen: false });
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {

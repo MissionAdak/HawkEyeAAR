@@ -61,19 +61,26 @@ export const TrackTable: React.FC = () => {
             NO ACTIVE RADAR TRACKS
           </div>
         ) : (
-          trackRows.map((t: UiTrackRow) => {
+          trackRows.map((t: UiTrackRow, idx: number) => {
             const isSelected = t.trackNo === selectedTrackNo;
+            const isPriority = idx === 0 && !selectedTrackNo;
             return (
               <div
                 key={t.trackNo}
                 onClick={() => designate(t.trackNo, 'CLICK')}
-                className={`h-[22px] px-1 flex items-center text-[11px] cursor-pointer transition-colors ${
+                title="Click to lock track"
+                className={`h-[24px] px-1 flex items-center text-[11px] cursor-pointer transition-colors ${
                   isSelected
                     ? 'bg-carbon-800 border-l-2 border-friend'
-                    : 'hover:bg-carbon-800/40'
+                    : isPriority
+                      ? 'bg-phosphor/10 border-l-2 border-phosphor animate-pulse'
+                      : 'hover:bg-carbon-800/60'
                 }`}
               >
-                <div className="w-[44px] font-bold text-text-main pl-1">{t.trackNo}</div>
+                <div className="w-[44px] font-bold text-text-main pl-1 flex items-center gap-1">
+                  {isPriority && <span className="text-phosphor text-[8px]">▶</span>}
+                  <span>{t.trackNo}</span>
+                </div>
                 <div className={`w-[28px] text-center ${getLabelColor(t.label)}`}>
                   {t.shortCode}
                 </div>

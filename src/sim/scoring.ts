@@ -81,6 +81,7 @@ export function computeGScore(params: {
   econScore: number;
   timeScore: number;
   kineticOverDenseZone: boolean;
+  unclassifiedFired?: boolean;
 }): number {
   const {
     isHostile,
@@ -89,6 +90,7 @@ export function computeGScore(params: {
     econScore,
     timeScore,
     kineticOverDenseZone,
+    unclassifiedFired = false,
   } = params;
 
   let g = 0;
@@ -104,8 +106,8 @@ export function computeGScore(params: {
       g = 0;
     }
 
-    // ROE rule SC-8: Kinetic over dense zone caps G at 40
-    if (kineticOverDenseZone) {
+    // ROE rules SC-8 & SC-9: Kinetic over dense zone or firing on UNK caps G at 40
+    if (kineticOverDenseZone || unclassifiedFired) {
       g = Math.min(g, 40);
     }
   } else {
@@ -116,6 +118,10 @@ export function computeGScore(params: {
     } else {
       // Erroneous engagement of neutral/friendly
       g = 0;
+    }
+
+    if (kineticOverDenseZone || unclassifiedFired) {
+      g = Math.min(g, 40);
     }
   }
 
@@ -198,3 +204,33 @@ export function getGrade(score: number): Grade {
   if (score >= 50) return 'DEVELOPING';
   return 'NEEDS_RETRAINING';
 }
+
+/**
+ * Calculates global Session Score in [0, 100] (Rules.md SC-3).
+ * Score = clamp(sum(w_i * S_i) / sum(w_i) - 20 * leakers - 25 * critical)
+ */
+export function computeSessionScore(params: {
+  trackScores: { trackScore: number; trueClass: TrueClass }[];
+  leakersCount: number;
+  criticalEventsCount: number;
+}): number {
+  const { trackScores, leakersCount, criticalEventsCount } = params;
+  if (trackScores.length === 0) return 100;
+
+  const threatWeights = CONFIG.scoringWeights.threatWeights as Record<string, number>;
+  let totalWeightedScore = 0;
+  let totalWeight = 0;
+
+  for (const { trackScore, trueClass } of trackScores) {
+    const w = threatWeights[trueClass] ?? 0.3;
+    totalWeightedScore += w * clamp(trackScore);
+    totalWeight += w;
+  }
+
+  const baseScore = totalWeight > 0 ? totalWeightedScore / totalWeight : 100;
+  const leakerPenalty = leakersCount * CONFIG.scoringWeights.penalties.leakerSessionDeduction;
+  const criticalPenalty = criticalEventsCount * CONFIG.scoringWeights.penalties.criticalEventDeduction;
+
+  return clamp(baseScore - leakerPenalty - criticalPenalty);
+}
+
