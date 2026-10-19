@@ -49,7 +49,7 @@ export interface TrackEntity {
   profile: Profile;
   spawnTMs: number;
   lifecycle: 'DORMANT' | 'ACTIVE' | 'NEUTRALISED' | 'LEAKED' | 'DEPARTED';
-  traineeLabel: TrackClass;
+  traineeLabel: TrackClass | null;
   step: F2T2EAStep;
   q: number;
   cCls: number;
@@ -214,4 +214,13 @@ export interface UserAction {
     | { type: 'CYCLE_TRACK'; direction: 'NEXT' | 'PREV' }
     | { type: 'PAUSE' }
     | { type: 'RESUME' };
+}
+
+export interface WeaknessVector {
+  d: number;
+  c: number;
+  econ: number;
+  r: number;
+  sal: number;
+  sat: number;
 }

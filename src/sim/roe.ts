@@ -244,8 +244,8 @@ export function evaluateReleaseGating(params: {
   // ----------------------------------------------------
   const violations: RoeViolationReason[] = [];
 
-  // Soft Gate 1: Unclassified release (Rules.md SC-9, SC-10)
-  const classifiedOk = target.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT';
+  // Soft Gate 1: Unclassified release (ARCHITECTURE.md 3.1, Rules.md SC-9, SC-10)
+  const classifiedOk = target.traineeLabel !== null && target.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT';
   if (!classifiedOk) {
     violations.push('UNCLASSIFIED_RELEASE');
   }

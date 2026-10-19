@@ -19,3 +19,19 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# AI & Agent local tooling / scratch
+.agent/
+.agents/
+.gemini/
+.gsd/
+adapters/
+model_capabilities.yaml
+VERSION
+GSD-STYLE.md
+PROJECT_RULES.md
+DRISHTI_CUAS_ANTIGRAVITY_HANDOFF_CONTEXT.md
+scripts/validate-*
+scripts/search_repo.*
+scripts/setup_search.*
+

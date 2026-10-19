@@ -60,3 +60,18 @@ export function computeCoastingState(
 
   return { q, ghostSigmaM };
 }
+
+/**
+ * Calculates Radar SNR and Probability of Detection (Pd) based on RCS, Range, and environment attenuation.
+ * Complies with PRD 3.2 radar equation.
+ */
+export function calculateRadarPd(
+  rcsM2: number,
+  rangeM: number,
+  aEnv: number = 1.0
+): { snr: number; pd: number } {
+  if (rangeM <= 0 || aEnv <= 0) return { snr: 0, pd: 0 };
+  const snr = (rcsM2 / RCS_REF) * Math.pow(R_REF / rangeM, 4) * aEnv;
+  const pd = Math.max(0, Math.min(1, 1 - Math.exp(-2.303 * Math.max(0, snr))));
+  return { snr, pd };
+}

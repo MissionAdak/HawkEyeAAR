@@ -75,13 +75,14 @@ export const TopBar: React.FC = () => {
           {[1, 2, 4].map((spd) => (
             <button
               key={spd}
+              disabled={mode === 'EVAL'}
               onClick={() => setSpeed(spd)}
               className={`px-1.5 py-0.5 transition-colors ${
                 simSpeed === spd
                   ? 'bg-phosphor text-carbon-950 font-bold'
                   : 'text-text-dim hover:text-text-main'
-              }`}
-              title={`Sim Speed ${spd}x`}
+              } ${mode === 'EVAL' ? 'cursor-not-allowed opacity-50' : ''}`}
+              title={mode === 'EVAL' ? 'Speed locked to 1x in EVAL mode' : `Sim Speed ${spd}x`}
             >
               {spd}x
             </button>
@@ -106,13 +107,23 @@ export const TopBar: React.FC = () => {
           [AAR SCORECARD]
         </button>
 
-        <button
-          onClick={() => (isPaused ? resume() : pause())}
-          className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
-          title="Pause / Resume Sim (P)"
-        >
-          {isPaused ? '[P] RESUME' : '[P] PAUSE'}
-        </button>
+        {mode === 'EVAL' ? (
+          <button
+            disabled
+            className="px-2 py-0.5 border border-line text-[11px] font-mono bg-carbon-800 text-text-dim opacity-50 cursor-not-allowed"
+            title="Pause disabled in EVAL mode. Press Esc to Abort."
+          >
+            NO PAUSE (EVAL)
+          </button>
+        ) : (
+          <button
+            onClick={() => (isPaused ? resume() : pause())}
+            className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
+            title="Pause / Resume Sim (P)"
+          >
+            {isPaused ? '[P] RESUME' : '[P] PAUSE'}
+          </button>
+        )}
       </div>
     </header>
   );

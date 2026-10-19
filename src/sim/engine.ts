@@ -9,19 +9,21 @@ import type {
   TrackClass,
 } from './types';
 import { InputQueue } from './inputQueue';
-import { streamSeed, mulberry32 } from './rng';
+import { streamSeed, mulberry32, keyedU } from './rng';
 import { clockInstance } from './clock';
 import { SHORT_CODES, isHostile } from './taxonomy';
 import { CONFIG } from '@/config';
 import { canTransition, evaluateReleaseGating } from './roe';
 import { resolveEngagement } from './effectors';
 import { aggregateAARMetrics } from './metrics';
+import { calculateRadarPd, computeCoastingState } from './sensors';
+import { evaluateMasking } from './masking';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
 export interface UiTrackRow {
   trackNo: string;
-  label: string;
+  label: TrackClass | null;
   shortCode: string;
   rangeKm: number;
   bearingDeg: number;
@@ -82,7 +84,11 @@ export class SimEngine {
   };
 
   private killRng: (() => number) | null = null;
-  private sessionEnded: boolean = false;
+  public sessionEnded: boolean = false;
+
+  public get mode(): 'TRAIN' | 'EVAL' | 'DEMO' {
+    return this.spec?.mode ?? 'TRAIN';
+  }
 
   public load(spec: ScenarioSpec): void {
     this.spec = spec;
@@ -136,16 +142,16 @@ export class SimEngine {
         profile: s.profile,
         spawnTMs: s.spawnTMs,
         lifecycle: 'ACTIVE',
-        traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
-        step: 'FIND',
+        traineeLabel: null,
+        step: 'UNDETECTED',
         q: 0.8,
         cCls: 0.5,
         masked: false,
         coastingSinceMs: null,
         ghostSigmaM: 0,
-        hitHistory: [true, true, true],
-        tVis: s.spawnTMs,
-        tTrk: s.spawnTMs,
+        hitHistory: [],
+        tVis: null,
+        tTrk: null,
         tDesig: null,
         tCls: null,
         tEng: null,
@@ -158,10 +164,9 @@ export class SimEngine {
       this.prev.push({ ...entity, pos: { ...entity.pos }, vel: { ...entity.vel } });
     }
 
-    // Default select first track
-    if (this.curr.length > 0) {
-      this.selectedTrackNo = this.curr[0].trackNo;
-    }
+    // Default select first track if already initiated
+    const firstInitiated = this.curr.find((e) => e.step !== 'UNDETECTED');
+    this.selectedTrackNo = firstInitiated?.trackNo ?? (this.curr.length > 0 ? this.curr[0].trackNo : null);
 
     // Log SIM_START event
     this.appendEvent('SIM_START', {
@@ -170,6 +175,9 @@ export class SimEngine {
       mode: spec.mode,
       difficulty: spec.difficulty,
     });
+
+    // Initial radar sweep at T=0
+    this.evaluateRadarSweep(0);
   }
 
   public appendEvent(
@@ -200,39 +208,232 @@ export class SimEngine {
     return event;
   }
 
+  public abort(reason: string = 'ABORT', subReason?: string): void {
+    if (this.sessionEnded || !this.spec) return;
+    this.sessionEnded = true;
+    const currentSimMs = this.tickIndex * 50;
+    const finalMetrics = aggregateAARMetrics(this.events, this.spec);
+    this.appendEvent('SESSION_END', {
+      durationMs: currentSimMs,
+      metrics: finalMetrics,
+      reason,
+      subReason,
+      aborted: true,
+    });
+  }
+
   public step(): void {
-    if (!this.spec) return;
+    if (!this.spec || this.sessionEnded) return;
 
     this.tickIndex += 1;
     const currentSimMs = this.tickIndex * 50;
 
-    // 1. Drain quantised user inputs for this tick
+    // 1. Radar sweep evaluation every 2000ms (40 ticks, 30 RPM)
+    if (this.tickIndex % 40 === 0) {
+      this.evaluateRadarSweep(currentSimMs);
+    }
+
+    // 2. Drain quantised user inputs for this tick
     const actions = this.inputQueue.drainForTick(this.tickIndex);
     for (const item of actions) {
       this.handleAction(item);
     }
 
-    // 2. Clone previous state for interpolation
+    // 3. Clone previous state for interpolation
     this.prev = this.curr.map((e) => ({
       ...e,
       pos: { ...e.pos },
       vel: { ...e.vel },
     }));
 
-    // 3. Update active entities and check leak conditions
+    // 4. Update active entities, line-of-sight terrain masking, coasting, and check leak conditions
     this.updateEntities(currentSimMs);
 
-    // 4. Periodic snapshot keyframe every 250ms (5 ticks) for instant AAR scrubbing
+    // 5. Periodic snapshot keyframe every 250ms (5 ticks) for instant AAR scrubbing
     if (this.tickIndex % 5 === 0) {
       this.emitPeriodicSnapshot();
     }
 
-    // 5. Check session completion
+    // 6. Check session completion
     if (currentSimMs >= this.spec.durationMs && !this.sessionEnded) {
       this.sessionEnded = true;
       const finalMetrics = aggregateAARMetrics(this.events, this.spec);
-      this.appendEvent('SESSION_END', { durationMs: currentSimMs, metrics: finalMetrics });
+      this.appendEvent('SESSION_END', { durationMs: currentSimMs, metrics: finalMetrics, reason: 'COMPLETE', aborted: false });
     }
+  }
+
+  private evaluateRadarSweep(currentSimMs: number): void {
+    if (!this.spec) return;
+    const sweepPeriodMs = CONFIG.thresholds.radarSweepPeriodMs || 2000;
+    const sweepIdx = Math.floor(currentSimMs / sweepPeriodMs);
+
+    for (let i = 0; i < this.curr.length; i++) {
+      const entity = this.curr[i];
+      if (entity.lifecycle === 'ACTIVE' && currentSimMs >= entity.spawnTMs) {
+        this.processEntityRadarDetection(entity, i, sweepIdx, currentSimMs);
+      }
+    }
+  }
+
+  private processEntityRadarDetection(
+    entity: TrackEntity,
+    index: number,
+    sweepIdx: number,
+    currentSimMs: number
+  ): void {
+    if (!this.spec) return;
+    const rangeM = Math.hypot(entity.pos.x, entity.pos.y);
+    const maskResult = evaluateMasking(entity.pos, this.spec.zones || []);
+
+    let aEnv = 1.0;
+    if (this.sensorHealth.RADAR === 'OUT') {
+      aEnv = 0.0;
+    } else if (this.sensorHealth.RADAR === 'DEG') {
+      aEnv = 0.7;
+    }
+
+    const { pd } = calculateRadarPd(entity.rcsM2, rangeM, maskResult.isMasked ? 0 : aEnv);
+    const u = keyedU(this.spec.seed, 'sense', index, sweepIdx);
+    const isHit = u < pd;
+
+    entity.hitHistory.push(isHit);
+    if (entity.hitHistory.length > 3) {
+      entity.hitHistory.shift();
+    }
+
+    // Initial plot detection (beam hit)
+    if (isHit && entity.step === 'UNDETECTED') {
+      entity.step = 'FIND';
+      entity.tVis ??= currentSimMs;
+      this.appendEvent('DETECT', { rangeM, pd, u }, entity.trackNo ?? undefined, entity.id);
+    }
+
+    // Track initiation: requires 2 hits in 3 consecutive sweeps (Rules.md DT-3, PRD 3.4, ARCHITECTURE.md 3.3)
+    const hitsIn3 = entity.hitHistory.filter(Boolean).length;
+    if (hitsIn3 >= 2 && entity.tTrk === null) {
+      entity.tTrk = currentSimMs;
+      entity.tVis ??= currentSimMs;
+      if (entity.step === 'UNDETECTED') {
+        entity.step = 'FIND';
+      }
+      this.appendEvent(
+        'TRACK_INIT',
+        { trackNo: entity.trackNo, rangeM, q: entity.q },
+        entity.trackNo ?? undefined,
+        entity.id
+      );
+
+      if (this.selectedTrackNo === null && entity.trackNo) {
+        this.selectedTrackNo = entity.trackNo;
+      }
+    }
+  }
+
+  private updateEntityMaskingAndCoasting(entity: TrackEntity, currentSimMs: number): void {
+    if (!this.spec) return;
+    const maskResult = evaluateMasking(entity.pos, this.spec.zones || []);
+    const wasMasked = entity.masked;
+    entity.masked = maskResult.isMasked;
+
+    if (entity.masked) {
+      if (!wasMasked) {
+        entity.coastingSinceMs = currentSimMs;
+        this.appendEvent(
+          'MASKED',
+          {
+            zoneId: maskResult.zoneId,
+            thetaT: maskResult.thetaT,
+            thetaMask: maskResult.thetaMask,
+          },
+          entity.trackNo ?? undefined,
+          entity.id
+        );
+      }
+      const elapsed = currentSimMs - (entity.coastingSinceMs ?? currentSimMs);
+      const coast = computeCoastingState(elapsed, 0.8);
+      entity.q = coast.q;
+      entity.ghostSigmaM = coast.ghostSigmaM;
+    } else if (wasMasked) {
+      entity.coastingSinceMs = null;
+      entity.ghostSigmaM = 0;
+      entity.q = 0.8;
+      this.appendEvent(
+        'REACQUIRE',
+        {
+          zoneId: maskResult.zoneId,
+          thetaT: maskResult.thetaT,
+          thetaMask: maskResult.thetaMask,
+        },
+        entity.trackNo ?? undefined,
+        entity.id
+      );
+    }
+  }
+
+  private checkEntityLeak(
+    entity: TrackEntity,
+    rangeM: number,
+    rMinM: number,
+    currentSimMs: number
+  ): void {
+    if (rangeM > rMinM || entity.tPnr !== null) return;
+
+    entity.tPnr = currentSimMs;
+    const nonHostile = entity.trueClass === 'FRIENDLY' || entity.trueClass === 'CIVIL_UAS' || entity.trueClass === 'BIRD';
+    if (!nonHostile) {
+      entity.lifecycle = 'LEAKED';
+      entity.step = 'CLOSED';
+      this.appendEvent('LEAK', { rangeM, trueClass: entity.trueClass }, entity.trackNo ?? undefined, entity.id);
+    }
+  }
+
+  private checkFirmTrackProgression(
+    entity: TrackEntity,
+    qMin: number,
+    currentSimMs: number
+  ): void {
+    if (
+      entity.step !== 'FIX' ||
+      entity.q < qMin ||
+      entity.tDesig === null ||
+      currentSimMs - entity.tDesig < 1000
+    ) {
+      return;
+    }
+
+    if (
+      canTransition(entity.step, 'TRACK', {
+        q: entity.q,
+        isDesignated: true,
+        hasNonUnknownLabel: entity.traineeLabel !== null && entity.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT',
+        isNeutralised: false,
+        isLeaked: entity.lifecycle === 'LEAKED',
+      })
+    ) {
+      entity.step = 'TRACK';
+    }
+  }
+
+  private updateSingleEntity(
+    entity: TrackEntity,
+    rMinM: number,
+    qMin: number,
+    currentSimMs: number
+  ): void {
+    entity.pos.x += entity.vel.x * 0.05;
+    entity.pos.y += entity.vel.y * 0.05;
+    entity.pos.z += entity.vel.z * 0.05;
+
+    const rangeM = Math.hypot(entity.pos.x, entity.pos.y);
+    this.checkEntityLeak(entity, rangeM, rMinM, currentSimMs);
+
+    this.updateEntityMaskingAndCoasting(entity, currentSimMs);
+
+    if (entity.q < qMin && (entity.step === 'TRACK' || entity.step === 'TARGET')) {
+      entity.step = 'FIX';
+    }
+
+    this.checkFirmTrackProgression(entity, qMin, currentSimMs);
   }
 
   private updateEntities(currentSimMs: number): void {
@@ -241,26 +442,8 @@ export class SimEngine {
     const qMin = CONFIG.thresholds.qMin;
 
     for (const entity of this.curr) {
-      if (entity.lifecycle !== 'ACTIVE') continue;
-
-      entity.pos.x += entity.vel.x * 0.05;
-      entity.pos.y += entity.vel.y * 0.05;
-      entity.pos.z += entity.vel.z * 0.05;
-
-      const rangeM = Math.hypot(entity.pos.x, entity.pos.y);
-      if (rangeM <= rMinM && entity.tPnr === null) {
-        entity.tPnr = currentSimMs;
-        const nonHostile = entity.trueClass === 'FRIENDLY' || entity.trueClass === 'CIVIL_UAS' || entity.trueClass === 'BIRD';
-        if (!nonHostile) {
-          entity.lifecycle = 'LEAKED';
-          entity.step = 'CLOSED';
-          this.appendEvent('LEAK', { rangeM, trueClass: entity.trueClass }, entity.trackNo ?? undefined, entity.id);
-        }
-      }
-
-      // Demotion Guard: q < Q_min returns tracked entities to FIX (Rules.md SC-10, R-14)
-      if (entity.q < qMin && (entity.step === 'TRACK' || entity.step === 'TARGET')) {
-        entity.step = 'FIX';
+      if (entity.lifecycle === 'ACTIVE') {
+        this.updateSingleEntity(entity, rMinM, qMin, currentSimMs);
       }
     }
   }
@@ -276,7 +459,7 @@ export class SimEngine {
         z: Math.round(e.pos.z),
         step: e.step,
         q: Number(e.q.toFixed(2)),
-        lbl: e.traineeLabel,
+        lbl: e.traineeLabel ?? 'NONE',
         trueClass: e.trueClass,
       }));
 
@@ -334,23 +517,24 @@ export class SimEngine {
     const target = this.curr.find((e) => e.trackNo === action.trackNo);
     if (!target) return;
 
-    if (target.tDesig === null) {
-      target.tDesig = this.tickIndex * 50;
+    // Disallow instant UNDETECTED to FIX transitions (ARCHITECTURE.md 3.3 / PRD 3.4)
+    if (target.step === 'UNDETECTED') {
+      return;
     }
 
     if (
       canTransition(target.step, 'FIX', {
         q: target.q,
         isDesignated: true,
-        hasNonUnknownLabel: target.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT',
+        hasNonUnknownLabel: target.traineeLabel !== null && target.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT',
         isNeutralised: target.lifecycle === 'NEUTRALISED',
         isLeaked: target.lifecycle === 'LEAKED',
       })
     ) {
       target.step = 'FIX';
+      target.tDesig ??= this.tickIndex * 50;
+      this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target.id, tRawMs);
     }
-
-    this.appendEvent('DESIGNATE', { via: action.via }, action.trackNo, target.id, tRawMs);
   }
 
   private handleClassify(action: { trackNo: string; label: TrackClass }, tRawMs?: number): void {
@@ -470,7 +654,7 @@ export class SimEngine {
     const formattedClock = `T+${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(msRemainder).padStart(3, '0')}`;
 
     const trackRows: UiTrackRow[] = this.curr
-      .filter((e) => e.trackNo && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED'))
+      .filter((e) => e.trackNo && e.step !== 'UNDETECTED' && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED'))
       .map((e) => {
         const rangeM = Math.hypot(e.pos.x, e.pos.y);
         const bearingRad = Math.atan2(e.pos.x, e.pos.y);
@@ -482,7 +666,7 @@ export class SimEngine {
         const distToPnr = Math.max(0, rangeM - rMin);
         const timeToPnrSec = speedMps > 0 ? Number((distToPnr / speedMps).toFixed(1)) : 999;
 
-        const shortCode = SHORT_CODES[e.traineeLabel] || 'UNK';
+        const shortCode = e.traineeLabel ? (SHORT_CODES[e.traineeLabel] || 'UNK') : 'NON';
 
         return {
           trackNo: e.trackNo!,
@@ -496,7 +680,7 @@ export class SimEngine {
           timeToPnrSec,
           q: Number(e.q.toFixed(2)),
           cCls: Number(e.cCls.toFixed(2)),
-          isHostile: isHostile(e.traineeLabel),
+          isHostile: e.traineeLabel ? isHostile(e.traineeLabel) : false,
         };
       })
       .sort((a, b) => a.timeToPnrSec - b.timeToPnrSec)

@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import type { UiSnapshot } from '@/sim/engine';
 import { SimEngine } from '@/sim/engine';
-import { SimClock } from '@/sim/clock';
+import { clockInstance } from '@/sim/clock';
 import { EventRecorder } from '@/db/recorder';
+import { applyTickFor } from '@/sim/inputQueue';
 import type {
   ScenarioSpec,
   SensorMode,
@@ -12,7 +13,7 @@ import type {
 
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
-export const clockInstance = new SimClock();
+export { clockInstance };
 let activeRecorder: EventRecorder | null = null;
 
 const initialSnapshot: UiSnapshot = {
@@ -28,7 +29,7 @@ const initialSnapshot: UiSnapshot = {
     EOIR: 'OK',
     RF: 'OK',
   },
-  roeText: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
+  roeText: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | UNCLASSIFIED RELEASE = ROE VIOLATION',
   isPaused: false,
   recentEvents: [],
   mode: 'TRAIN',
@@ -55,6 +56,7 @@ export interface SessionState {
   cycleTrack: (direction: 'NEXT' | 'PREV') => void;
   pause: () => void;
   resume: () => void;
+  abortSession: (reason?: string) => void;
   setSpeed: (speed: number) => void;
   openAar: () => void;
   closeAar: () => void;
@@ -71,7 +73,7 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } {
   const tRawMs = typeof performance !== 'undefined'
     ? clockInstance.getRawMs()
     : currentTick * 50;
-  const applyTick = Math.max(Math.ceil(tRawMs / 50), currentTick + 1);
+  const applyTick = applyTickFor(tRawMs, currentTick);
   return { tRawMs, applyTick };
 }
 
@@ -157,6 +159,10 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   pause: () => {
+    // No pause permitted in EVAL mode (Rules.md R2.10)
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
     clockInstance.pause();
     const { tRawMs, applyTick } = getQuantisedTick();
     engineInstance.inputQueue.push({
@@ -168,6 +174,9 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   resume: () => {
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
     clockInstance.resume();
     const { tRawMs, applyTick } = getQuantisedTick();
     engineInstance.inputQueue.push({
@@ -176,6 +185,16 @@ export const useSessionStore = create<SessionState>((set) => ({
       action: { type: 'RESUME' },
     });
     set((s) => ({ ui: { ...s.ui, isPaused: false } }));
+  },
+
+  abortSession: (reason: string = 'ABORT') => {
+    engineInstance.abort(reason);
+    clockInstance.reset();
+    set({
+      isSimRunning: false,
+      isAarOpen: true,
+      ui: engineInstance.buildUiSnapshot(),
+    });
   },
 
   loadScenario: (spec: ScenarioSpec) => {
@@ -217,6 +236,10 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   setSpeed: (speed: number) => {
+    // Speed is strictly locked to 1x in EVAL mode
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
     clockInstance.setSpeed(speed);
     set({ simSpeed: speed });
   },

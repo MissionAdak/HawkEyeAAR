@@ -48,6 +48,23 @@ describe('Scoring Mathematics & Boundary Verification', () => {
 
     it('scores 25 for hostile explicitly labelled UNKNOWN_EVIDENCE_INSUFFICIENT', () => {
       expect(computeCScore('HOSTILE_ATTACK', 'UNKNOWN_EVIDENCE_INSUFFICIENT')).toBe(25);
+      expect(computeCScore('HOSTILE_ISR', 'UNKNOWN_EVIDENCE_INSUFFICIENT')).toBe(25);
+      expect(computeCScore('SWARM_ELEMENT', 'UNKNOWN_EVIDENCE_INSUFFICIENT')).toBe(25);
+    });
+
+    it('scores 40 for civil, bird, and friendly explicitly labelled UNKNOWN_EVIDENCE_INSUFFICIENT', () => {
+      expect(computeCScore('CIVIL_UAS', 'UNKNOWN_EVIDENCE_INSUFFICIENT')).toBe(40);
+      expect(computeCScore('BIRD', 'UNKNOWN_EVIDENCE_INSUFFICIENT')).toBe(40);
+      expect(computeCScore('FRIENDLY', 'UNKNOWN_EVIDENCE_INSUFFICIENT')).toBe(40);
+    });
+
+    it('scores 0 for uncommitted / null classification across all ground truth classes (D-01, D-35)', () => {
+      expect(computeCScore('HOSTILE_ATTACK', null)).toBe(0);
+      expect(computeCScore('HOSTILE_ISR', null)).toBe(0);
+      expect(computeCScore('SWARM_ELEMENT', null)).toBe(0);
+      expect(computeCScore('CIVIL_UAS', null)).toBe(0);
+      expect(computeCScore('BIRD', null)).toBe(0);
+      expect(computeCScore('FRIENDLY', null)).toBe(0);
     });
   });
 

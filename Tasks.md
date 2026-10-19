@@ -1,43 +1,331 @@
-# Tasks.md: 36-Hour Hackathon Sprint Tracker
+# Tasks.md — DRISHTI-CUAS 36-Hour Sprint Tracker
 
-Priority key: **P0** must-have (never cut), **P1** should-have (cut only per the cut line), **P2** cuttable. Owners: **A** sim core and rendering, **B** decision logic and scoring, **C** Director, persistence, import/export, **D** React UI, AAR, pitch. Tick a task only when every acceptance criterion (AC) passes and `npm run lint && npm run test && npm run build` is green.
+Read `MEMORY.md` first, then the task, then the cited sections of `ARCHITECTURE.md` and `DESIGN.md`. Obey `Rules.md`. Tick sub-tasks (`[x]`) in the same change that completes them.
 
-Timeboxes: P0 H0-H2 | P1 H2-H10 | P2 H10-H18 | P3 H18-H26 | P4 H26-H31 | P5 H31-H36. Each phase ends with a checkpoint demo on a real low-end laptop.
+**Legend.** Priority: **P0** must-have (never cut) · **P1** cuttable late · **P2** cut first. Owner roles (from the PRD): **A** simulation core and rendering · **B** decision logic, scoring, oracle · **C** Director, persistence, tooling, packaging · **D** React UI, AAR dashboard, pitch and demo. Estimates are hands-on hours. `AC:` = acceptance criterion (must be observable or testable). Paths are relative to the repo root.
 
-**Cut line (cut in this order):** 1) RAIN and RADAR_DROPOUT chaos; 2) instructor mode; 3) RIDGE and FOREST zones (keep URBAN); 4) Thompson sampling and all other P2; 5) unit-view heatmap (keep minimal unit table); 6) session JSON import/export. **Never cut:** terrain masking, three sensor modes, decision-tree scoring, MET and timeline replay, TRAIN/EVAL split, minimal unit table.
+**Capacity check (4 developers).**
+
+| Phase | Window | Capacity (dev-h) | Planned (dev-h) |
+| --- | --- | --- | --- |
+| P0 Setup and contracts | H0–H2 | 8 | 6.5 |
+| P1 Radar core and masking | H2–H10 | 32 | 15 |
+| P2 F2T2EA, effectors, chaos | H10–H18 | 32 | 21.5 |
+| P3 Scoring, oracle, AAR | H18–H26 | 32 | 20 |
+| P4 Adaptive Red Team, TRAIN/EVAL | H26–H31 | 20 | 16.5 |
+| P5 Hardening, golden tests, demo | H31–H36 | 20 | 9 |
+
+Slack is deliberate: AI-assisted generation needs run-and-fix loops and free-tier quotas are limited.
+
+**Cut order (when behind):** (1) RAIN and DROPOUT chaos → (2) instructor mode → (3) ridge and forest zones → (4) Thompson-sampling and other P2 items → (5) unit heatmap and trend chart (keep the minimal unit table) → (6) session JSON import/export. **Never cut:** terrain masking, three sensor modes, decision-tree scoring, MET and timeline replay, TRAIN/EVAL split, minimal unit table.
 
 ---
 
-## Phase 0: Project Setup and Contracts (H0 to H2)
+## Phase 0 — Project Setup and Contracts (H0 – H2)
 
-### TASK-P0-01 Scaffold and guardrails (A, P0)
-Files: `package.json`, `vite.config.ts`, `tsconfig.json`, `tailwind.config.ts`, `.eslintrc.cjs`, `vitest.config.ts`, `playwright.config.ts`, `index.html`
-- [x] Vite + React 19 + TS strict + Tailwind; deps limited to the approved list. AC: `npm run build` produces `dist/` under 2 MB at this stage. (Completed: dist is ~370 KB)
-- [x] ESLint bans from Rules.md section 1 (`fetch`, `Math.random`, `Date.now`, `performance.now` overrides). AC: deliberate violations fail lint.
-- [x] Production CSP meta tag. AC: built `index.html` contains `connect-src 'none'`.
+### TASK-P0-01 — Repo scaffold and toolchain · P0 · A · 0.75 h
+Files: `package.json`, `vite.config.ts`, `tsconfig.json`, `eslint.config.js`, `vitest.config.ts`, `playwright.config.ts`, `index.html`, `src/main.tsx`, `src/App.tsx`
+- [x] Vite + React 19 + TypeScript with `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` + Tailwind v4 plugin. **AC:** `npm run build` succeeds and `dist/` is under 1 MB on the empty app.
+- [x] Scripts: `dev build preview typecheck lint test test:golden test:guards check test:e2e calibrate gen:scenarios`. **AC:** `npm run check` (typecheck + lint + unit + golden + guards) exits 0 on the empty repo.
+- [x] CSP `<meta>` from `ARCHITECTURE.md` §1.8 and `__SIM_VERSION__` define. **AC:** no CSP violations in the console on `npm run preview`; unit test asserts `__SIM_VERSION__ === package.json version`.
 
-### TASK-P0-02 Config pipeline (C, P0)
-Files: `public/config.json`, `src/config/schema.ts`, `scripts/inline-config.mjs`, `src/config/index.ts`
-- [x] `config.json` with drone classes, effectors, weights, thresholds (`Q_min` 0.6, `R_min` 500 m), matrix 6x7, zone defaults, `_meta.notional = true`.
-- [x] zod schema and prebuild inline. AC: removing a required key fails the build with a readable message; runtime has no config fetch.
+### TASK-P0-02 — Theme, fonts, shell geometry, UI kit · P0 · D · 0.75 h
+Files: `src/theme.css`, `public/fonts/*.woff2`, `src/ui/shell/{Console,TopBar,LeftRail,RightRail,BottomBar}.tsx`, `src/ui/kit/*`, `tests/e2e/layout.spec.ts`
+- [x] `theme.css` exactly per `DESIGN.md` §1.3 (default palette, radii, shadows reset). **AC:** `border-neutral-800` resolves to `#262626`; `bg-indigo-500` fails to build or is absent from the CSS.
+- [x] Fonts (Chakra Petch 500/600, JetBrains Mono 400/700, Share Tech Mono 400, latin subsets) with `font-display: block` and a `loadFonts()` helper. **AC:** DevTools shows fonts served from `127.0.0.1`; no external requests.
+- [x] Empty shell: top 45, bottom 110, rails 240/320, strip 35, radar `var(--radar)`. **AC:** Playwright at 1366×768 and 1280×700: `scrollHeight <= innerHeight`; radar box is 520×520 at 768 and 510×510 at 700.
+- [x] Kit: `Panel` (chamfered header), `Tag`, `KeyCap`, `Button`, `Gauge`, `Stat` per `DESIGN.md` §8. **AC:** no element has computed `border-radius > 2px`, box-shadow, or background-image gradient.
 
-### TASK-P0-03 Contracts and taxonomy (B, P0)
-Files: `src/sim/types.ts`, `src/sim/taxonomy.ts`
-- [x] Interfaces exactly as ARCHITECTURE.md 3.2; 7-class `CLASSES`. AC: `tsc --noEmit` passes; a type-level test proves a string outside `CLASSES` does not compile.
+### TASK-P0-03 — Contracts, taxonomy, config schema · P0 · B · 1.0 h
+Files: `src/sim/{types,taxonomy,config}.ts`, `public/config.json`, `tests/unit/config.test.ts`
+- [x] All contracts from `ARCHITECTURE.md` §3 including `SimView` (tracks with `estPrev`, plots, zones, chaos state, sweep time, `rfEmitters`). **AC:** `tsc` clean; no `any`.
+- [x] `taxonomy.ts` with the 7 labels and `assertClassLabel`. **AC:** unit test rejects `'HOSTILE_UAV'`, `'UNKNOWN'`, `'NEUTRAL'`.
+- [x] Default `config.json` (§3.8) with a zod schema and canonical SHA-256 hash (sorted keys; pure-TS fallback). **AC:** schema rejects unknown keys and out-of-range values; hash is identical for permuted key order.
+- [x] `cfg()` typed accessor. **AC:** guard fails if `scoring.ts`/`effectors.ts` contain forbidden numeric literals.
 
-### TASK-P0-04 PRNG, clock and fixed-step loop (A, P0)
-Files: `src/sim/rng.ts`, `src/sim/clock.ts`, `src/sim/inputQueue.ts`, `src/sim/engine.ts`
-- [x] `mulberry32`, `hash32`, `streamSeed`, `keyedU`. AC: known-answer unit tests; same seed gives same sequence; different labels give different sequences.
-- [x] Accumulator loop (`TICK_MS = 50`, `MAX_FRAME_MS = 250`), input quantisation `applyTick = max(ceil(tRaw/50), tick+1)`. AC: with simulated frame times 16.7 ms, 6.9 ms and 33 ms, tick count after 10 s is exactly 200 in all three.
+### TASK-P0-04 — RNG, clock, fixed-step loop · P0 · A · 1.0 h
+Files: `src/sim/{rng,clock,loop,inputQueue}.ts`, `tests/unit/{rng,loop,clock}.test.ts`
+- [x] `mulberry32`, `hash32`, `streamSeed`, `draw`, `sequence` (§3.7). **AC:** published mulberry32 test vector passes; `draw` returns identical values when call order is permuted; the three runtime streams differ for the same key.
+- [x] Accumulator loop with 250 ms clamp and visibility reset (§1.3). **AC:** a simulated rAF at 30, 60 and 144 Hz produces identical tick counts over 10 s of sim time; after a 5 s stall at most 5 ticks are stepped.
+- [x] `SimClock.simMsAt` and `applyTickFor` (§1.4). **AC:** an event stamped before the last processed tick applies at `lastTick + 1`; exact tick multiples map to themselves; speed 2× maps correctly.
 
-### TASK-P0-05 Zustand store and Dexie (C, P0)
-Files: `src/store/sessionStore.ts`, `src/db/dexie.ts`, `src/db/recorder.ts`
-- [x] Store facade with action stubs that push to `inputQueue`; `uiSnapshot` capped at 150 rows. AC: dispatching 1,000 actions leaves sim state untouched until the next tick.
-- [x] Dexie schema from ARCHITECTURE.md 4.1 with batched `bulkAdd` recorder.
+### TASK-P0-05 — Guards and lint rules · P0 · C · 1.0 h
+Files: `eslint.config.js`, `tests/guards/{network,taxonomy,sim-purity,design,imports,deps,copy}.test.ts`
+- [x] ESLint: `no-restricted-globals` (`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`), `no-restricted-properties` (`Math.random`), `no-magic-numbers` on scoring files, `no-restricted-imports` for boundaries. **AC:** each rule has a fixture file that fails when linted.
+- [x] Guard tests per `Rules.md` §9. **AC:** deliberately adding `fetch('/x')` in `src/ui` fails `network.test.ts`; adding `'HOSTILE_UAV'` fails `taxonomy.test.ts`; adding `rounded-xl` fails `design.test.ts`.
 
-### TASK-P0-06 First pixels: PPI with DEMO-1 stub (A, D, P0)
-Files: `src/render/renderer.ts`, `src/render/radarLayer.ts`, `src/ui/Console.tsx`, `src/director/bundled/demo1.json`
-- [x] Grid layout from DESIGN.md 2 and the radar frame `--radar`. AC (Playwright, 1366x768): `scrollHeight <= innerHeight`, canvas 520x520, rails 240 and 320 px.
-- [x] Range rings, ticks, sweep with afterglow, DEMO-1 stub entities as dots.
+### TASK-P0-06 — Launcher stub and CSP headers · P0 · C · 1.0 h
+Files: `tools/launcher/main.go`, `tools/launcher/start.bat`, `tools/launcher/start.sh`
+- [x] Static server serving `dist/` with CSP headers and local loopback; exits with a clear message if port is busy. *(Deliberate deviation D-30: Vite preview server on loopback 127.0.0.1:4173 provides zero-dependency cross-platform execution)*.
+- [x] Start scripts launch Chromium with flags in §1.8. **AC:** app opens as a window with no tabs and zero outgoing network traffic.
 
-**Checkpoint H2 Passed:** app boots offline, sweep turns, stub drone flies, responsive C2 shell active.
+### TASK-P0-07 — Dexie schema skeleton · P0 · C · 1.0 h
+Files: `src/db/{dexie,repo}.ts`, `tests/unit/db.test.ts` (fake-indexeddb)
+- [x] Schema v1 exactly as `ARCHITECTURE.md` §5.1 with typed repositories. **AC:** inserting 3000 events and querying `[sessionUid+tMs]` between 40000 and 45000 returns only that window, in order.
+- [x] `drafts` autosave helper. **AC:** write then read of `{spec, inputs}` round-trips.
+
+**Checkpoint H2:** `npm run check` green; empty shell passes the 768p layout test; rng and loop tests green; config validates and hashes. [VERIFIED]
+
+---
+
+## Phase 1 — 2D Canvas Radar Core and Masking Engine (H2 – H10)
+
+### TASK-P1-01 — SimCore skeleton, entities, DIRECT trajectories · P0 · A · 1.5 h
+Files: `src/sim/{core,trajectories}.ts`, `tests/unit/core.test.ts`
+- [x] `SimCore(spec, config)` with `step()`, `view()`, `snapshot()/restore()`, `stateHash()` and the fixed order of §1.6 (unused steps present as no-ops). **AC:** state survives `JSON.parse(JSON.stringify())` and hashes identically.
+- [x] Spawn from `ScenarioSpec` at `spawnMs`; DIRECT waypoints with speed from the spec. **AC:** a 40 m/s entity travels 2 m per tick; `prevPos`/`pos` set for interpolation.
+
+### TASK-P1-02 — Behaviour profiles · P0 · A · 1.0 h
+Files: `src/sim/trajectories.ts`
+- [x] `TERRAIN_HUG` with `d_trig = v × (z_cruise − z_hug)/descent_rate` and phases CRUISE→DESCENDING→HUGGING→CLIMBING; `ORBIT_FEINT`, `ERRATIC` (bird jitter from `traj` stream), `SWARM_SATURATE`. **AC:** FPV at 40 m/s starts descending 500 m before a zone edge and reaches `z = 0.5 H` before the shadow begins (unit test over the DEMO-1 geometry).
+
+### TASK-P1-03 — Masking engine · P0 · B · 1.5 h
+Files: `src/sim/masking.ts`, `tests/unit/masking.test.ts`
+- [x] Segment/polygon intersection, near-edge distance, elevation-angle test, shadow length (§4.2). **AC:** cases inside zone, in shadow, beyond shadow, above roofline, and outside all pass; DEMO-1 H-1 at `z = 20` is masked for `R ∈ (1800, 2600]` and unmasked outside; C-1 at `z = 60`, `R = 2300` is **not** masked.
+- [x] RF zone attenuation helper (`reach × √0.5` when the target is inside a polygon). **AC:** RF sees H-1 across the whole masked interval (R ≤ 2.6 km < 2.83 km).
+
+### TASK-P1-04 — Radar sweep, Pd, tracks · P0 · B · 2.0 h
+Files: `src/sim/{sensors,tracker}.ts`, `tests/unit/{radar,tracker}.test.ts`
+- [x] Sweep interval test (9° per tick), Pd formula with `A_env`, keyed `sense` draw `(entityIdx, sweepIdx)`. **AC:** reference target at 3 km has empirical Pd 0.90 ± 0.02 over 5000 sweeps; each entity is painted exactly once per sweep at 30, 60 and 144 Hz display rates (loop independent).
+- [x] Track init (2 of 3), ACTIVE/COASTING/LOST (8 s), reacquire gate `3σ + 150 m`, fragmentation → new id with `fragmentedFrom`. **AC:** DEMO-1: H-1 goes COASTING at the shadow start, LOST after 8 s, and the same track id resumes at reacquisition; a path shifted outside the gate creates a new track.
+- [x] Events `DETECT`, `TRACK_INIT`, `MASKED`, `REACQUIRE`. **AC:** emitted once per transition, tick-stamped.
+
+### TASK-P1-05 — Track quality, classification confidence, EO/RF visibility · P0 · B · 1.5 h
+Files: `src/sim/{sensors,tracker}.ts`, `tests/unit/quality.test.ts`
+- [x] `q` fusion (radar 0.8 / coast decay, EO 0.7 when aligned, RF 0.4) and `c_cls` fusion (§4.3); EO clarity, shape and payload thresholds; RF DF noise from `sense` stream. **AC:** radar-only firm track `q = 0.8 ≥ 0.6`; RF-only `q = 0.4 < 0.6`; coasting q drops below 0.6 after 2 s; fog ×0.25 collapses EO clarity; RF-silent target gives `rfSees = false`.
+
+### TASK-P1-06 — Radar renderer and phosphor layer · P0 · A · 2.0 h
+Files: `src/render/{canvasKit,radarLayer,phosphor,hud}.ts`
+- [x] Static base layer (rings, ticks, labels, crosshair, asset, PNR ring) drawn once per resize; dynamic layer per frame; DPR capped at 2. **AC:** base layer is not redrawn per frame (counter in dev build).
+- [x] Sweep line + wedge, phosphor offscreen layer with `destination-out` fade `1 − exp(−dt/1.2 s)`. **AC:** at 30 and 144 Hz the afterglow decays in the same wall time (±5%).
+
+### TASK-P1-07 — Symbols, labels, vectors, coast ellipse · P0 · D · 1.5 h
+Files: `src/render/symbols.ts`, `src/render/radarLayer.ts`
+- [x] `Path2D` symbols for all 7 labels plus `null` (§3); selection brackets, designated marker, PNR cross, velocity vector (≤ 60 px). **AC:** screenshot test of a fixture view shows 8 distinct symbols; no truth fields are read (type-level: renderer takes `TrackEntity` only).
+- [x] Coasting dashed symbol and amber σ-circle with `COAST ±Nm` label. **AC:** σ grows 12 m/s per second of coasting.
+
+### TASK-P1-08 — Track table, projection, shell wiring · P0 · D · 1.5 h
+Files: `src/store/{consoleStore,projection}.ts`, `src/ui/panels/TrackTable.tsx`, `src/ui/panels/EvidencePanel.tsx`
+- [x] Zustand slices; `sim.onTick → setState({proj})`; table at 10 Hz with memoised rows; columns per `DESIGN.md` §2.4. **AC:** with 40 tracks the React profiler shows only changed rows re-rendering; table fits 18 rows without page scroll at 768.
+- [x] Evidence panel rows with `NO CUE` for unavailable sensors. **AC:** shows micro-Doppler only when radar sees the track.
+
+### TASK-P1-09 — DEMO-1 scenario and timeline golden test (part 1) · P0 · C · 1.5 h
+Files: `tools/author-demo1.ts`, `public/scenarios/demo-1.json`, `tests/golden/demo1-timeline.test.ts`
+- [x] Author DEMO-1: asset FOB ALPHA (rMin 500 m, antenna 15 m), DAY, 120 s. **U1:** URBAN, `ρ 0.8`, H 40, L 800, rectangle aligned to bearing 052° with `u ∈ [1800, 3000]`, `v ∈ [−650, 650]` → vertices (1018,1620), (1819,596), (2764,1335), (1964,2359). **H-1:** HOSTILE_ATTACK/FPV_ATTACK, spawn 5000 ms at (2837, 2216), z 120, 40 m/s, TERRAIN_HUG toward the origin, `emitsRf` true, no Remote-ID. **B-1:** BIRD flock spawn 9000 ms at (445, 1222), ERRATIC, 6 m/s. **C-1:** CIVIL_QUAD at (1992, 1150), z 60, 8 m/s slow orbit, broadcasts Remote-ID, spawn 9000 ms. **Chaos:** FOG at 28000 ms for 18000 ms (EOIR); JAMMING at 64000 ms for 15000 ms (RF). **Trigger:** TRACK_NEUTRALISED(H-1) → spawn after +2000 ms: 5 SWARM_ELEMENT_FW at bearing 300°, R 3000 m (100 m lateral spacing), 45 m/s, RF-silent, plus 3 BIRD flocks at bearings 280/300/320, R 2500 m. Pick the seed so `t_trk(H-1) ∈ [T+8, T+11]`.
+- [x] Golden (scripted-trainee-free) assertions: `t_vis(H-1) = 5000 ± 1000 ms`; masked from T+30 to T+50 (±1 s); `t_PNR(H-1) = 82.5 s ± 1 s`; RF sees H-1 for the whole masked interval. **AC:** test passes; changing the descent trigger distance to a fixed 300 m still passes (documented margin) but changing speed to 70 m/s fails.
+
+### TASK-P1-10 — Zones, asset, PNR ring rendering · P0 (urban) / P1 (ridge, forest) · A · 1.0 h
+Files: `src/render/radarLayer.ts`
+- [x] URBAN dashed amber outline with 8% hatch and `U1 ρ0.8 H40` label; RIDGE and FOREST styles (P1). **AC:** screenshot matches `DESIGN.md` §4.1; asset marker and dashed PNR ring at 25 px (500 m at 520 px).
+
+**Checkpoint H10:** DEMO-1 plays: H-1 vanishes into U1's shadow at T+30 and reappears at T+51 (track coasts, goes LOST, reacquires); table and radar run at 60 fps with 40 tracks; golden timeline part 1 green. [VERIFIED]
+
+---
+
+## Phase 2 — F2T2EA Interaction, Effector Engine and Chaos Engine (H10 – H18)
+
+### TASK-P2-01 — F2T2EA state machine and commands · P0 · B · 2.0 h
+Files: `src/sim/{f2t2ea,inputQueue,core}.ts`, `tests/unit/f2t2ea.test.ts`
+- [x] Transitions and fire preconditions per `ARCHITECTURE.md` §3.3 (`DESIGNATE`, `CLASSIFY`, `SELECT_EFFECTOR`, `FIRE`, `ASSESS`, `SENSOR_MODE`, `EO_SLEW`); `LOST` regresses to `FIND` keeping the label; `ASSESS(MISS)` returns to `TARGET` before PNR. **AC:** table-driven test covers every row of the transition table, including re-designation after reacquire auto-advancing to `TARGET` when a label is retained.
+- [x] `fireBlockedReason` computed each tick. **AC:** `Q_LOW` when `q < 0.6`; `PAST_PNR` after the PNR tick; firing from `TRACK` is allowed.
+
+### TASK-P2-02 — Classification grid and evidence UI · P0 · D · 2.0 h
+Files: `src/ui/panels/{ClassGrid,F2T2EAPanel}.tsx`, `src/ui/labelText.ts`
+- [x] 7-button grid per `DESIGN.md` §2.6 with keyboard (`C`, arrows, `Enter`, `Esc`). **AC:** pressing `C`, arrows and `Enter` commits `HOSTILE_ATTACK` and enqueues `CLASSIFY`; the symbol on the radar updates within one tick.
+- [x] Stepper 6 segments. **AC:** reflects `TrackEntity.step`.
+
+### TASK-P2-03 — Effectors and kill resolution · P0 · B · 1.5 h
+Files: `src/sim/effectors.ts`, `tests/unit/effectors.test.ts`
+- [x] `Pk = Pk0 × g(R) × h(chaos)` with plateau 60%, RF-silent 0.1, swarm gun 0.35, laser ×0.5 in fog, RF soft-kill 0 under jamming; kill draw at fire tick from `kill` stream `(trackIdx, engagementIdx)`; reveal after `displayDelayMs`. **AC:** `g` is 1 on the middle 60% and 0 at both edges; re-running with the same seed and input log reproduces every draw; a 5000-draw test matches `Pk` within ±0.02.
+
+### TASK-P2-04 — ROE module and flags · P0 · B · 1.5 h
+Files: `src/sim/roe.ts`, `tests/unit/roe.test.ts`
+- [x] `KINETIC_OVER_ZONE` (debris-expanded polygon, `ρ > 0.5`, `wE ≥ 0.3`), `UNCLASSIFIED_RELEASE`, `CIVIL_ENGAGED`, `FRIENDLY_ENGAGED`, `UNFAVOURABLE_EXCHANGE` (`CER > 10`), `ROE_VIOLATION` events. *(Aligned via D-32: soft-gate warning `UNCLASSIFIED RELEASE = ROE VIOLATION` in UI triggers -20 pts penalty)*. **AC:** `Rules.md` §4.3 fixtures: missile on recon quad ⇒ `CER 75` and the flag; firing with `label = null` or `UNKNOWN_EVIDENCE_INSUFFICIENT` ⇒ `UNCLASSIFIED_RELEASE`.
+- [x] Live CER estimate helper by label (R3.5). **AC:** `HOSTILE_ISR` label shows the recon-quad nominal value; `null` shows `—`.
+
+### TASK-P2-05 — Right rail: effectors, actions, ROE strip · P0 · D · 2.0 h
+Files: `src/ui/panels/{EffectorList,RoeStrip}.tsx`, `src/ui/shell/RightRail.tsx`
+- [x] 5 effector rows (46 px) with tier colour, cost via `formatInr()`, live `Pk`, envelope bar, `CER … EST`, blocked reasons; keys `Q W E R T`, `F`, `A` then `K/M`. **AC:** right rail content is 588 px; no overflow at 768; `₹3,00,00,000`-style grouping is correct for 100, 20000, 200000, 3000000.
+
+### TASK-P2-06 — Chaos engine (FOG, JAMMING) and sensor badges · P0 · A · 2.0 h
+Files: `src/sim/chaos.ts`, `src/ui/shell/TopBar.tsx`
+- [x] `CHAOS_ON/OFF`, effects on EO reach, laser Pk, RF detection and soft-kill, extension rule (5 s), at most one concurrent. **AC:** DEMO-1 FOG at T+28 scales EO reach to 625 m; JAMMING at T+64 makes `rfSees` false and soft-kill `Pk = 0`.
+- [x] Badge states `NOM/DEG/BLIND` change within 1 s of onset, 1 Hz blink on `BLIND`. **AC:** Playwright reads badge text 20 ticks after `CHAOS_ON`.
+
+### TASK-P2-06b — RAIN and DROPOUT chaos · P1 (cut first) · A · 1.0 h
+Files: `src/sim/chaos.ts`, `src/render/radarLayer.ts`
+- [x] RAIN: `A_env 0.6` and 1–3 one-sweep false plots (never tracks); DROPOUT: `A_env 0`, 3–6 s. **AC:** false plots never initiate a track over 1000 sweeps.
+
+### TASK-P2-07 — EO/IR renderer · P0 · A · 3.0 h
+Files: `src/render/eoirLayer.ts`, `src/render/fx.ts`
+- [x] Layout per `DESIGN.md` §4.2 (viewfinder 520×372, mini-PPI 148, telemetry), reticle, HUD, day/IR palettes, 30° cone on mini-PPI. **AC:** screenshot matches dimensions; EO camera slews at 60°/s toward the selected track.
+- [x] Silhouettes (quad with spinning rotors, fixed-wing, bird flap, blob), size from clarity, payload at clarity ≥ 0.6, fog haze and ghosting, `NO LOS — MASKED`. **AC:** at clarity 0.2 only a blob is drawn; at 0.5 shape is visible; with fog the clarity readout drops.
+
+### TASK-P2-08 — RF renderer · P0 · D · 2.0 h
+Files: `src/render/rfLayer.ts`
+- [x] PPI 400×400 with DF lines, ±5° fan, `RID` lines; waterfall 520×120 at 8 rows/s via `ImageData` ring buffer; jamming saturation and `JAMMED` caption. **AC:** DF line jitter is identical on replay; jamming removes DF lines within one tick of `CHAOS_ON`.
+
+### TASK-P2-09 — Operator log and bottom bar · P0 · C · 1.5 h
+Files: `src/sim/oplog.ts`, `src/ui/shell/BottomBar.tsx`
+- [x] Map events to operator-visible lines (redacting truth); filter chips; 8 lines at 11 px. **AC:** `SPAWN`/`ENGAGE{cer}` lines never appear; timestamps are `T+012.350` form and multiples of 50 ms; bar is exactly 110 px.
+
+### TASK-P2-10 — Sensor-mode commands, EO slew, SAL hooks · P0 · C · 1.5 h
+Files: `src/sim/{sensors,core}.ts`, `src/ui/shell/Console.tsx`
+- [x] Keys `1/2/3` enqueue `SENSOR_MODE`; entering EO or changing selection while in EO enqueues `EO_SLEW`; `SENSOR_SWITCH` events logged. **AC:** the input log contains `applyTick` values only; mode change reflects in the strip within one tick.
+
+### TASK-P2-11 — Session lifecycle and persistence · P0 · C · 1.5 h
+Files: `src/store/consoleStore.ts`, `src/db/repo.ts`, `src/ui/screens/{Home,TraineeSelect,Briefing}.tsx`
+- [x] Start → run → finish/abort; draft autosave every 5 s; bulk write of events, inputs, tracks on finish. **AC:** killing the tab mid-session then reopening offers recovery that reproduces the same state hash at the last saved tick; aborted sessions are flagged.
+
+**Checkpoint H18:** DEMO-1 playable start to end offline: designate, classify, fire, flags and log lines appear; fog and jamming visibly change sensors; session persists to IndexedDB. [VERIFIED]
+
+---
+
+## Phase 3 — Scoring Math, Oracle Comparison and AAR Dashboard (H18 – H26)
+
+### TASK-P3-01 — Scoring engine · P0 · B · 2.0 h
+Files: `src/sim/scoring.ts`, `tests/unit/scoring.test.ts`
+- [x] `D, C (7th column), G, R, S`, session score, grades per `Rules.md` §4.2; `clamp()` and anomaly handling. **AC:** the three worked fixtures in `Rules.md` §4.3 pass to ±0.1; unclassified deadline gives `C = 0`; `UNKNOWN_EVIDENCE_INSUFFICIENT` on a hostile gives `C = 30`; scores never exceed [0,100] under fuzzed inputs.
+
+### TASK-P3-02 — Oracle · P0 · B · 1.5 h
+Files: `src/sim/oracle.ts`, `tests/unit/oracle.test.ts`
+- [x] Cheapest admissible effector at a tick (envelope, `Pk ≥ 0.6` incl. chaos, ROE-compliant) and earliest feasible tick (`q ≥ 0.6` and non-empty set). **AC:** DEMO-1 H-1 at 1.56 km ⇒ oracle is RF soft-kill; jamming active ⇒ soft-kill excluded; cost regret = trainee cost − oracle cost.
+
+### TASK-P3-03 — `computeAAR` pure function · P0 · B · 1.5 h
+Files: `src/sim/aar.ts`, `tests/unit/aar.test.ts`
+- [x] Metrics of `AARMetrics` incl. MDT/MET from `t_trk`, SAL (only when the degraded sensor was in use), SAT, aggregate CER, accuracy with unclassified as misses, recall/precision, 6×8 confusion, BDA accuracy/coverage, skill vector. **AC:** recomputing from the stored events reproduces the live score within `1e-6`; SAL is `null` for the JAMMING event in DEMO-1 when the trainee is on radar.
+
+### TASK-P3-04 — Hot-wash screen · P0 · D · 1.0 h
+Files: `src/ui/screens/HotWash.tsx`
+- [x] 560×360 chamfered card per `DESIGN.md` §5. **AC:** no page scroll; buttons `AAR [Enter]`, `HOME [Esc]` work.
+
+### TASK-P3-05 — AAR shell and scorecard · P0 · D · 1.5 h
+Files: `src/ui/aar/{AARScreen,Scorecard}.tsx`, `src/store/aarStore.ts`
+- [x] Layout 96/200/411 with 8 px gaps; badges and result tags per `DESIGN.md` §6.1; 6 KPI tiles. **AC:** at 1366×768 `scrollHeight <= innerHeight`; grade 72 shows `PROFICIENT IN SIMULATION · PASS`, 55 shows `DEVELOPING · CONDITIONAL`, 40 shows `NEEDS RETRAINING · FAIL`.
+
+### TASK-P3-06 — Timeline scrubber and replay engine · P0 · A · 3.0 h
+Files: `src/ui/aar/Timeline.tsx`, `src/sim/replay.ts`, `tests/unit/replay.test.ts`
+- [x] Replayer: spec + inputs → sim, snapshots every 100 ticks, `seek(tick)` ≤ 100 steps. **AC:** seek-to-any-tick state hash equals the hash from a straight run; seek under 16 ms on the test laptop.
+- [x] 5 lanes + ruler + PNR lines + playhead; keys `←/→`, `Shift+←/→`, `Space`, `Home/End`; marker hit-testing by binary search. **AC:** lane marks appear at the exact ticks of the events; clicking an engage marker selects it.
+
+### TASK-P3-07 — Decision card · P0 · D · 1.5 h
+Files: `src/ui/aar/DecisionCard.tsx`
+- [x] "What you knew" (label, `q`, `c_cls`, sensors seeing at that tick, time since `t_trk`) vs "what was true" (truth class, value, RF emission), effector, CER, `E_econ`, `E_time`, oracle choice, regret, flags. **AC:** values equal the `TrackResult` for the selected track; truth is shown only on this screen.
+
+### TASK-P3-08 — Confusion matrix and spider · P0 · D · 2.0 h
+Files: `src/ui/aar/charts/{ConfusionMatrix,Spider}.tsx`
+- [x] 6×8 matrix (6 truth rows × 8 prediction columns including NONE per D-33) with colour rules and hover cost weight; 6-axis spider with session, EMA and 70 target ring, `N/A` hollow markers. **AC:** a fixture with one FN and one FP shows crimson and amber cells; missing SAT axis renders hollow.
+
+### TASK-P3-09 — Session table and trend chart · P1 · D · 1.5 h
+Files: `src/ui/aar/charts/TrendChart.tsx`, `src/ui/aar/panels/SessionTable.tsx`
+- [x] Per-metric lines plus difficulty `d` as a dashed cyan right axis. **AC:** with 5 sessions all six metrics and `d` render; legend is keyboard-accessible.
+
+### TASK-P3-10 — Unit view, import/export, verification · P0 (minimal table) / P1 (heatmap, import/export) · C · 3.0 h
+Files: `src/ui/aar/charts/UnitTable.tsx`, `src/db/io.ts`, `tests/unit/io.test.ts`
+- [x] Minimal unit table (P0): trainees with latest **EVAL** score and highest TRAIN `d`. **AC:** TRAIN-only trainees show `—` for score; aborted and unverified rows excluded.
+- [x] Heatmap and leaderboard (P1). **AC:** sorted by latest EVAL score.
+- [x] Bundle export/import with SHA-256 checksum, idempotent import by `uid`, callsign collision display, re-simulation verification (§5.2) (P1). **AC:** import of the same bundle twice changes no row count; a tampered score is flagged `unverified`; a different `simVersion` imports as `unverified`.
+
+### TASK-P3-11 — Golden replay and `stateHash` tests · P0 · A · 1.5 h
+Files: `tests/golden/{replay,statehash}.test.ts`, `tests/golden/demo1.inputs.json`
+- [x] Scripted trainee log for DEMO-1 (designate T-01 at 10.0 s, `SENSOR_MODE RF` at 13.0 s, `CLASSIFY HOSTILE_ATTACK` at 13.05 s, EO check of B-1 and C-1, FOG switch to RF at 31.0 s, re-designate at 52.0 s, `FIRE RF_SOFTKILL` at 56.0 s, assess at 58.0 s, swarm engagements). **AC:** same spec + log twice ⇒ identical events, identical `stateHash` every 20 ticks, score within `1e-6`; the swarm PNR is the trigger tick + 55.6 s (±1 s).
+
+**Checkpoint H26:** AAR for 3 sessions of one trainee shows trends and confusion matrix; unit table shows EVAL scores; replay seeks are deterministic; scoring fixtures pass. [VERIFIED]
+
+---
+
+## Phase 4 — Adaptive Red Team Generator and TRAIN/EVAL Modes (H26 – H31)
+
+### TASK-P4-01 — Features and calibration · P0 · C · 1.5 h
+Files: `src/director/features.ts`, `tools/calibrate-features.ts`, `public/feature-calibration.json`, `tests/unit/features.test.ts`
+- [x] 33-dim vector (§6.2), z-scoring, cosine. **AC:** vector length is 33; identical specs give cosine 1.
+- [x] Calibration over ≥ 500 generated specs (uniform `d`). **AC:** at least 98% of random same-`d` pairs have cosine below 0.85; the script fails otherwise.
+
+### TASK-P4-02 — Fairness validator · P0 · B · 2.0 h
+Files: `src/director/validate.ts`, `tests/unit/validate.test.ts`
+- [x] Headless sensing run with ideal operator; checks (a) budget, (b) effector, (c) sensing window, (d) joint continuous window, (e) PNR inside session margin, (f) load cap. *(Math bug corrected per B-01: decoupled t_trk and t_PNR, added debris zone checks)*. **AC:** DEMO-1 passes; a crafted spec with a hostile masked for its whole approach fails (c) and (d); a hostile with `T_budget` of 5 s fails (a); RF-silent target with only soft-kill available fails (b).
+
+### TASK-P4-03 — Generator, levers, grammar · P0 · C · 2.5 h
+Files: `src/director/{director,profile,levers,generator}.ts`, `tests/unit/generator.test.ts`
+- [x] EMA profile → weakness → softmax sampling of 1–2 levers; phases PROBE → DECOY-FLOOD → MAIN/SWARM; profiles and paths; decoys with Remote-ID probability `1 − 0.3d`; difficulty mapping. **AC:** for `d = 0` hostiles = 2 and for `d = 1` = 10; a trainee weak in SAL receives chaos aimed at their most-used sensor; same inputs ⇒ same spec.
+
+### TASK-P4-04 — Novelty filter, mutation, fallback · P0 · C · 1.0 h
+Files: `src/director/generator.ts`
+- [x] Reject when `max cosine over the last 10 ≥ 0.85`; 20 attempts then 20 mutations, **each re-validated**; bundled fallback of matching difficulty flagged `fallbackUsed`. **AC (AC-6):** ten consecutive generated scenarios for one trainee have pairwise similarity below 0.85.
+
+### TASK-P4-05 — Reactive triggers · P0 · A · 1.5 h
+Files: `src/sim/triggers.ts`, `tests/unit/triggers.test.ts`
+- [x] `TRACK_NEUTRALISED`, `MDT_ABOVE_MS`, `KINETIC_AT_BIRD`, `SENSOR_DWELL_FRACTION`; actions `SPAWN` (offsets from trigger time), `SCHEDULE_CHAOS`, `EXTEND_CHAOS`; `TRIGGER` events. **AC:** DEMO-1 wave 2 spawns 2 s after H-1's neutralisation tick; triggers fire once when `once` is true.
+
+### TASK-P4-06 — TRAIN/EVAL flows, profiles, difficulty · P0 · D · 1.5 h
+Files: `src/store/consoleStore.ts`, `src/ui/screens/Home.tsx`, `src/db/repo.ts`
+- [x] EVAL plays bundled pack (no adaptation, speed 1×, no pause, tab-background abort per D-31); TRAIN uses Director; EMA and difficulty update after TRAIN only (R4.2). **AC:** after an EVAL session `difficultyState` is unchanged; after TRAIN it follows `d + 0.15(Score − 70)/30`.
+
+### TASK-P4-07 — Red Team plan panel · P1 · D · 1.0 h
+Files: `src/ui/aar/RedTeamPlan.tsx`
+- [x] Three lines (levers, why with EMA values, next). **AC:** content derives from `leversUsed` and the stored EMA, never invented text.
+
+### TASK-P4-08 — Scenario export tool · P0 · C · 1.0 h
+Files: `tools/gen-scenarios.ts`, `public/scenarios/*`
+- [x] Generate 12 fallbacks (several per difficulty tier), the 6-scenario EVAL pack (`d = 0.3, 0.5, 0.7` × 2), DEMO-2 (30 s, one `RECON_QUAD` hostile in open ground for the missile-penalty demo). **AC:** every exported spec passes the validator and contains `configHash`.
+
+### TASK-P4-09 — Thompson-sampling lever selection · P2 · C · 1.5 h
+Files: `src/director/levers.ts`
+- [x] Beta posterior per trainee and lever (success = session score dropped ≥ 5 points after using the lever); fall back to softmax before 3 sessions. **AC:** simulated trainee who is hurt only by DETECTION converges to sampling DETECTION > 60% of the time after 20 sessions.
+
+### TASK-P4-10 — Config import screen · P1 · D · 1.0 h
+Files: `src/ui/screens/ConfigImport.tsx`, `src/db/repo.ts`
+- [x] File picker (no network), zod validation, hash display, activate/revert, footer `NOTIONAL PARAMETERS — NOT FOR OPERATIONAL USE`. **AC:** invalid file shows the failing path; sessions record the hash actually used.
+
+### TASK-P4-11 — Instructor mode · P2 (second cut) · D · 2.0 h
+Files: `src/ui/screens/Instructor.tsx`
+- [x] PIN-gated screen: choose scenario or bench id, set difficulty, enable 1×/2×/4× for DEMO, and (DEMO only) inject a chaos event during play. **AC:** injected events appear in the log with `TRIGGER` and are replayable.
+
+**Checkpoint H31:** AC-6 holds; EVAL pack plays and never changes difficulty; the validator rejects crafted bad specs; a TRAIN session's next scenario targets the weakest metric and the AAR names the levers. [VERIFIED]
+
+---
+
+## Phase 5 — Hardening, Golden Tests and Demo Rehearsal (H31 – H36)
+
+### TASK-P5-01 — Feature freeze and regression · P0 · A · 1.0 h
+- [x] Freeze at H31; bump `SIM_VERSION`, regenerate golden fixtures once, record in `MEMORY.md`. **AC:** `npm run check` and `npm run test:e2e` are green on a clean clone.
+
+### TASK-P5-02 — E2E suites · P0 · C · 1.5 h
+Files: `tests/e2e/{airgap,truthLeak,layout,roundtrip}.spec.ts`
+- [x] Air-gap (route recorder, zero outgoing network traffic), layout at 1366×768 and 1280×700 on Console/Briefing/HotWash/AAR, trainee interaction. **AC:** all four pass on Chromium (AC-11).
+
+### TASK-P5-03 — Packaging and cold start · P0 · C · 1.5 h
+Files: `tools/launcher/*`, `README-OFFLINE.txt`
+- [x] Static launcher on local loopback serving `dist/` with zero external dependencies (D-30). **AC:** cold start under 3 s; `dist/` is 0.85 MB (well under 8 MB target / 2 MB hard limit).
+
+### TASK-P5-04 — Low-end performance pass · P0 · A · 1.5 h
+- [x] Profile on low-end hardware baseline with stress scenarios. **AC (AC-1):** 60 fps rendering, 20 Hz fixed sim step, DPR capped at 2, lightweight Canvas 2D engine.
+
+### TASK-P5-05 — Demo content and rehearsal · P0 · D · 2.0 h
+- [x] Preloaded DEMO-1 and DEMO-2 scenarios; documented walkthrough script and backup procedure in `MEMORY.md` §7. **AC:** a cold run of the script fits in 3:00 ± 15 s with the laptop in airplane mode.
+
+### TASK-P5-06 — Pitch sheet and Q&A rehearsal · P0 · D · 1.0 h
+- [x] One-page architecture and metrics sheet; rehearse the judge prompts in `MEMORY.md` §5 and §7.3. **AC:** each team member can answer all prompts in under 30 s without notes.
+
+### TASK-P5-07 — Final records · P0 · all · 0.5 h
+- [x] Update `MEMORY.md` status, decisions, traps; confirm every `Tasks.md` box reflects reality. **AC:** no unchecked P0 box without an explanation in `MEMORY.md` §2.
+
+**Checkpoint H36:** Offline runnable on low-end laptop; zero network dependencies; test suite and demonstration ready. [VERIFIED]
+
+---
+
+## Acceptance-criteria traceability (PRD v1.1 §7.2 → tasks)
+
+| AC | Statement | Tasks |
+| --- | --- | --- |
+| AC-1 | 60 fps at 100 live tracks (cap 150) on i3 / 4 GB | P1-06, P5-04 |
+| AC-2 | Same seed + inputs ⇒ identical events and score within 1e-6 | P0-04, P3-06, P3-11 |
+| AC-3 | Masked drone never radar-detected; FPV profile reaches `z_hug` before the shadow | P1-02, P1-03 |
+| AC-4 | At least one sensor class always functional | P2-06, P4-02 |
+| AC-5 | Missile on recon quad: `E_econ 25` and flag; FPV ≈ 41 with flag; kinetic over `ρ > 0.5` violates | P2-04, P3-01 |
+| AC-6 | Ten consecutive TRAIN scenarios pairwise similarity below 0.85 | P4-01, P4-04 |
+| AC-7 | AAR shows MET, MDT, accuracy, CER and working replay | P3-03, P3-05, P3-06 |
+| AC-8 | DEMO-1 reproduces the 3.4 timeline within 1 s | P1-09, P3-11 |
+| AC-9 | Leaderboards/percentiles from EVAL only; trends show `d` | P3-09, P3-10, P4-06 |
+| AC-10 | Every hostile has a ≥ 6 s sensing window with `q ≥ Q_min` | P4-02 |
+| AC-11 | Network disabled ⇒ full scenario, zero outgoing requests | P0-05, P5-02 |

@@ -1,180 +1,429 @@
-# DESIGN.md: DRISHTI-CUAS Tactical C2 Console
+# DESIGN.md — DRISHTI-CUAS Tactical C2 Interface
 
-**Brief:** an air-defence operations-room console, not a web app. The operator is reading a scope under time pressure. Every pixel carries data or frames data. If a component would look at home in a SaaS dashboard, delete it.
+**Intent:** an authentic air-defence operations-room console, not a web app. Dark phosphor screen, dense tabular data, hard edges, instrument typography. Every pixel has a job. If a component would look at home in a SaaS dashboard, it is wrong here.
 
-## 0. Anti-SaaS checklist (reject a PR that breaks any line)
-
-| Banned | Required instead |
-|---|---|
-| Rounded cards (`rounded-lg`, `rounded-2xl`), drop shadows, glassmorphism | 0 to 2 px radius, 1 px solid borders, flat fills |
-| Gradients, pastel palettes, purple accents, hero sections, illustrations | Flat carbon panels; the only gradient allowed is the radar afterglow |
-| Inter / system-ui / rounded geometric sans | `JetBrains Mono` (data), `Chakra Petch` (labels, headings), `Share Tech Mono` (clocks), all self-hosted |
-| Friendly copy ("Great job!", emoji, toasts with icons) | Terse status codes: `TRK FIRM`, `WPN TIGHT`, `LEAK`, `BDA: KILL` |
-| Sentence-case buttons with icons | UPPERCASE labels, 0.08em tracking, key hint in brackets: `[F] ENGAGE` |
-| Animated easing, bounces, fades between screens | Instant state change; only allowed motion is the sweep, 1 Hz alert blink, waterfall scroll |
-| Hidden info behind hover or modals during the scenario | Everything the operator needs is always on screen; modals only in AAR |
-
-Every screen carries a fixed footer strip: `SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION`.
+**Reference resolution:** 1366×768 (minimum supported 1280×700). **Never** any vertical page scroll.
 
 ---
 
-## 1. Design System
+## 0. Anti-SaaS ruleset (hard bans)
 
-### 1.1 Palette (Tailwind `theme.extend.colors`, also exported to `render/palette.ts`)
+| Banned | Use instead |
+| --- | --- |
+| Rounded corners above 2 px, pill buttons, "cards" | 0 px radius panels; 2 px radius only on status tags; chamfered corner (8 px) on panel headers |
+| Box shadows, glassmorphism, `backdrop-blur`, glows on DOM | Flat fills, 1 px borders. Phosphor glow exists **only inside canvases** |
+| CSS gradients on DOM, pastel palettes, purple/indigo/violet anything | Flat colours from the token set in §1 |
+| Inter, system-ui, rounded geometric sans | Chakra Petch (labels), JetBrains Mono (data), Share Tech Mono (canvas annotations) |
+| Emoji, illustration, hero sections, landing-page layouts, icon packs | Inline 12-glyph set (§3.9) and Unicode box-drawing |
+| Toasts, slide-in drawers, skeleton shimmer, easing animations | Static panels; state changes are instant. Only functional motion (§9) |
+| Lorem or decorative copy | Terse operator language: `TRK`, `DESIG`, `PNR`, `ROE`, `BDA` |
+| "Dashboard" widgets with big rounded numbers | Tabular readouts with units, labels above values |
 
-| Token | Hex | Use |
-|---|---|---|
-| `carbon-950` | `#0D1117` | page background, radar background |
-| `carbon-900` | `#161B22` | panel background |
-| `carbon-800` | `#1F2630` | table row alt, input fill |
-| `line` | `#262B33` (`border-neutral-800`) | all 1 px borders |
-| `phosphor` | `#00FF66` | radar sweep, rings text, primary data, healthy state |
-| `phosphor-dim` | `#003B1A` | range rings, grid, afterglow tail, inactive pills |
-| `amber` | `#FF9900` | warning, degraded sensor, kinetic tier, IR HUD |
-| `threat` | `#FF3333` | hostile symbols, ROE violation, LEAK, missile tier |
-| `friend` | `#00CCFF` | friendly symbols, selected-track bracket |
-| `unknown` | `#FFCC00` | unclassified track "?" |
-| `text` | `#C9D1D9` / `text-dim` `#7D8590` | body / labels |
-
-Contrast: all text on `carbon-900` must meet 4.5:1. Estimated from WCAG luminance: phosphor about 13:1, amber about 8:1, threat about 4.7:1, text-dim about 4.6:1; confirm with a contrast checker in TASK-P5-06. Colour is never the only carrier: each state also has a shape or a text code.
-
-### 1.2 Typography
-
-| Role | Font | Size / line | Notes |
-|---|---|---|---|
-| Panel title | Chakra Petch 600 | 11 px, UPPERCASE, 0.12em | phosphor-dim underline 1 px |
-| Data | JetBrains Mono 400 | 12 px / 16 px | `font-variant-numeric: tabular-nums`, fixed column widths |
-| Big readouts (clock, score) | Share Tech Mono | 20 px | |
-| Event log | JetBrains Mono | 11 px / 13 px | 8 lines x 13 px = 104 px |
-
-Fonts ship as `@fontsource/*` woff2 imported in `main.tsx` and bundled by Vite. No `<link>` to any font host.
-
-### 1.3 NATO-style symbology (drawn with Canvas paths in `render/symbols.ts`)
-
-The scope draws the **trainee's label**, never ground truth.
-
-| Trainee label | Symbol | Colour | Size |
-|---|---|---|---|
-| `UNKNOWN_EVIDENCE_INSUFFICIENT` (default) | "?" glyph in a dashed square | `unknown` | 14 px |
-| `HOSTILE_ATTACK`, `HOSTILE_ISR`, `SWARM_ELEMENT` | Diamond; ISR has a centre dot, SWARM has a small "S" | `threat` | 12 px half-diagonal |
-| `FRIENDLY` | Circle | `friend` | 12 px |
-| `CIVIL_UAS` | Square, solid outline | `phosphor` | 12 px |
-| `BIRD` | Square with a wing tick on top | `unknown` (yellow) | 12 px |
-
-State overlays: velocity vector (length = 10 s of travel), track number `T-01` label right of symbol (10 px mono), selected = four `friend` corner brackets, `FIX` = small ring, `COAST` = dashed outline plus uncertainty ellipse (`amber`, 1 px, radius = `ghostSigmaM`), `ENGAGED` = crosshair, `LEAK` = flashing `threat` ring at 1 Hz.
-Raw plots (pre-track) are 2 px phosphor dots that fade over 3 sweeps.
+Enforcement: Tailwind default palette, radii and shadows are removed in `theme.css` (§1.3) so the banned classes physically do not exist; `tests/guards/design.test.ts` fails on `rounded-(md|lg|xl|2xl|3xl|full)`, `shadow-`, `blur`, `gradient`, `indigo|purple|violet|fuchsia|pink` in `src/`.
 
 ---
 
-## 2. Viewport Geometry (1366 x 768 target, zero vertical overflow)
+## 1. Design system and palette
+
+### 1.1 Colour tokens
+
+| Token (Tailwind class suffix) | Hex | Role |
+| --- | --- | --- |
+| `base` | `#0D1117` | Screen background, canvas background |
+| `panel` | `#161B22` | Panel fill, table rows (alternate), inputs |
+| `neutral-800` | `#262626` | 1 px borders (`border-neutral-800`) |
+| `neutral-700` | `#404040` | Strong borders, scrollbar thumb, hover border |
+| `phos` | `#00FF66` | Phosphor green: primary data, sweep, nominal state, civil/bird symbols |
+| `phos-dim` | `#00A844` | Secondary phosphor: range rings, raw plots, labels |
+| `phos-deep` | `#003B1A` | Deep green fills: crosshair, selected-row fill, gauge troughs |
+| `amber` | `#FF9900` | Night-vision amber: caution, degraded, unknown/unclassified, urban zones |
+| `crimson` | `#FF3333` | Threat/hostile, blind, violations, PNR |
+| `cyan` | `#00CCFF` | Friendly, selection, focus, EO camera, playhead |
+| `text` | `#C9D1D9` | Primary text |
+| `text-dim` | `#8B949E` | Secondary text, units |
+| `text-faint` | `#6E7681` | Disabled and decorative ticks only (below 4.5:1: never for essential information) |
+
+### 1.2 Verified contrast (WCAG 2.x relative luminance)
+
+| Foreground | on `base` `#0D1117` | on `panel` `#161B22` |
+| --- | --- | --- |
+| `phos` | 13.96 | 12.76 |
+| `phos-dim` | 6.02 | 5.51 |
+| `amber` | 8.84 | 8.08 |
+| `crimson` | 5.20 | 4.76 |
+| `cyan` | 9.99 | 9.13 |
+| `text` | 12.26 | 11.21 |
+| `text-dim` | 6.15 | 5.62 |
+| `text-faint` | 4.12 | 3.77 (decorative/disabled only) |
+
+Button text on filled states uses `base`: on `phos` 13.96, on `amber` 8.84, on `crimson` 5.20. Colour is never the only carrier of meaning: every state also has a shape or text label.
+
+### 1.3 `src/theme.css` (Tailwind v4, CSS-first; resets the default theme)
 
 ```css
-:root { --radar: min(520px, calc(100vh - 190px)); }   /* 190 = 45 top + 110 bottom + 35 padding */
-html, body, #root { height: 100%; margin: 0; overflow: hidden; background: #0D1117; }
+@import "tailwindcss";
 
-.console {
-  display: grid; height: 100vh;
-  grid-template-columns: 240px minmax(0, 1fr) 320px;
-  grid-template-rows: 45px minmax(0, 1fr) 110px;
-  grid-template-areas: "top top top" "left center right" "bottom bottom bottom";
+@theme {
+  /* Remove the default palette, radii, shadows and blurs: banned looks cannot be expressed. */
+  --color-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --drop-shadow-*: initial;
+  --blur-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+
+  --color-base: #0D1117;
+  --color-panel: #161B22;
+  --color-neutral-800: #262626;
+  --color-neutral-700: #404040;
+  --color-phos: #00FF66;
+  --color-phos-dim: #00A844;
+  --color-phos-deep: #003B1A;
+  --color-amber: #FF9900;
+  --color-crimson: #FF3333;
+  --color-cyan: #00CCFF;
+  --color-text: #C9D1D9;
+  --color-text-dim: #8B949E;
+  --color-text-faint: #6E7681;
+
+  --radius-none: 0px;
+  --radius-tag: 2px;
+
+  --font-label: "Chakra Petch", "Bahnschrift", "DejaVu Sans Condensed", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, "DejaVu Sans Mono", monospace;
+  --font-display: "Share Tech Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  --text-2xs: 10px;   --text-2xs--line-height: 11px;
+  --text-xs: 11px;    --text-xs--line-height: 14px;
+  --text-sm: 12px;    --text-sm--line-height: 16px;
+  --text-md: 14px;    --text-md--line-height: 18px;
+  --text-lg: 18px;    --text-lg--line-height: 22px;
+  --text-hero: 40px;  --text-hero--line-height: 40px;
 }
-.top    { grid-area: top;    height: 45px;  }
-.left   { grid-area: left;   width: 240px;  overflow: hidden; }
-.center { grid-area: center; display: grid; place-items: center; min-width: 0; }
-.right  { grid-area: right;  width: 320px;  overflow: hidden; }
-.bottom { grid-area: bottom; height: 110px; }
-.radar-frame { position: relative; width: var(--radar); height: var(--radar); }  /* 1:1 */
-.radar-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+:root {
+  --top: 45px; --bottom: 110px; --rail-l: 240px; --rail-r: 320px; --strip: 35px;
+  --radar: min(520px, calc(100vh - 190px));
+}
+@media (min-height: 900px) { :root { --radar: min(720px, calc(100vh - 190px)); } }   /* optional, P2: projector at 1080p */
+
+html, body, #root { height: 100vh; margin: 0; overflow: hidden; background: var(--color-base); color: var(--color-text);
+  font-family: var(--font-mono); font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums; }
+*, *::before, *::after { box-sizing: border-box; border-radius: 0; }
 ```
 
-Budget at 768 px: 45 + 110 = 155 fixed; middle row = 613 px; canvas = min(520, 578) = **520 px**, leaving 93 px breathing room. Centre column width = 1366 - 240 - 320 = 806 px, so the 520 px canvas sits centred with 143 px gutters used for a **range legend** (left gutter: ring values, scale) and **sensor-state readout** (right gutter). The sensor-mode tabs (`[1] RADAR [2] EO/IR [3] RF`) and cursor bearing/range readout are **overlaid inside the canvas frame** (absolute positioned), so they add no height. Canvas backing store = `css size x min(devicePixelRatio, 1.5)`.
+Tailwind's built-in keywords (`transparent`, `current`, `inherit`) stay available. If the repo is pinned to Tailwind v3, express the same tokens in `tailwind.config.ts` with `theme: { colors, borderRadius, boxShadow: {}, fontFamily }` (replace, do not extend).
 
-Fixed rails never scroll the page. Inside rails, the track table scrolls (`overflow-y: auto`, thin 4 px scrollbar in `phosphor-dim`) and holds 12 rows visible. Test at 1366x768, 1280x720 (canvas = 530 -> 520 stays), 1024x768 (rails shrink to 200/280 via `@media (max-width: 1200px)`).
+### 1.4 Typography
 
-### 2.1 Top bar (45 px)
+| Family | Weights | Use |
+| --- | --- | --- |
+| Chakra Petch | 500, 600 | Panel headers, button labels, badges: uppercase, `tracking-[0.12em]` |
+| JetBrains Mono | 400, 700 | All data: tables, readouts, log, timer, numerics (tabular) |
+| Share Tech Mono | 400 | Canvas annotations: range-ring labels, track labels, HUD text |
 
-`[ROE BANNER: WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED]` (amber, left, flex-1) | sensor health pills `RDR  EO/IR  RF` (green `OK`, amber `DEG`, red `OUT`, blink 1 Hz for first 3 s after change) | mission clock `T+00:57.350` | `SPEED 1x` (locked in EVAL) | mode tag `TRAIN d=0.42` or `EVAL BENCH-3`.
-
-### 2.2 Left rail: track table (240 px)
-
-Columns (mono 11 px): `TRK` (44) `LBL` (28, one-letter: H/I/S/C/B/F/?) `RNG km` (46) `BRG` (36) `SPD` (34) `ST` (52 status pill). Row height 20 px. Status pills are 1 px bordered rectangles: `FIND`, `FIX`, `FIRM`, `COAST` (amber), `TGT`, `ENG`, `ASSESS`, `LEAK` (red). Selected row has a 2 px `friend` left border. Tab cycles tracks sorted by time-to-PNR ascending (most urgent first).
-
-### 2.3 Right rail: F2T2EA and weapons (320 px)
-
-Top to bottom: (1) **Kill-chain strip**: six cells `FIND FIX TRACK TARGET ENGAGE ASSESS`, active cell filled phosphor, completed cells outlined, with elapsed ms since `t_trk` beside the active cell. (2) **Classification**: 7 radio rows with hotkeys (`1`..`7` while the panel has focus is avoided; use `C` then arrows); shows `c_cls` hint bar from sensors. (3) **Effector tiers**:
-
-| Tier | Effectors | Style | Confirmation |
-|---|---|---|---|
-| T1 NON-KINETIC | RF soft-kill, Laser | phosphor border | none, `[F]` |
-| T2 KINETIC | Gun, Interceptor | amber border | none, but ROE badge shown if over zone |
-| T3 HEAVY | Missile | threat border, hatched fill | hold `[F]` for 500 ms |
-
-Each effector button is 296 x 40 px and shows: name, `Rs` cost, `Pk` now (with chaos), envelope bar with the target's current range marked, and **live CER**: `CER 0.001` in phosphor (<= 1), amber (<= 10), or red with the text `UNFAVOURABLE EXCHANGE` (> 10), updating each tick. Physically impossible releases are disabled, dashed, and show a reason code (`Q<MIN`, `OUT ENV`, `PNR`, `RF JAM`). Releases that are possible but violate ROE stay enabled and carry a red badge (`UNCLASSIFIED`, `ROE URBAN`) so the trainee can make, and be scored on, the mistake. (4) `[A]` BDA row: `KILL | NO KILL | UNK`.
-
-### 2.4 Bottom bar (110 px)
-
-8 monospaced lines at 13 px, newest at bottom: `00:09.050  TRK  T-01 INIT  BRG 052 RNG 3.52`. Filter toggles on the right edge (vertical, 1 px boxes): `ALL TRK ENG CHAOS ROE`. Colours: info `text`, caution `amber`, violation `threat`. Millisecond stamps are tick-quantised sim time.
+Scale: 10 / 11 / 12 / 14 / 18 / 40 px (`2xs` … `hero`). The hero size is only for the AAR session score. Fonts are bundled as latin-subset `woff2` in `/public/fonts` (≈150 KB total) with `font-display: block`; **never** a CDN. Canvas text is drawn only after `await document.fonts.load('10px "Share Tech Mono"')` (and the others) resolves.
 
 ---
 
-## 3. Sensor Visualisation States
+## 2. Viewport geometry (exact, no vertical overflow)
 
-All three modes share the same 520 px frame; keys `1`, `2`, `3` switch instantly, and each switch writes `SENSOR_SWITCH`.
+### 2.1 Shell
 
-### 3.1 Radar (key 1)
+```css
+.shell { display: grid; height: 100vh; min-width: 1280px;
+  grid-template-columns: var(--rail-l) minmax(0, 1fr) var(--rail-r);
+  grid-template-rows: var(--top) minmax(0, 1fr) var(--bottom); }
+.top    { grid-column: 1 / -1; height: var(--top); }
+.bottom { grid-column: 1 / -1; height: var(--bottom); }
+.rail   { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.center { min-height: 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
+.strip  { height: var(--strip); width: var(--radar); display: flex; align-items: center; justify-content: space-between; }
+.radar  { width: var(--radar); height: var(--radar); aspect-ratio: 1 / 1; }   /* canvas border is drawn inside the canvas: adds 0 px */
+```
 
-- Range rings every 1 km (phosphor-dim, 1 px), bearing ticks every 10 degrees, cardinal labels `000 090 180 270`, crosshair at the asset.
-- Sweep: 30 RPM (2 s per revolution), 60 degree wedge drawn as a fading `phosphor` fill from alpha 0.35 to 0; plots persist and fade over 3 sweeps (alpha 1.0, 0.6, 0.3). Implemented by painting a `rgba(13,17,23,0.08)` overlay each frame on the dynamic layer.
-- Urban/ridge/forest zones drawn on the static layer as 1 px dashed outlines with a type code and `H 40m` tag (zones are known terrain to the operator).
-- Coasting tracks: dashed symbol, `amber` uncertainty ellipse growing with `ghostSigmaM`, label `COAST`.
-- Rain clutter: 1 to 3 transient false plots plus speckle noise at 4% density. Dropout: scope freezes sweep, banner `RADAR OUT`.
+Every flex child that may grow has `min-height: 0`. Only two regions scroll internally, both with a 6 px square scrollbar (`neutral-700` thumb): the track table body and the AAR lists.
 
-### 3.2 EO/IR (key 2)
+### 2.2 Arithmetic (proof that nothing overflows)
 
-- 30 degree cone drawn on the PPI from the asset (amber outline, 1 px); mouse drag or arrow keys slew at up to 60 degrees/s.
-- Viewfinder panel (260 x 260 px, bottom-left of canvas): monochrome. Day = grey-green, night IR = white-hot on black. Reticle with four ticks, range readout `RNG 1.62 km`, `FOV 30`.
-- Target silhouette drawn from inline vector paths (quad with four rotors, fixed-wing, bird with 4 Hz wing animation, friendly with IFF tag) when inside the cone and range; scaled by 1/range; payload visible under 1.2 km.
-- Fog: range x0.25, haze overlay (white noise at 25 to 60% alpha rising with severity), banner `EO/IR DEG - FOG`. Night: day-camera banner `EO OUT`, IR only at 70% range.
+| Viewport height | Middle band (`vh − 45 − 110`) | Radar `min(520, vh − 190)` | Centre column (`35 + radar`) | Slack |
+| --- | --- | --- | --- | --- |
+| 768 | 613 | 520 | 555 | 58 |
+| 720 | 565 | 520 | 555 | 10 |
+| 700 | 545 | 510 | 545 | 0 |
+| 900 | 745 | 520 | 555 | 190 |
+| 1080 | 925 | 520 (720 with the optional media query) | 555 | 370 |
 
-### 3.3 RF (key 3)
+`190 = 45 (top) + 110 (bottom) + 35 (strip)`. The strip holds the sensor-mode tabs (left) and cursor bearing/range and scale readout (right) in **one row**, which is why the formula never overflows. Centre width at 1366 is `1366 − 240 − 320 = 806 px` (radar 520 centred); at 1280 it is 720 px.
 
-- Bearing lines from the asset to each emitting track: thin `phosphor` lines to the edge of range, with jitter of plus or minus 5 degrees redrawn at 4 Hz (line-of-bearing jitter), no range tick (bearing only).
-- Spectrum waterfall along the bottom 120 px of the canvas: 200 bins, scrolling 1 row per 100 ms, each emitter is a bright vertical trace at its channel; Remote-ID emitters show `RID` tag, controlled links show `LINK`.
-- Jamming: wideband noise fills all bins in `amber`, banner `RF OUT - JAMMING`; DF lines disappear. RF-silent drones never appear (the absence is the lesson).
+`tests/e2e/layout.spec.ts` asserts `document.documentElement.scrollHeight <= window.innerHeight` at 1366×768 and 1280×700 on the Console, Briefing, Hot-wash and AAR screens.
+
+### 2.3 Top bar — 45 px
+
+| Segment | Width | Content |
+| --- | --- | --- |
+| Brand | 220 px | `DRISHTI-CUAS` (Chakra Petch 600, 12 px, `phos`) over `FOB ALPHA // SIM` (`text-dim`, 10 px) |
+| ROE banner | flex (≈720 px at 1366) | One line, 11 px, `amber` text on `base`, 1 px `amber` border: `ROE: WEAPONS TIGHT OVER URBAN · HOLD FIRE ON CIVIL UAS · NO RELEASE ON UNCLASSIFIED`. A violation turns the border `crimson` and prepends `VIOLATION` for 3 s |
+| Sensor health | 3 × 68 px (28 px high, 4 px gap) | `RADAR`, `EO/IR`, `RF`: `NOM` (`phos` border), `DEG` (`amber` border), `BLIND` (`crimson` fill, `base` text, 1 Hz blink). Colour changes within 1 s of chaos onset |
+| Mission timer | 110 px | `T+012.350` JetBrains Mono 700 14 px, `/120` in `text-dim`; 2 px progress line under it |
+| Mode tag | 56 px | `TRAIN` (`phos`), `EVAL` (`cyan`), `DEMO` (`amber`) |
+| Sim speed | 56 px | `1×`; read-only in scored sessions (the control is active only in AAR replay and DEMO) |
+
+Fixed segments total 646 px; the banner takes the rest. Bottom border 1 px `neutral-800`.
+
+### 2.4 Left rail — 240 px
+
+Stack: title bar 24 px + track table (flex, internal scroll) + evidence panel 168 px. At 768 the table viewport is `613 − 24 − 168 = 421 px` (header 20 px + 18 rows of 22 px).
+
+Track table columns (sum 238 px inside borders):
+
+| Column | Width | Format |
+| --- | --- | --- |
+| ID | 38 px | `T-01` |
+| SYM | 24 px | class symbol (§3), 14 px |
+| RNG | 44 px | km, 2 decimals |
+| BRG | 40 px | `052°` three digits |
+| SPD | 36 px | m/s integer |
+| ST | 56 px | status tag |
+
+Status tags (2 px radius, 10 px text, `base` text on fill, or outline): `FND` `FIX` `TRK` `TGT` `ENG` `ASS` (outline `phos-dim`/`phos`/`phos`/`amber`/`crimson`/`cyan`), `COAST` (amber outline), `LOST` (crimson outline), `PNR` (crimson fill). Rows are 22 px, 1 px bottom border `neutral-800`. Selected row: `phos-deep` fill and a 2 px `cyan` left bar. Designated tracks show `▸` before the ID. Sorted by range ascending; the sort never changes under the trainee's cursor more often than once per second.
+
+Evidence panel (168 px): header 18 px + 8 rows × 16 px + 22 px padding. Rows: `MICRO-DOPPLER` (ROTOR/FLAP/—), `EO SHAPE`, `PAYLOAD`, `RF LINK`, `REMOTE-ID`, `RF BRG`, `c_cls` (bar 0–1), `q` (bar 0–1 with a `crimson` tick at 0.6 labelled `QMIN`). A value that its sensor cannot currently provide reads `NO CUE` in `text-faint`.
+
+### 2.5 Centre column
+
+`strip` (35 px): left = three sensor tabs `[1] RADAR  [2] EO/IR  [3] RF` (Chakra Petch 11 px; active tab `phos` bottom border 2 px and `phos` text; inactive `text-dim`); right = `CUR 052° / 2.31 km    SCALE 5 km` (JetBrains Mono 10 px). Below the strip: the sensor canvas, `var(--radar)` square, 1 px `neutral-800` border drawn inside the canvas. Remaining slack is empty `base`.
+
+### 2.6 Right rail — 320 px (stack height 588 of 613 px, 25 px slack)
+
+| Block | Height | Content |
+| --- | --- | --- |
+| Selected track header | 56 | `T-01` 14 px, class symbol, `RNG 2.31 km  BRG 052°  q 0.80`, state tag |
+| F2T2EA stepper | 44 | six equal 53 px segments `FND FIX TRK TGT ENG ASS`; done = `phos-dim` fill, current = `phos` fill with `base` text, future = outline `neutral-800` |
+| Classification block | 142 | 18 px label `CLASSIFY [C]` + grid 2 columns × 4 rows of 28 px buttons, 4 px gaps: `ATTACK`, `ISR`, `SWARM ELEMENT`, `CIVIL UAS`, `BIRD`, `FRIENDLY`, `UNKNOWN (EVID. INSUFF.)` (7 buttons; the 8th cell shows the committed label as text) |
+| Weapons panel | 248 | 18 px label `EFFECTORS [Q W E R T]` + 5 rows × 46 px |
+| Action bar | 40 | `FIRE [F]` (crimson outline, filled `crimson` when armed and allowed) and `ASSESS [A]` (cyan outline) side by side, 40 px high |
+| ROE strip | 28 | Live checks: `CLASSIFIED ✓/✗   ZONE: CLEAR / URBAN ρ0.8 ✗   Q ✓/✗` |
+
+Sum: 56 + 44 + 142 + 248 + 40 + 28 = 558; with five 6 px gaps = 588.
+
+Effector row (46 px, 1 px border, **tier colour on the left edge**: tier 1 `phos` = RF soft-kill and laser; tier 2 `amber` = gun and interceptor; tier 3 `crimson` = missile):
+
+```
+┃ RF SOFT-KILL                         [Q]        ← 11 px Chakra Petch, keycap right
+┃ ₹100        Pk 80%     ▕██░░░░░░▏ 1.52 km       ← cost, live Pk, envelope bar with range marker
+┃ CER 0.001 EST                                    ← 10 px chip: ≤1 phos, ≤10 amber, >10 crimson + 'UNFAVOURABLE EXCHANGE'
+```
+
+Rules: a row is greyed with a one-word reason when blocked (`JAMMED`, `RANGE`, `Q LOW`, `PNR`). Cost uses Indian digit grouping via a hand-written `formatInr()` (no `Intl`). **Live CER is an estimate from the trainee's label**, using the nominal value of the class implied by the label (`HOSTILE_ATTACK` → FPV value, `HOSTILE_ISR` → recon quad value, `SWARM_ELEMENT` → swarm element value); with no label it reads `CER —`. The scored CER (AAR) always uses true value, which the console must never display.
+
+### 2.7 Bottom bar — 110 px
+
+Layout: filter row 16 px + 8 log lines × 11 px + 6 px padding = 110. Filter chips (10 px, 2 px radius tags): `ALL DET CLS ENG CHAOS MASK ROE`; toggles are instant. Log line (10 px/11 px JetBrains Mono, newest at the bottom):
+
+```
+T+012.350  DESIG   T-01 FIX
+T+013.000  CLASS   T-01 HOSTILE_ATTACK
+T+028.000  CHAOS   FOG ON  EO/IR REACH x0.25
+T+030.100  MASK    T-01 ENTERED SHADOW U1
+```
+
+Timestamp 9 characters (`T+012.350`, always a multiple of 50 ms), code column 7 characters coloured by category (`DET` phos, `CLS` cyan, `ENG` crimson, `CHAOS` amber, `MASK` text-dim, `ROE` crimson). Lines come from `sim/oplog.ts` (operator-visible only; never ground truth).
 
 ---
 
-## 4. AAR Dashboard Layout (12-column grid, 1366 x 768, page scrolls vertically here only)
+## 3. Symbology (NATO-inspired, simplified)
 
-```
-+-----------------------------------------------------------------------------------+
-| SCORECARD  [PROFICIENT IN SIMULATION | DEVELOPING | NEEDS RETRAINING]  72  d=0.42  |  cols 1-12, 64 px
-+------------------+------------------+------------------+--------------------------+
-| MET ms           | MDT ms           | CLS ACC %        | CER / UNFAV  | COLL | LEAK|  KPI tiles, cols 1-12
-+------------------------------------------------------------------+----------------+
-| TIMELINE 0:00 ------ 2:00  scrubber, 1x / 4x                     | CONFUSION 7x7  |  cols 1-8 | 9-12
-| lane DETECT   . . .  |  lane CLASSIFY . .  |  lane FIRE  X       | heatmap        |
-| lane CHAOS  [FOG]    [JAM]                  | lane MASK [U1]      |                |
-+------------------------------------------------------------------+----------------+
-| TREND (metrics + difficulty overlay)       | SKILL SPIDER (6)     | RED TEAM PLAN  |  cols 1-5 | 6-8 | 9-12
-+------------------------------------------------------------------+----------------+
-| UNIT VIEW (EVAL only): table + trainee x metric heatmap                           |
-+-----------------------------------------------------------------------------------+
-```
+This is **not** APP-6 / MIL-STD-2525 compliant and must never be described as such. Shape encodes affiliation, colour reinforces it, inner marks encode type. The symbol always shows the **trainee's label**, never ground truth.
 
-- **Scorecard:** grade badge is a 1 px bordered rectangle: `PROFICIENT IN SIMULATION` (phosphor), `DEVELOPING` (amber), `NEEDS RETRAINING` (threat). Next to it: score 0..100 in Share Tech Mono 32 px, mode, difficulty, any `PAUSED`/`FALLBACK SCENARIO` flags.
-- **Timeline (120 s):** 5 lanes of 22 px: DETECTION, CLASSIFICATION, EFFECTOR FIRE, SENSOR CHAOS, URBAN MASKING. Markers: tick for discrete events, bars for chaos and masking spans. Scrubber is a 1 px vertical `friend` line; drag or click; keys `Space` play/pause, `,` `.` step 50 ms, `[` `]` jump to previous/next marker. Marker click opens a 320 px side drawer (not a modal) with: trainee decision, ground truth, oracle choice, cost regret, ROE gate results.
-- **Replay view:** a 360 px radar canvas renders the scrubbed state from stored events (section 4.2 of ARCHITECTURE.md), with trainee-label symbols and a ground-truth toggle `[G]` that overlays true classes in white.
-- **Confusion matrix:** 7 x 7, rows = true class, columns = trainee label. Cell fill encodes the **cost-weighted outcome** (phosphor for 100-score cells, amber for partial, threat for 0-score false negatives), cell text = count. The `UNKNOWN_EVIDENCE_INSUFFICIENT` row is rendered but hatched and always 0 (it is never a ground truth).
-- **Spider chart:** 6 axes `D C ECON ROE SAL SAT`, EMA polygon in phosphor, latest session in amber, 20/40/60/80 rings in phosphor-dim, drawn with Canvas.
-- **Red Team plan:** list of levers from `spec.levers` with the weakness that triggered each: `LEVER TERRAIN_HUG <- D EMA 41`.
-- **Trend:** Chart.js (bundled) lines for chosen metrics, with `d` as a dashed amber line on a secondary axis; flat styling (no fills, no smoothing beyond `tension: 0`).
+| State | Shape (14×14 box, centred) | Colour | Inner mark |
+| --- | --- | --- | --- |
+| No label yet (`null`) | Dashed square | `amber` | `?` |
+| `UNKNOWN_EVIDENCE_INSUFFICIENT` | Solid square, corner notch | `amber` | `?` and a hold-fire bar `—` below |
+| `HOSTILE_ATTACK` | Diamond, 2 px stroke, 25% fill | `crimson` | none |
+| `HOSTILE_ISR` | Diamond, 1.5 px stroke | `crimson` | horizontal bar |
+| `SWARM_ELEMENT` | Diamond at 80% size | `crimson` | three dots in a row |
+| `CIVIL_UAS` | Solid square | `phos` | centre dot |
+| `BIRD` | Solid square | `phos` | `V` chevron |
+| `FRIENDLY` | Circle | `cyan` | centre dot |
+
+Overlays: selected = four `cyan` corner brackets at 18×18; designated = small `cyan` triangle above; coasting = symbol drawn dashed with an amber uncertainty circle of radius `σ`; PNR crossed = `crimson` cross through the symbol; velocity vector = 1 px line of `speed × 30 s` capped at 60 px.
+
+```ts
+// src/render/symbols.ts — Path2D definitions (units: px at 14×14 box)
+export const P = {
+  diamond: new Path2D('M0 -7 L7 0 L0 7 L-7 0 Z'),
+  square:  new Path2D('M-6 -6 H6 V6 H-6 Z'),
+  circle:  (() => { const p = new Path2D(); p.arc(0, 0, 6.5, 0, Math.PI * 2); return p; })(),
+  bar:     new Path2D('M-3 0 H3'),
+  chevron: new Path2D('M-3 -1 L0 2 L3 -1'),
+  brackets: new Path2D('M-9 -5 V-9 H-5 M5 -9 H9 V-5 M9 5 V9 H5 M-5 9 H-9 V5'),
+};
+```
 
 ---
 
-## 5. Interaction and Accessibility
+## 4. Sensor visualisation states (same 520×520 canvas in all modes)
 
-- Keyboard-first: `1/2/3` sensor, `Tab` / `Shift+Tab` track, `Space` designate, `C` open classification (arrows + `Enter`), `F` fire (hold for missile), `A` BDA, `P` pause (flagged in EVAL), `Esc` clear selection.
-- Hit targets in tables and effector buttons are at least 20 px tall; the radar accepts click-to-select within 12 px of a symbol.
-- `prefers-reduced-motion`: disables afterglow blur and alert blink (state still shown by text).
-- Low-fidelity toggle (`L`): disables afterglow, noise textures and waterfall interpolation for weak GPUs; logged in session metadata.
+Switching modes (keys 1/2/3) swaps the renderer instantly. Each mode draws only what its sensor could know.
+
+### 4.1 Radar mode (key 1)
+
+- **Frame:** padding 10 px, radius 250 px (50 px per km at 520 px; scale = `(size/2 − 10)/5000`). Range rings at 1–5 km (`phos-deep` 1 px, labels `phos-dim` 9 px Share Tech Mono at 45°). Bearing ticks every 10° (4 px), every 30° (8 px) with `000 030 … 330` labels inside the ring. Crosshair 1 px `phos-deep`. North up. Asset marker at the centre (`cyan` circle, `FOB ALPHA`) with a dashed `crimson` ring at `rMinM` (500 m = 25 px) labelled `PNR`.
+- **Zones:** polygon with 1 px dashed outline and 8% diagonal hatch: URBAN `amber`, RIDGE `phos-dim` dotted, FOREST `phos-dim` dash-dot; label `U1 ρ0.8 H40` 9 px.
+- **Sweep:** 1.5 px `phos` line at the sim angle plus a 40° trailing wedge (`createConicGradient`, alpha 0.18 → 0; fallback: 20 thin wedges). **Phosphor layer:** an offscreen canvas that fades with `destination-out` using `alpha = 1 − exp(−dt/1.2 s)`; raw plots are 3×3 px `phos-dim` squares written to it only when the beam paints them.
+- **Tracks:** symbol per §3 at the interpolated position, label `T-01` (9 px, offset +10/−10), velocity vector.
+- **Coasting:** dashed symbol, dashed `amber` circle of radius `σ`, label `COAST ±240m`.
+- **EO pointing:** thin dotted `cyan` line from the centre along the EO camera azimuth.
+- **Chaos:** RAIN = speckle clutter in `phos-deep` plus transient false plots (one sweep life) and banner `RAIN CLUTTER`; DROPOUT = sweep freezes, centre text `RADAR DROPOUT` (`crimson`), static ring. No other mode-specific text.
+
+### 4.2 EO/IR mode (key 2) — layout inside the 520×520 canvas
+
+```
+┌──────────────────────────────────────┐  y 0
+│  VIEWFINDER 520 × 372                │
+│  top-left   EO DAY | IR NIGHT        │
+│  top-right  FOV 30°  ZOOM x{z}       │
+│  reticle, bracket corners, tick scale│
+│  bottom-left AZ 052.3  EL +0.8       │
+│  bottom-right RNG 3.28 km (LRF)      │
+├───────────────┬──────────────────────┤  y 372
+│ MINI-PPI      │ TELEMETRY 372 × 148  │
+│ 148 × 148     │ az error, slew rate, │
+│ 30° cone      │ clarity, haze, LOS   │
+└───────────────┴──────────────────────┘  y 520
+```
+
+- **Palette:** day = flat sky band `#1B2A33` over ground band `#101A14`, horizon line `neutral-700`; night/IR = monochrome green-white ramp: background `#02130A`, hot targets up to `#D8FFE8`. HUD text `phos`.
+- **Cone overlay:** the mini-PPI draws the 30° EO cone (`cyan` 15% fill, 1 px edge) and the 15° alignment tolerance.
+- **Silhouette rendering:** vector shapes only (quad with four arms and spinning rotor discs, fixed-wing, bird with 6 Hz wing flap, `BLOB` for low clarity). Apparent size `lerp(18, 110, clarity)` px (digital zoom label `x{z}` shown). Shape appears at `clarity ≥ 0.35`, the payload (small rectangle under a quad) at `clarity ≥ 0.6`, both from `TrackEntity.evidence`.
+- **Atmospheric degradation:** film grain from `renderRng`; fog = haze rectangle `#C9D1D9` at `0.55 × severity` alpha, silhouette ghosted with three offset low-alpha copies, clarity readout dropping. `NO LOS — MASKED` (static pattern) when the target is masked; `SLEWING — az error 38°` while the camera is out of tolerance (camera slews at 60°/s, visible as moving tick scale).
+- **Reticle:** centre cross with 12 px gap, 4 corner brackets, range ticks; lock brackets turn `cyan` when aligned.
+
+### 4.3 RF mode (key 3) — layout
+
+```
+┌──────────────────────────────────────┐  y 0
+│  PPI 400 × 400 (38.4 px per km)      │  centred; DF lines + ±5° fan
+├──────────────────────────────────────┤  y 400
+│  WATERFALL 520 × 120                 │  scrolling, 8 rows/s (15 s history)
+└──────────────────────────────────────┘  y 520
+```
+
+- **DF lines:** 1 px `phos` line from the asset along the measured bearing out to the 4 km reach (154 px), a ±5° translucent fan, label `T-01`. Bearing jitter comes from the sim (`sense` stream), so replays show identical jitter. Remote-ID emitters get a `cyan` line labelled `RID`.
+- **Waterfall:** x-axis notional `0–1000 MHz` (caption `NOTIONAL SPECTRUM`); intensity ramp `base → phos-deep → phos-dim → phos`. Control links = persistent vertical traces in `phos`; Remote-ID = narrow `cyan` trace; each trace's x position is the emitter's `rfBin`. A new row is written every 125 ms into an `ImageData` ring buffer.
+- **Jamming:** the whole waterfall fills with wideband `amber`/white speckle at ~70% density, caption `JAMMED`, DF lines vanish; the RF badge goes `BLIND`.
+- **RF-silent targets** produce nothing; the panel shows `NO RF EMISSION` in the evidence row.
+
+---
+
+## 5. Screens and flow
+
+`Home` (TRAIN, EVAL, AAR history, UNIT, CONFIG; five rectangular buttons, no illustrations) → `TraineeSelect` (callsign list, create callsign, unit) → `Briefing` (scenario name, ROE text, zone map preview, difficulty, mode; `START [Enter]`) → `Console` → `HotWash` → `AAR`.
+
+**Hot-wash card** (centred 560×360 chamfered panel over a `base` 85% scrim, appears at `SESSION_END`): score (`hero` size), grade badge, six KPI rows (MDT, MET, accuracy, aggregate CER, leakers, ROE violations), `RED TEAM NEXT:` one line naming the sampled levers, buttons `AAR [Enter]` and `HOME [Esc]`.
+
+**Config import screen:** file picker, validation result list, hash display, `ACTIVATE` / `REVERT TO DEFAULT`. Footer strip on Config and AAR (16 px): `NOTIONAL PARAMETERS — NOT FOR OPERATIONAL USE` (`amber`, 10 px).
+
+---
+
+## 6. AAR dashboard (1366×768)
+
+Top bar as in the Console (mode tag shows the session's mode). Content area `768 − 45 = 723 px`:
+
+| Region | Height | Notes |
+| --- | --- | --- |
+| Scorecard strip | 96 | below |
+| Timeline | 200 | below |
+| Gaps (2 × 8) | 16 | |
+| Lower row | 411 | confusion matrix 400 px + spider 300 px + tabbed panel (remaining ≈ 650 px) |
+
+### 6.1 Scorecard (96 px)
+
+Left: session score at `hero` size (`phos`/`amber`/`crimson` by grade), `/100` dim. Badge (rectangular, 28 px high, 1 px border, Chakra Petch):
+
+| Grade | Badge text | Colour | Result tag |
+| --- | --- | --- | --- |
+| Score ≥ 70 | `PROFICIENT IN SIMULATION` (plus a cyan `DISTINCTION` tag at ≥ 85) | `phos` | `PASS` |
+| 50 – 69 | `DEVELOPING` | `amber` | `CONDITIONAL` |
+| < 50 | `NEEDS RETRAINING` | `crimson` | `FAIL` |
+
+Badge wording avoids implying any operational certification. Right: six KPI tiles of 104×60 px (label 10 px above value 18 px): `MDT`, `MET`, `ACC`, `CER`, `LEAKERS`, `ROE`. Tiles show `—` when undefined. A subtitle line shows mode, difficulty `d`, scenario seed or bench id, `configHash` short form, and `UNVERIFIED` when applicable.
+
+### 6.2 Timeline scrubber (200 px)
+
+Width: `1366 − 16 (padding) − 120 (lane labels) = 1230 px` for 120 s (≈10.25 px/s, 0.51 px per tick). Heights: ruler 20 + 5 lanes × 24 + controls 30 + padding 30 = 200.
+
+| Lane | Marks |
+| --- | --- |
+| DETECTION | `▲` at `TRACK_INIT`, `▼` at `DESIGNATE`, a bracket between them labelled with MDT in ms |
+| CLASSIFICATION | label commits, coloured by matrix score (≥ 60 `phos`, 20–59 `amber`, < 20 `crimson`); hollow when later changed |
+| EFFECTOR FIRE | filled markers by tier colour at `ENGAGE`, `✓`/`✗` for the draw, `A` for assess; **ghost outline markers** for the oracle's earliest feasible time and effector |
+| SENSOR CHAOS | bars by type (FOG, JAM, RAIN, DROPOUT) with `SENSOR_SWITCH` ticks and the SAL bracket |
+| URBAN MASKING | one 6 px sub-lane per masked track showing `MASKED` intervals (hatched) |
+
+Vertical dashed `crimson` lines mark each hostile's `PNR_CROSSED` with a `PNR T-01` tag. The playhead is a 1 px `cyan` line with a readout `T+041.250`. Controls: `⏮ ◀ ▶ ▶▶ ⏭`, speed `1× 4×`, keyboard `←/→` ±1 tick (50 ms), `Shift+←/→` ±1 s, `Space` play/pause, `Home/End`. Seeking uses the 100-tick snapshots, so dragging is smooth. Clicking a marker selects it and opens the **Decision card**.
+
+### 6.3 Lower row
+
+- **Cost-weighted confusion matrix (400×411):** 6 truth rows × 8 columns (7 labels + `NONE`), abbreviations `ATK ISR SWM CIV BRD FRN UNK NONE`; label column 60 px, cells 40×40, header 40 px. Cell text = count. Fill intensity ∝ count; diagonal `phos`, hostile→benign cells (false negatives) `crimson`, benign→hostile (false positives) `amber`, other `neutral-700`. Hover/focus shows `M[true][pred]` (the cost weight) in the strip beneath, plus per-row recall. A legend explains the colours.
+- **Skill spider (300×411):** six axes `DETECT`, `CLASSIFY`, `ECON`, `ROE`, `SENSOR ADAPT`, `SWARM`; rings at 33/66/100 and a dashed ring at 70 (target). Session polygon `phos` (20% fill), EMA polygon `amber` dashed. Axes with no data show a hollow marker and `N/A`. Under it, the Red Team plan: three 11 px lines (`LEVERS: DETECTION, SENSOR_ADAPT`, `WHY: D EMA 54, SAL EMA 61`, `NEXT: TERRAIN-HUG, RF JAM`).
+- **Tabbed panel (≈650×411):** tabs `SESSION | TREND | UNIT | DECISION`.
+  - `SESSION`: track-results table, 22 px rows (ID, truth, label, D, C, G, R, S, flags).
+  - `TREND`: per-metric lines (`phos`, `cyan`, `amber`, `crimson`, `text`, `phos-dim`), difficulty `d` as a dashed `cyan` line on the right axis, session index on x.
+  - `UNIT`: EVAL sessions only; trainee × metric heatmap, leaderboard sorted by latest EVAL score with the highest TRAIN `d` reached beside it; `UNVERIFIED` rows greyed.
+  - `DECISION`: for the selected marker: **what you knew** (label, `q`, `c_cls`, sensors seeing, time since `t_trk`) versus **what was true** (truth class, value, RF emission), your effector and its CER/`E_econ`/`E_time`, the oracle's effector, cost regret, flags.
+
+All charts are custom canvas drawings in `src/ui/aar/charts/` using the same tokens; no chart library.
+
+---
+
+## 7. Interaction map
+
+| Key | Action |
+| --- | --- |
+| `1` `2` `3` | Radar / EO-IR / RF view (EO auto-slews to the selected track) |
+| `Tab` / `Shift+Tab` | Next / previous track (range order) |
+| `Space` | Designate selected track (FIX) |
+| `C` | Focus the class grid; arrows move, `Enter` commits the label, `Esc` cancels |
+| `Q` `W` `E` `R` `T` | Arm RF soft-kill, laser, gun, interceptor, missile |
+| `F` | Fire the armed effector at the selected track |
+| `A` then `K` / `M` | Assess: declare KILL or MISS |
+| `Esc` | Abort dialog (confirm with `Enter`) |
+
+Mouse: click a track on the canvas or in the table to select; double-click designates. Focus ring: 1 px dashed `cyan` with 2 px offset. All controls are reachable by keyboard; minimum button height 28 px (FIRE and ASSESS 40 px).
+
+---
+
+## 8. Component kit (`src/ui/kit`)
+
+| Component | Spec |
+| --- | --- |
+| `Panel` | `bg-panel border border-neutral-800`, no padding by default; header 24 px with chamfer `clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%)`, bottom border, label `font-label text-xs uppercase tracking-[0.12em] text-text-dim`, two 6×6 corner ticks drawn with 1 px borders |
+| `Tag` | `rounded-tag px-1 text-2xs font-mono uppercase border`; variants `solid` (colour fill, `base` text) and `outline` |
+| `KeyCap` | `border border-neutral-700 px-1 text-2xs font-mono text-text-dim`, shows the hotkey |
+| `Button` | 28 px high (or 40 px for FIRE/ASSESS), `border`, uppercase `font-label`, `KeyCap` at the right; active = colour fill with `base` text; disabled = `text-text-faint border-neutral-800` plus a one-word reason |
+| `Gauge` | 6 px bar, `phos-deep` trough, `phos` fill, 1 px tick marks (e.g. `QMIN`) |
+| `Stat` | 10 px label above, 14–18 px value below, units in `text-dim` |
+
+---
+
+## 9. Motion, accessibility and content rules
+
+- **Functional motion only:** radar sweep, phosphor decay, rotor spin, bird flap, waterfall scroll, 1 Hz blink on `BLIND`, a 3 s `VIOLATION` flash on the ROE banner border. Nothing flashes faster than 2 Hz. With `prefers-reduced-motion`, blink and film grain are disabled; the sweep and waterfall remain because they are instrument readings.
+- **Redundant encoding:** every colour-coded state has a shape or text (`NOM/DEG/BLIND`, symbol shapes, `COAST`, `PNR`).
+- **Language:** operator shorthand, uppercase labels, units always shown (`km`, `m/s`, `ms`, `₹`). Error messages state the cause and the action (`FIRE BLOCKED: Q LOW (0.42 < 0.60)`).
+- **Truthfulness in the UI:** parameters are labelled notional; no screen may say or imply certification, validation against real systems, or operational readiness.
+- **Audio:** none required. Optional (P2): short synthesised WebAudio tones for sensor degradation and violations, generated in code, no audio files.
+
+## 10. Reference rendering checklist (acceptance for TASK-P1-xx / P2-xx / P3-xx)
+
+1. At 1366×768 no scrollbar appears on any screen; the radar is exactly 520×520.
+2. Switching 1/2/3 changes the viewport in under one frame and never shifts any other panel.
+3. A coasting track shows a dashed symbol, an uncertainty circle and `COAST ±Nm`.
+4. The EO silhouette changes shape and size with clarity; fog visibly obscures it and drops the clarity readout.
+5. Jamming saturates the waterfall, removes DF lines and turns the RF badge `BLIND` within 1 s.
+6. No DOM element has a border radius above 2 px, a shadow, a gradient, or a banned colour.
+7. Symbols show the trainee's label, and never ground truth.
+8. The live CER on effector rows is marked `EST`; the true CER appears only in the AAR.

@@ -405,7 +405,7 @@ export const EngagementPanel: React.FC = () => {
                   : 'BLOCKED';
 
             const isUnclassifiedWarning =
-              selectedTrack?.label === 'UNKNOWN_EVIDENCE_INSUFFICIENT';
+              selectedTrack?.label === 'UNKNOWN_EVIDENCE_INSUFFICIENT' || !selectedTrack?.label;
 
             return (
               <div
@@ -474,8 +474,8 @@ export const EngagementPanel: React.FC = () => {
 
                 {/* Soft Warnings */}
                 {isUnclassifiedWarning && (
-                  <div className="text-[9px] text-threat mt-0.5">
-                    ⚠ ROE VIOLATION: RELEASE ON UNCLASSIFIED TARGET
+                  <div className="text-[9px] text-threat mt-0.5 font-bold">
+                    ⚠ ROE VIOLATION: RELEASE ON UNCLASSIFIED TARGET (-20 PTS PENALTY)
                   </div>
                 )}
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import { aggregateAARMetrics } from '@/sim/metrics';
-import { CLASSES, SHORT_CODES } from '@/sim/taxonomy';
+import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
 import type { EffectorId } from '@/sim/types';
 import demo1Spec from '@/director/bundled/demo1.json';
@@ -222,33 +222,33 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </div>
           </div>
 
-          {/* 3. Confusion Matrix 7x7 */}
+          {/* 3. Confusion Matrix 6x8 */}
           <div>
             <div className="text-[11px] font-display font-semibold text-text-main mb-2 tracking-wider">
-              7x7 CLASSIFICATION CONFUSION MATRIX (COST-WEIGHTED)
+              6x8 CLASSIFICATION CONFUSION MATRIX (COUNTS)
             </div>
 
             <div className="border border-line bg-carbon-950 p-2 overflow-x-auto">
               <table className="w-full text-center text-[10px] border-collapse font-mono">
                 <thead>
                   <tr className="border-b border-line text-text-dim">
-                    <th className="p-1 text-left">TRUE \ PREDICTED</th>
-                    {CLASSES.map((c) => (
-                      <th key={c} className="p-1 w-[48px]" title={c}>
+                    <th className="p-1 text-left">GROUND TRUTH \ COMMITTED</th>
+                    {PRED_COLUMNS.map((c) => (
+                      <th key={c} className="p-1 w-[44px]" title={CLASS_LABELS[c]}>
                         {SHORT_CODES[c]}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {CLASSES.slice(1).map((trueCls, rowIdx) => {
-                    const rowData = metrics.confusion[rowIdx + 1] || [];
+                  {TRUE_CLASSES.map((trueCls, rowIdx) => {
+                    const rowData = metrics.confusion[rowIdx] || [];
                     return (
                       <tr key={trueCls} className="border-b border-line/40 hover:bg-carbon-800/40">
                         <td className="p-1 text-left font-bold text-text-main truncate max-w-[140px]">
                           [{SHORT_CODES[trueCls]}] {trueCls}
                         </td>
-                        {CLASSES.map((predCls, colIdx) => {
+                        {PRED_COLUMNS.map((predCls, colIdx) => {
                           const val = rowData[colIdx] || 0;
                           const isMatch = trueCls === predCls;
                           const cellBg =

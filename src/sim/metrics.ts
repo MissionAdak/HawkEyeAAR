@@ -9,7 +9,7 @@ import type {
   EffectorId,
   SensorMode,
 } from './types';
-import { CLASSES, isHostile } from './taxonomy';
+import { CLASSES, TRUE_CLASSES, isHostile } from './taxonomy';
 import {
   computeDScore,
   computeCScore,
@@ -29,7 +29,7 @@ interface TrackAggregate {
   trueClass: TrueClass;
   droneType: string;
   valueInr: number | null;
-  traineeLabel: TrackClass;
+  traineeLabel: TrackClass | null;
   tVis: number | null;
   tTrk: number | null;
   tDesig: number | null;
@@ -79,7 +79,7 @@ export function aggregateAARMetrics(
         trueClass: 'HOSTILE_ATTACK',
         droneType: 'FPV_ATTACK',
         valueInr: 100000,
-        traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
+        traineeLabel: null,
         tVis: null,
         tTrk: null,
         tDesig: null,
@@ -293,16 +293,24 @@ export function aggregateAARMetrics(
         )
       : null;
 
-  // 4. 7x7 Confusion Matrix & Classification Metrics
-  const confusion: number[][] = Array.from({ length: 7 }, () => Array(7).fill(0));
+  // 4. 6x8 Confusion Matrix & Classification Metrics (ARCHITECTURE.md 6.4)
+  // Rows: 6 TRUE_CLASSES, Columns: 8 PRED_COLUMNS (7 CLASSES + NONE)
+  const confusion: number[][] = Array.from({ length: 6 }, () => Array(8).fill(0));
   let correctClsCount = 0;
   let coveredCount = 0;
   let hostilePredictedCount = 0;
   let hostileTrueAndPredictedCount = 0;
 
   for (const t of allTracks) {
-    const trueRow = CLASSES.indexOf(t.trueClass);
-    const predCol = CLASSES.indexOf(t.traineeLabel);
+    const trueRow = TRUE_CLASSES.indexOf(t.trueClass);
+    let predCol: number;
+
+    if (!t.traineeLabel) {
+      predCol = 7; // 'NONE'
+    } else {
+      const idx = (CLASSES as readonly string[]).indexOf(t.traineeLabel);
+      predCol = idx >= 0 ? idx : 7;
+    }
 
     if (trueRow >= 0 && predCol >= 0) {
       confusion[trueRow][predCol] += 1;
@@ -312,12 +320,12 @@ export function aggregateAARMetrics(
       correctClsCount += 1;
     }
 
-    if (t.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT') {
+    if (t.traineeLabel && t.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT') {
       coveredCount += 1;
     }
 
     const isTrueHostile = isHostile(t.trueClass);
-    const isPredHostile = isHostile(t.traineeLabel);
+    const isPredHostile = t.traineeLabel ? isHostile(t.traineeLabel) : false;
 
     if (isPredHostile) {
       hostilePredictedCount += 1;

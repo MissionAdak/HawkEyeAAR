@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateMasking, isPointInPolygon } from '@/sim/masking';
+import { evaluateMasking, isPointInPolygon, isMasked } from '@/sim/masking';
 import type { ZoneSpec } from '@/sim/types';
 
 describe('Terrain Masking Engine (URBAN, RIDGE, FOREST)', () => {
@@ -59,5 +59,12 @@ describe('Terrain Masking Engine (URBAN, RIDGE, FOREST)', () => {
     // Target on negative X axis (-2000, 0, z = 20)
     const unmasked = evaluateMasking({ x: -2000, y: 0, z: 20 }, [testUrbanZone]);
     expect(unmasked.isMasked).toBe(false);
+  });
+
+  it('isMasked helper evaluates elevation angle and shadow range', () => {
+    const res = isMasked({ x: 2000, y: 1500, z: 20 }, { x: 0, y: 0, antennaHeightM: 15 }, testUrbanZone);
+    expect(res).toHaveProperty('masked');
+    expect(res).toHaveProperty('thetaT');
+    expect(res).toHaveProperty('thetaMask');
   });
 });

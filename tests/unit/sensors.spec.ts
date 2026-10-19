@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeRadarPd,
+  calculateRadarPd,
   fuseTrackQuality,
   computeCoastingState,
   fuseClassificationConfidence,
 } from '@/sim/sensors';
 
 describe('Radar & Sensor Mathematics (SNR, Pd, Fused Quality, Coasting)', () => {
+  it('calculateRadarPd returns snr and pd matching radar equation', () => {
+    const res = calculateRadarPd(0.01, 3000, 1.0);
+    expect(res.snr).toBeCloseTo(1.0, 3);
+    expect(res.pd).toBeCloseTo(0.9, 2);
+  });
   it('reference target (RCS 0.01 m^2) at 3 km gives Pd approx 0.90', () => {
     const pd = computeRadarPd(0.01, 3000, 1.0);
     expect(pd).toBeCloseTo(0.9, 2);

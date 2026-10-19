@@ -24,7 +24,8 @@ export const TrackTable: React.FC = () => {
     }
   };
 
-  const getLabelColor = (label: string) => {
+  const getLabelColor = (label: string | null) => {
+    if (!label) return 'text-text-dim';
     if (label.startsWith('HOSTILE') || label.startsWith('SWARM')) return 'text-threat font-bold';
     if (label === 'FRIENDLY') return 'text-friend font-bold';
     if (label === 'CIVIL_UAS') return 'text-phosphor';

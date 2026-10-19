@@ -68,7 +68,7 @@ export function drawTrackSymbol(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
-  label: TrackClass,
+  label: TrackClass | null,
   isSelected: boolean,
   isCoasting: boolean,
   ghostSigmaPx: number,

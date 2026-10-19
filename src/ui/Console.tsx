@@ -8,30 +8,22 @@ import { QuickGuide } from './QuickGuide';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode } from '@/sim/types';
-import { CLASSES, type TrackClass } from '@/sim/taxonomy';
+import { useConsoleKeyboard } from './useConsoleKeyboard';
 
 export const Console: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ConsoleRenderer | null>(null);
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
-  const selectedTrack = useSessionStore((s) => s.ui.selectedTrack);
   const recentEvents = useSessionStore((s) => s.ui.recentEvents);
   const setSensor = useSessionStore((s) => s.setSensor);
   const designate = useSessionStore((s) => s.designate);
-  const classify = useSessionStore((s) => s.classify);
-  const assess = useSessionStore((s) => s.assess);
-  const cycleTrack = useSessionStore((s) => s.cycleTrack);
-  const fire = useSessionStore((s) => s.fire);
-  const pause = useSessionStore((s) => s.pause);
-  const resume = useSessionStore((s) => s.resume);
-  const isPaused = useSessionStore((s) => s.ui.isPaused);
   const isAarOpen = useSessionStore((s) => s.isAarOpen);
   const openAar = useSessionStore((s) => s.openAar);
   const closeAar = useSessionStore((s) => s.closeAar);
   const isQuickGuideOpen = useSessionStore((s) => s.isQuickGuideOpen);
-  const openQuickGuide = useSessionStore((s) => s.openQuickGuide);
   const closeQuickGuide = useSessionStore((s) => s.closeQuickGuide);
+  const abortSession = useSessionStore((s) => s.abortSession);
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
@@ -55,91 +47,20 @@ export const Console: React.FC = () => {
     };
   }, []);
 
-  // Keyboard navigation & Hotkeys
+  // Scored-session visibility guard: abort session if tab is hidden during EVAL (Rules.md R2.10)
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if an input is focused
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      switch (e.key) {
-        case '1':
-          setSensor('RADAR');
-          break;
-        case '2':
-          setSensor('EOIR');
-          break;
-        case '3':
-          setSensor('RF');
-          break;
-        case 'Tab':
-          e.preventDefault();
-          cycleTrack(e.shiftKey ? 'PREV' : 'NEXT');
-          break;
-        case ' ':
-          e.preventDefault();
-          if (selectedTrack) {
-            designate(selectedTrack.trackNo, 'KEY');
-          } else {
-            cycleTrack('NEXT');
-          }
-          break;
-        case 'f':
-        case 'F':
-          if (selectedTrack && e.repeat === false) {
-            fire(selectedTrack.trackNo);
-          }
-          break;
-        case 'c':
-        case 'C':
-          if (selectedTrack) {
-            const currentIdx = CLASSES.indexOf(selectedTrack.label as TrackClass);
-            const nextClass = CLASSES[(currentIdx + 1) % CLASSES.length];
-            classify(selectedTrack.trackNo, nextClass);
-          }
-          break;
-        case 'a':
-        case 'A':
-          if (selectedTrack) {
-            assess(selectedTrack.trackNo, 'KILL');
-          }
-          break;
-        case 'm':
-        case 'M':
-          openAar();
-          break;
-        case '?':
-        case 'h':
-        case 'H':
-          openQuickGuide();
-          break;
-        case 'Escape':
-          closeQuickGuide();
-          closeAar();
-          break;
-        case 'p':
-        case 'P':
-          if (isPaused) {
-            resume();
-          } else {
-            pause();
-          }
-          break;
-        case 'l':
-        case 'L':
-          setLowFi((prev) => {
-            const next = !prev;
-            rendererRef.current?.setLowFidelity(next);
-            return next;
-          });
-          break;
+    const handleVisibilityChange = () => {
+      if (document.hidden && engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded) {
+        abortSession('TAB_BACKGROUNDED');
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedTrack, isPaused, setSensor, cycleTrack, designate, classify, assess, fire, pause, resume, openAar, openQuickGuide, closeQuickGuide, closeAar]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [abortSession]);
+
+  // Keyboard navigation & Hotkeys
+  useConsoleKeyboard(rendererRef, setLowFi);
 
   // Automatically trigger HotWash AAR when simulation session ends
   useEffect(() => {

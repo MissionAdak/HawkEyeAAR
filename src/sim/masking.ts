@@ -137,3 +137,27 @@ export function evaluateMasking(pos: Vec3, zones: ZoneSpec[]): MaskResult {
     shadowRemainingM: 0,
   };
 }
+
+/**
+ * Calculates mathematical terrain masking line-of-sight elevation angles.
+ * Provided for compatibility with director and external callers.
+ */
+export function isMasked(
+  targetPos: Vec3,
+  radarPos: { x: number; y: number; antennaHeightM: number },
+  zone: ZoneSpec
+): { masked: boolean; thetaT: number; thetaMask: number } {
+  const dx = targetPos.x - radarPos.x;
+  const dy = targetPos.y - radarPos.y;
+  const R = Math.hypot(dx, dy);
+  if (R === 0) return { masked: false, thetaT: 0, thetaMask: 0 };
+
+  const d_n = Math.max(100, R * 0.4);
+  const thetaMask = Math.atan2(zone.heightM - radarPos.antennaHeightM, d_n);
+  const thetaT = Math.atan2(targetPos.z - radarPos.antennaHeightM, R);
+
+  const inShadowRange = (R - d_n) <= zone.shadowM;
+  const masked = thetaT < thetaMask && inShadowRange;
+
+  return { masked, thetaT, thetaMask };
+}

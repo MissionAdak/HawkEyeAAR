@@ -333,7 +333,7 @@ describe('Rules of Engagement & F2T2EA State Machine (TASK-P2-01, TASK-P2-04)', 
       expect(gatingSilent.hardBlockReason).toBe('RF_SILENT_TARGET');
     });
 
-    it('permits release on unclassified target but records ROE violation (SC-9, SC-10)', () => {
+    it('permits release on unclassified target (explicit UNKNOWN) but records ROE violation (SC-9, SC-10)', () => {
       const unclassifiedTarget = createDummyEntity({
         q: 0.8,
         traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
@@ -341,6 +341,25 @@ describe('Rules of Engagement & F2T2EA State Machine (TASK-P2-01, TASK-P2-04)', 
 
       const gating = evaluateReleaseGating({
         target: unclassifiedTarget,
+        effectorId: 'RF_SOFTKILL',
+        rangeM: 800,
+        zones: [testUrbanZone],
+      });
+
+      expect(gating.canFire).toBe(true);
+      expect(gating.isHardBlocked).toBe(false);
+      expect(gating.roeGate.classifiedOk).toBe(false);
+      expect(gating.violations).toContain('UNCLASSIFIED_RELEASE');
+    });
+
+    it('permits release on uncommitted target (label null) but records ROE violation (ARCHITECTURE.md 3.1, Rules.md R3.1)', () => {
+      const uncommittedTarget = createDummyEntity({
+        q: 0.8,
+        traineeLabel: null,
+      });
+
+      const gating = evaluateReleaseGating({
+        target: uncommittedTarget,
         effectorId: 'RF_SOFTKILL',
         rangeM: 800,
         zones: [testUrbanZone],

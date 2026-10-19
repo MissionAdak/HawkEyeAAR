@@ -92,7 +92,7 @@
     }
   ],
   "triggers": [],
-  "roeText": "WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED",
+  "roeText": "WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | UNCLASSIFIED RELEASE = ROE VIOLATION",
   "levers": [
     {
       "id": "TERRAIN_HUG",

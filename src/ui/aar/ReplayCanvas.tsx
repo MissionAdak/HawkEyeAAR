@@ -10,7 +10,7 @@ export interface ReplayEntity {
   pos: { x: number; y: number; z?: number };
   vel?: { x: number; y: number; z?: number };
   trueClass: TrueClass;
-  traineeLabel: TrackClass;
+  traineeLabel: TrackClass | null;
   step?: string;
   masked?: boolean;
   q?: number;
@@ -230,13 +230,16 @@ function drawGroundTruthOverlay(
   ctx.fillText(`TRUE: ${entity.trueClass}`, sx + 14, sy - 4);
 
   // Indicate classification match or mistake
-  const isMatch = entity.traineeLabel === (entity.trueClass as unknown as TrackClass);
-  if (entity.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT' && !isMatch) {
+  const isMatch = entity.traineeLabel && entity.traineeLabel === (entity.trueClass as unknown as TrackClass);
+  if (entity.traineeLabel && entity.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT' && !isMatch) {
     ctx.fillStyle = PALETTE.threat;
     ctx.fillText(`ERR: ${entity.traineeLabel}`, sx + 14, sy + 6);
-  } else {
+  } else if (entity.traineeLabel) {
     ctx.fillStyle = PALETTE.textDim;
     ctx.fillText(`LBL: ${entity.traineeLabel}`, sx + 14, sy + 6);
+  } else {
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillText('LBL: NONE', sx + 14, sy + 6);
   }
   ctx.restore();
 }
