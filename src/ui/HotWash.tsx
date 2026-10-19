@@ -348,7 +348,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </button>
             <button
               onClick={onClose}
-              className="px-3 py-1 font-display font-semibold text-[11px] border border-phosphor bg-phosphor text-carbon-950 font-bold hover:bg-phosphor/80 transition-colors"
+              className="px-3 py-1 font-display font-bold text-[11px] border border-phosphor bg-phosphor text-carbon-950 hover:bg-phosphor/80 transition-colors"
             >
               RETURN TO C2 CONSOLE
             </button>

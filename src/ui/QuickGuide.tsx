@@ -27,7 +27,7 @@ export const QuickGuide: React.FC<QuickGuideProps> = ({ onClose }) => {
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar text-text-main">
           {/* Mission Objective */}
-          <div className="p-3 bg-carbon-950 border-l-4 border-phosphor border-line">
+          <div className="p-3 bg-carbon-950 border border-line border-l-4 border-l-phosphor">
             <div className="font-display font-bold text-xs text-phosphor tracking-wider mb-1">
               MISSION OBJECTIVE:
             </div>
