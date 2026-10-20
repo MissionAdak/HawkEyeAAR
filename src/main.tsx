@@ -7,6 +7,7 @@ import '@fontsource/chakra-petch/600.css';
 import '@fontsource/share-tech-mono/400.css';
 import './index.css';
 
+import { HashRouter } from 'react-router-dom';
 import { Console } from './ui/Console';
 import { useSessionStore } from './store/sessionStore';
 import demo1Spec from './director/bundled/demo1.json';
@@ -25,6 +26,8 @@ const RootApp: React.FC = () => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <RootApp />
+    <HashRouter>
+      <RootApp />
+    </HashRouter>
   </React.StrictMode>
 );
