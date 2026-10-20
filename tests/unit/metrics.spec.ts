@@ -374,4 +374,79 @@ describe('AAR Metrics Aggregation (TASK-P3-03)', () => {
       expect(metrics.cScore).toBe(16);
     });
   });
+
+  describe('ROE Penalty Pipeline: UNCLASSIFIED_RELEASE Scoring Impact', () => {
+    it('penalizes final scoring outcome when firing on explicit UNKNOWN_EVIDENCE_INSUFFICIENT target', () => {
+      // Session with 1 hostile target classified as UNKNOWN and engaged
+      const unclassifiedEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'TRAIN', scenarioId: 'TEST-ROE-01' } },
+        { seq: 2, tMs: 1000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 } },
+        { seq: 3, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', entityId: 'H-01', payload: {} },
+        { seq: 4, tMs: 3000, type: 'DESIGNATE', trackNo: 'T-01', entityId: 'H-01', payload: { via: 'KEY' } },
+        { seq: 5, tMs: 4000, type: 'CLASSIFY', trackNo: 'T-01', entityId: 'H-01', payload: { label: 'UNKNOWN_EVIDENCE_INSUFFICIENT' } },
+        { seq: 6, tMs: 5000, type: 'ROE_VIOLATION', trackNo: 'T-01', entityId: 'H-01', payload: { reason: 'UNCLASSIFIED_RELEASE', trackNo: 'T-01' } },
+        { seq: 7, tMs: 5000, type: 'ENGAGE', trackNo: 'T-01', entityId: 'H-01', payload: { effector: 'RF_SOFTKILL', rangeM: 1000, roeGate: { classifiedOk: false, zoneOk: true } } },
+        { seq: 8, tMs: 5050, type: 'ENGAGE_RESULT', trackNo: 'T-01', entityId: 'H-01', payload: { killed: true } },
+        { seq: 9, tMs: 10000, type: 'SESSION_END', payload: {} },
+      ];
+
+      // Control session: Same target, but correctly classified as HOSTILE_ATTACK before firing
+      const compliantEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'TRAIN', scenarioId: 'TEST-ROE-02' } },
+        { seq: 2, tMs: 1000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 } },
+        { seq: 3, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', entityId: 'H-01', payload: {} },
+        { seq: 4, tMs: 3000, type: 'DESIGNATE', trackNo: 'T-01', entityId: 'H-01', payload: { via: 'KEY' } },
+        { seq: 5, tMs: 4000, type: 'CLASSIFY', trackNo: 'T-01', entityId: 'H-01', payload: { label: 'HOSTILE_ATTACK' } },
+        { seq: 6, tMs: 5000, type: 'ENGAGE', trackNo: 'T-01', entityId: 'H-01', payload: { effector: 'RF_SOFTKILL', rangeM: 1000, roeGate: { classifiedOk: true, zoneOk: true } } },
+        { seq: 7, tMs: 5050, type: 'ENGAGE_RESULT', trackNo: 'T-01', entityId: 'H-01', payload: { killed: true } },
+        { seq: 8, tMs: 10000, type: 'SESSION_END', payload: {} },
+      ];
+
+      const unclassMetrics = aggregateAARMetrics(unclassifiedEvents);
+      const compliantMetrics = aggregateAARMetrics(compliantEvents);
+
+      // 1. Violation count: triggered exactly once
+      expect(unclassMetrics.roeViolations).toBe(1);
+      expect(compliantMetrics.roeViolations).toBe(0);
+
+      // 2. R score: exactly 20 points deducted (100 -> 80)
+      expect(unclassMetrics.rScore).toBe(80);
+      expect(compliantMetrics.rScore).toBe(100);
+
+      // 3. Final score impact: G capped at 40 + R deducted by 20 yields approx 60 vs compliant ~99
+      expect(Math.round(unclassMetrics.score)).toBe(60);
+      expect(Math.round(compliantMetrics.score)).toBe(99);
+      expect(unclassMetrics.score).toBeLessThan(compliantMetrics.score);
+    });
+
+    it('penalizes final scoring outcome identically when firing on uncommitted (null) target', () => {
+      // Session with 1 hostile target never classified (null) and engaged
+      const uncommittedEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'TRAIN', scenarioId: 'TEST-ROE-03' } },
+        { seq: 2, tMs: 1000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 } },
+        { seq: 3, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', entityId: 'H-01', payload: {} },
+        { seq: 4, tMs: 3000, type: 'DESIGNATE', trackNo: 'T-01', entityId: 'H-01', payload: { via: 'KEY' } },
+        // No CLASSIFY event -> traineeLabel remains null
+        { seq: 5, tMs: 5000, type: 'ROE_VIOLATION', trackNo: 'T-01', entityId: 'H-01', payload: { reason: 'UNCLASSIFIED_RELEASE', trackNo: 'T-01' } },
+        { seq: 6, tMs: 5000, type: 'ENGAGE', trackNo: 'T-01', entityId: 'H-01', payload: { effector: 'RF_SOFTKILL', rangeM: 1000, roeGate: { classifiedOk: false, zoneOk: true } } },
+        { seq: 7, tMs: 5050, type: 'ENGAGE_RESULT', trackNo: 'T-01', entityId: 'H-01', payload: { killed: true } },
+        { seq: 8, tMs: 10000, type: 'SESSION_END', payload: {} },
+      ];
+
+      const metrics = aggregateAARMetrics(uncommittedEvents);
+
+      // 1. Violation triggered exactly once
+      expect(metrics.roeViolations).toBe(1);
+
+      // 2. R score: exactly 20 points deducted (100 -> 80)
+      expect(metrics.rScore).toBe(80);
+
+      // 3. C score is 0 for uncommitted label (counted as miss per PRD v1.1 change 5)
+      expect(metrics.cScore).toBe(0);
+
+      // 4. Final score is strictly penalized: S = 0.25*99.15 + 0.20*0 + 0.35*40 + 0.20*80 = 54.79 -> 55
+      expect(Math.round(metrics.score)).toBe(55);
+    });
+  });
 });
+
