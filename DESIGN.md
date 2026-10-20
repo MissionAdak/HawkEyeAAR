@@ -427,3 +427,53 @@ Mouse: click a track on the canvas or in the table to select; double-click desig
 6. No DOM element has a border radius above 2 px, a shadow, a gradient, or a banned colour.
 7. Symbols show the trainee's label, and never ground truth.
 8. The live CER on effector rows is marked `EST`; the true CER appears only in the AAR.
+
+---
+
+## 11. 3D presentation and style (optional, Three.js)
+
+The 3D tactical view is an **alternative presentation layer for the identical console**. The side rails, top bar, bottom event log, keybindings, and symbology rules are strictly preserved. The 3D scene functions as an analytical tactical instrument, not an entertainment video game.
+
+### 11.1 Viewport geometry and zero-overflow budget
+
+When the 3D view is activated (via key `V` or the view selector), the centre radar canvas transitions into a landscape 3D viewport fitting the center column:
+
+| Viewport Resolution | Center Column Width | 3D Viewport (`W × H`) | Height Check (`TopBar 45 + Strip 35 + BottomBar 110 + H`) |
+| :--- | :--- | :--- | :--- |
+| **1366 × 768** | 806 px | 806 × 578 px | 45 + 35 + 110 + 578 = 768 px (exact, 0px vertical overflow) |
+| **1280 × 700** | 720 px | 720 × 510 px | 45 + 35 + 110 + 510 = 700 px (exact, 0px vertical overflow) |
+| **1920 × 1080** | 1360 px | 1360 × 890 px | 45 + 35 + 110 + 890 = 1080 px (exact, 0px vertical overflow) |
+
+Layout invariant: `document.documentElement.scrollHeight <= window.innerHeight` must hold in 3D mode on 1366×768 and 1280×700 displays.
+
+### 11.2 Look, materials, and color tokens
+
+The 3D environment adheres strictly to the existing dark C2 palette (`DESIGN.md` §1):
+
+| Element | Specification | Color Token |
+| :--- | :--- | :--- |
+| **Background** | Flat `#0D1117` (`PALETTE.carbon950`). No skybox, gradients, or stars. | `carbon-950` |
+| **Ground Grid** | 500 m minor lines, 1000 m major lines. 1–5 km range rings. | `phosphor-dim` / `phosphor-deep` |
+| **Zone Blocks** | Extruded urban polygon with 1 px wireframe edges and 12% translucent fill. | `amber` (`#FFB000`) |
+| **Asset Marker** | Antenna post at origin with dashed PNR cylinder at $R_{\min} = 500\text{ m}$. | `cyan` / `threat` (`#FF3B30`) |
+| **Radar Sweep** | Flat ground wedge with 40° phosphor fade and rotating leading beam line. | `phosphor` (`#00FF66`) |
+| **Track Markers** | Camera-facing billboard sprites; 1 px vertical drop stem to ground contact dot. | Label color (Hostile, Friendly, Civil, UNK) |
+| **Coasting Bubble** | Translucent wireframe sphere of radius $\sigma_{\text{ghost}}$ during occlusion. | `amber` (`#FFB000`) |
+| **Materials** | Flat unlit materials only (`MeshBasicMaterial`, `LineBasicMaterial`). | N/A |
+
+**Prohibited in 3D:** Bloom, depth-of-field blur, post-processing shaders, shadows, dynamic lighting, lens flares, particle smoke, glossy PBR materials, and saturated generic colors.
+
+### 11.3 Camera presets and interaction
+
+- **Preset 1 (`OBLIQUE` — Default):** High-angle tactical perspective ($40^{\circ}$ elevation, looking North-East, 7 km range).
+- **Preset 2 (`TOP`):** Near-nadir plan view (orthographic feel for 2D/3D visual parity).
+- **Preset 3 (`POST`):** Ground-level sensor mast perspective at origin $(0, 0, h_r)$, boresighted toward selected target.
+- **Controls:** Left-click drag to orbit, right-click drag to pan, scroll to zoom. Camera manipulation never inputs commands or modifies simulation state. Pressing `Home` restores default `OBLIQUE`.
+
+### 11.4 3D Acceptance checklist
+
+1. Zero vertical scrollbar appears at 1366×768 and 1280×700 in 3D view.
+2. Toggling `V` switches between 2D and 3D in $< 16\text{ ms}$ without resetting simulation clock or tracks.
+3. Live track markers never display ground-truth class, type, or unobserved true positions.
+4. Masked tracks have zero live direct line-of-sight visualizer; coasting tracks display the uncertainty sphere.
+5. Missing WebGL2 cleanly displays a disabled badge and preserves the active 2D Canvas session.

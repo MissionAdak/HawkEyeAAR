@@ -329,3 +329,62 @@ Files: `tools/launcher/*`, `README-OFFLINE.txt`
 | AC-9 | Leaderboards/percentiles from EVAL only; trends show `d` | P3-09, P3-10, P4-06 |
 | AC-10 | Every hostile has a ≥ 6 s sensing window with `q ≥ Q_min` | P4-02 |
 | AC-11 | Network disabled ⇒ full scenario, zero outgoing requests | P0-05, P5-02 |
+
+---
+
+## Track X3D — Optional Three.js 3D Feature Pack (Post-H36 Extension)
+
+All tasks in this track are planned additions. The existing 2D Canvas baseline remains fully implemented, verified, and active.
+
+### TASK-3D-01 — 3D Renderer Foundation, Lazy Chunking & View Toggle · P1 · A · 2.5 h
+Files: `src/render3d/{index,renderer3d,capability,coords}.ts`, `vite.config.ts`, `src/ui/Console.tsx`
+- [ ] Vite rollup chunking configuration: isolate `three` and `src/render3d/**` into `render3d.[hash].js`. **AC:** Production build emits separate 3D chunk under 1.5 MB; initial entry bundle contains 0 bytes of Three.js.
+- [ ] WebGL2 capability detection and error recovery: probe `canvas.getContext('webgl2')`. On failure, disable 3D toggle (`NO WEBGL2`); on `webglcontextlost`, seamlessly fall back to 2D console with banner. **AC:** Unit/e2e test verifies simulated context loss immediately restores 2D canvas without pausing or crashing simulation.
+- [ ] Tactical viewport and camera presets: landscape canvas embedding with zero vertical scroll at 1366×768; camera presets `OBLIQUE`, `TOP`, `POST`. **AC:** `V` hotkey toggles 2D/3D in $< 16\text{ ms}$; Playwright asserts `scrollHeight <= innerHeight` at 1366×768.
+
+### TASK-3D-02 — Safe Track View-Model & Ground-Truth Redaction Boundary · P0 · B · 1.5 h
+Files: `src/sim/types.ts`, `src/sim/engine.ts`, `tests/guards/truthLeak.spec.ts`
+- [ ] Define `SafeTrackView` interface excluding `trueClass`, `droneType`, true `pos`, and `valueInr`. **AC:** TypeScript compilation enforces that `src/render3d/` imports only `SafeTrackView`, not `TrackEntity`.
+- [ ] Implement `toSafeTrackView()` projection in `SimEngine`. **AC:** Guard test fails if any property revealing ground truth is exposed on live track objects.
+- [ ] Address Tracker Blocker: design decoupled track estimation layer so future sensor noise does not leak raw simulation physics coordinates.
+
+### TASK-3D-03 — Reactive Sensor Coverage Volumes · P1 · A · 2.5 h
+Files: `src/render3d/volumes.ts`, `src/sim/sensors.ts`
+- [ ] Radar 4th-power coverage hemisphere: radius derived from radar equation SNR ($R \propto A_{\text{env}}^{1/4}$); reacts dynamically to `RAIN` and collapses on `RADAR_DROPOUT`. **AC:** Unit test asserts visual dome radius matches `calculateRadarPd()` 50% detection threshold.
+- [ ] Directional EO/IR wedge: spherical lune oriented along sensor boresight azimuth, expanding/contracting based on `FOG` and day/night state.
+- [ ] RF sensor bearing lines: directional bearing spokes drawn on ground plane, blanked during `RF_JAMMING`.
+
+### TASK-3D-04 — Effector Range Envelopes & PNR Boundary · P1 · B · 2.0 h
+Files: `src/render3d/effectors3d.ts`, `src/sim/effectors.ts`
+- [ ] Effector engagement domes: translucent spherical shells representing active weapon min/max engagement envelopes (RF Jammer, Laser, Gun, Interceptor).
+- [ ] PNR perimeter cylinder: vertical boundary ring at $R_{\min} = 500\text{ m}$ rendered in warning red (`threat`). **AC:** Visual envelope boundaries match `CONFIG.effectors` ranges within 1 metre.
+
+### TASK-3D-05 — Line-of-Sight & Masking Explanation matching evaluateMasking · P1 · A · 2.0 h
+Files: `src/render3d/masking3d.ts`, `src/sim/masking.ts`
+- [ ] Authoritative line-of-sight ray: draws LOS vector from antenna $(0, 0, h_r)$ to target. If `evaluateMasking()` returns `isMasked: true`, ray changes color and terminates at the near obstacle edge $d_{\text{near}}$.
+- [ ] Extruded obstacle shadow volumes: shadow geometry projected behind urban blocks matching the exact near-edge distance and shadow length from `evaluateMasking()`. **AC:** Target visual occlusion aligns 100% with the simulation's `masked` event timestamp.
+
+### TASK-3D-06 — Spatial Cluster Overlay & Altitude Bins · P1 · D · 1.5 h
+Files: `src/render3d/clusters.ts`
+- [ ] Operator-visible spatial clustering: lightweight DBSCAN / distance grouping on observed tracks to highlight swarm formations with convex hull boundary.
+- [ ] 3-band altitude stems: vertical drop lines from drone to terrain surface categorized into `LOW` (< 40m), `MED` (40–100m), and `HIGH` (> 100m) bands.
+
+### TASK-3D-07 — TRAIN-Only Decision Aids with EVAL Lockout · P2 · C · 2.5 h
+Files: `src/ui/Console.tsx`, `src/store/sessionStore.ts`, `src/db/repo.ts`
+- [ ] Class B aids: Coverage blind-spot shadow map and 30 s linear trajectory extrapolation aid.
+- [ ] EVAL mode lockout: `Shift+C` and `Shift+P` hotkeys are disabled in `EVAL` mode (`AIDS LOCKED`). **AC:** Playwright test verifies aids cannot be toggled during EVAL sessions; active aid duration in TRAIN is logged in session telemetry.
+
+### TASK-3D-08 — Post-Session 3D AAR Truth Replay · P2 · D · 3.0 h
+Files: `src/ui/aar/Replay3D.tsx`, `src/render3d/aarScene.ts`
+- [ ] Full 3D historical scrubber: timeline scrubber rewinds and replays drone trajectories in 3D using recorded `SimSnapshot` frames.
+- [ ] Ground truth unmasking: displays true drone type, true classification, and unobserved waypoints in debrief mode only.
+
+### TASK-3D-09 — Engagement Inspector · P2 · B · 2.0 h
+Files: `src/ui/aar/EngagementInspector.tsx`
+- [ ] Retrospective engagement breakdown: visualizes the exact geometry at the fire tick using recorded engagement event parameters ($u, P_{k0}, g, h$).
+- [ ] Caption compliance: displays mandatory disclaimer `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`.
+
+### TASK-3D-10 — Experimental WebXR VR Support · P2 · A · 4.0 h
+Files: `src/render3d/vr.ts`
+- [ ] WebXR table-top presentation: immersive virtual tactical table at 1:10,000 scale.
+- [ ] Experimental status: labeled `VR (EXPERIMENTAL)` until tested on a physical headset with frame rates $\ge 72\text{ fps}$.
