@@ -85,6 +85,8 @@ export class SimEngine {
 
   private killRng: (() => number) | null = null;
   public sessionEnded: boolean = false;
+  public trainingAidActive: boolean = false;
+  public trainingAidTicks: number = 0;
 
   public get mode(): 'TRAIN' | 'EVAL' | 'DEMO' {
     return this.spec?.mode ?? 'TRAIN';
@@ -101,6 +103,8 @@ export class SimEngine {
     this.selectedTrackNo = null;
     this.activeEffector = 'RF_SOFTKILL';
     this.eoirAzimuthDeg = 0;
+    this.trainingAidActive = false;
+    this.trainingAidTicks = 0;
     this.killRng = mulberry32(streamSeed(spec.seed, 'kill'));
     clockInstance.reset();
 
@@ -212,10 +216,11 @@ export class SimEngine {
     if (this.sessionEnded || !this.spec) return;
     this.sessionEnded = true;
     const currentSimMs = this.tickIndex * 50;
-    const finalMetrics = aggregateAARMetrics(this.events, this.spec);
+    const finalMetrics = aggregateAARMetrics(this.events, this.spec, this.trainingAidTicks);
     this.appendEvent('SESSION_END', {
       durationMs: currentSimMs,
       metrics: finalMetrics,
+      trainingAidTicks: this.trainingAidTicks,
       reason,
       subReason,
       aborted: true,
@@ -227,6 +232,10 @@ export class SimEngine {
 
     this.tickIndex += 1;
     const currentSimMs = this.tickIndex * 50;
+
+    if (this.trainingAidActive && this.mode !== 'EVAL') {
+      this.trainingAidTicks += 1;
+    }
 
     // 1. Radar sweep evaluation every 2000ms (40 ticks, 30 RPM)
     if (this.tickIndex % 40 === 0) {
@@ -257,8 +266,14 @@ export class SimEngine {
     // 6. Check session completion
     if (currentSimMs >= this.spec.durationMs && !this.sessionEnded) {
       this.sessionEnded = true;
-      const finalMetrics = aggregateAARMetrics(this.events, this.spec);
-      this.appendEvent('SESSION_END', { durationMs: currentSimMs, metrics: finalMetrics, reason: 'COMPLETE', aborted: false });
+      const finalMetrics = aggregateAARMetrics(this.events, this.spec, this.trainingAidTicks);
+      this.appendEvent('SESSION_END', {
+        durationMs: currentSimMs,
+        metrics: finalMetrics,
+        trainingAidTicks: this.trainingAidTicks,
+        reason: 'COMPLETE',
+        aborted: false,
+      });
     }
   }
 
@@ -612,6 +627,7 @@ export class SimEngine {
       { isFogActive, isJammingActive }
     );
 
+    const effConfig = CONFIG.effectors[this.activeEffector];
     this.appendEvent(
       'ENGAGE',
       {
@@ -620,10 +636,15 @@ export class SimEngine {
         pk: killDraw.pk,
         u: killDraw.u,
         killed: killDraw.killed,
+        pk0: killDraw.pk0,
+        g: killDraw.g,
+        h: killDraw.h,
+        costInr: effConfig?.costInr ?? 0,
         cer: gating.cer,
         roeGate: gating.roeGate,
         zoneId: gating.overlappingZone?.id,
         rhoZone: gating.overlappingZone?.rho ?? 0,
+        targetPos: { x: target.pos.x, y: target.pos.y, z: target.pos.z },
       },
       action.trackNo,
       target.id,

@@ -1,11 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
 import type { EffectorId } from '@/sim/types';
 import demo1Spec from '@/director/bundled/demo1.json';
-import type { ScenarioSpec } from '@/sim/types';
+import type { ScenarioSpec, ZoneSpec } from '@/sim/types';
+import { AarEngagementInspector } from './aar/AarEngagementInspector';
+import {
+  extractEngagementInspectionData,
+  type AarEngagementInspectionData,
+} from './aar/engagementInspectorData';
+import { AarReplaySection } from './aar/AarReplaySection';
 
 interface HotWashProps {
   onClose: () => void;
@@ -45,6 +51,8 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
         return grade;
     }
   };
+
+  const [inspectingEngagement, setInspectingEngagement] = useState<AarEngagementInspectionData | null>(null);
 
   // Find all engaged tracks to show Oracle decision comparison
   const engagedTracks = engineInstance.curr.filter((e) => e.engagements > 0);
@@ -220,6 +228,23 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                 </div>
               </div>
             </div>
+
+            {/* Training Aid Transparency Metadata (Task F5) */}
+            <div className="mt-2 p-2 border border-line bg-carbon-900/60 flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center gap-2">
+                <span className="text-text-dim">F5 TRAINING AID:</span>
+                {metrics.trainingAidUsed ? (
+                  <span className="text-amber font-bold">
+                    ACTIVE FOR {metrics.trainingAidDurationSec ?? 0}s (SIMULATION TICKS)
+                  </span>
+                ) : (
+                  <span className="text-phosphor font-bold">OFF / ZERO USAGE</span>
+                )}
+              </div>
+              <span className="text-[9px] text-text-dim">
+                TRANSPARENCY METADATA ONLY (NO SCORE PENALTY)
+              </span>
+            </div>
           </div>
 
           {/* 3. Confusion Matrix 6x8 */}
@@ -272,6 +297,13 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </div>
           </div>
 
+          {/* Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */}
+          <AarReplaySection
+            events={engineInstance.events}
+            spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
+            zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
+          />
+
           {/* 4. Trainee vs Oracle Decision & Cost Regret */}
           <div>
             <div className="text-[11px] font-display font-semibold text-text-main mb-2 tracking-wider">
@@ -312,17 +344,45 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                           </div>
                         </div>
 
-                        <div className="text-right space-y-0.5">
-                          <div className="text-[10px] text-text-dim">
-                            ORACLE RECOMMENDATION: <span className="text-phosphor font-bold">{oracle.oracleEffector}</span>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right space-y-0.5">
+                            <div className="text-[10px] text-text-dim">
+                              ORACLE RECOMMENDATION: <span className="text-phosphor font-bold">{oracle.oracleEffector}</span>
+                            </div>
+                            <div
+                              className={`text-[11px] font-bold ${
+                                regret?.isOptimal ? 'text-phosphor' : 'text-amber'
+                              }`}
+                            >
+                              {regret?.text ?? 'EVALUATED'}
+                            </div>
                           </div>
-                          <div
-                            className={`text-[11px] font-bold ${
-                              regret?.isOptimal ? 'text-phosphor' : 'text-amber'
-                            }`}
-                          >
-                            {regret?.text ?? 'EVALUATED'}
-                          </div>
+
+                          {(() => {
+                            const engageEv = engineInstance.events.find(
+                              (e) => e.type === 'ENGAGE' && (e.trackNo === trk.trackNo || e.entityId === trk.id)
+                            );
+                            if (!engageEv) return null;
+                            return (
+                              <button
+                                onClick={() => {
+                                  const inspectionData = extractEngagementInspectionData(
+                                    engageEv,
+                                    engineInstance.events,
+                                    engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec),
+                                    engineInstance.curr
+                                  );
+                                  if (inspectionData) {
+                                    setInspectingEngagement(inspectionData);
+                                  }
+                                }}
+                                title="Inspect Recorded Probability & Scoring Inputs"
+                                className="px-2 py-1 text-[10px] font-bold border border-friend text-friend hover:bg-friend/20 transition-colors whitespace-nowrap"
+                              >
+                                🔍 INSPECT
+                              </button>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -355,6 +415,14 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
           </div>
         </div>
       </div>
+
+      {/* F8 AAR Engagement Inspector Modal */}
+      {inspectingEngagement && (
+        <AarEngagementInspector
+          data={inspectingEngagement}
+          onClose={() => setInspectingEngagement(null)}
+        />
+      )}
     </div>
   );
 };

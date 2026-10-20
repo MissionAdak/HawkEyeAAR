@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Scene3D } from './scene3d';
-import type { SafeTrackView, CameraPreset, Scene3DOptions } from './types';
+import type { SafeTrackView, CameraPreset, Scene3DOptions, SensorCoverageState, EffectorVisualOptions } from './types';
+import type { SensorMode } from '@/sim/types';
 import { attachContextLossHandler } from './capability';
 
 export interface Renderer3DOptions extends Scene3DOptions {
@@ -23,13 +24,54 @@ export class Renderer3D {
   public currentPreset: CameraPreset = 'OBLIQUE';
 
   private getTracks?: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null };
+  private getCoverage?: () => SensorCoverageState;
+  private getEffectorOptions?: () => EffectorVisualOptions;
+  private showLos: boolean = true;
+  private showClusters: boolean = true;
+  private showTrainingAid: boolean = false;
+  private readonly options: Renderer3DOptions;
 
   public setTrackProvider(fn: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null }): void {
     this.getTracks = fn;
   }
 
+  public setCoverageProvider(fn: () => SensorCoverageState): void {
+    this.getCoverage = fn;
+  }
+
+  public setEffectorProvider(fn: () => EffectorVisualOptions): void {
+    this.getEffectorOptions = fn;
+  }
+
+  public setShowLos(show: boolean): void {
+    this.showLos = show;
+  }
+
+  public setShowClusters(show: boolean): void {
+    this.showClusters = show;
+  }
+
+  public setShowTrainingAid(show: boolean): void {
+    // Strictly forbid in EVAL mode (Rule F5)
+    if (this.options.mode === 'EVAL') {
+      this.showTrainingAid = false;
+      this.scene3d.updateTrainingAid(false);
+      return;
+    }
+    this.showTrainingAid = show;
+    this.scene3d.updateTrainingAid(show);
+  }
+
+  public get isTrainingAidVisible(): boolean {
+    return this.showTrainingAid;
+  }
+
   constructor(canvas: HTMLCanvasElement, options: Renderer3DOptions) {
     this.canvas = canvas;
+    this.options = options;
+    if (options.showTrainingAid && options.mode !== 'EVAL') {
+      this.showTrainingAid = true;
+    }
 
     // 1. Initialize Three.js WebGLRenderer
     this.renderer = new THREE.WebGLRenderer({
@@ -149,6 +191,38 @@ export class Renderer3D {
   }
 
   /**
+   * Updates sensor coverage volumes.
+   */
+  public updateCoverage(coverage: SensorCoverageState): void {
+    this.scene3d.updateCoverage(coverage);
+  }
+
+  /**
+   * Filter sensor coverage display.
+   */
+  public setSensorFilter(sensor: SensorMode | 'ALL'): void {
+    this.scene3d.setSensorFilter(sensor);
+  }
+
+  public getScene3D(): Scene3D {
+    return this.scene3d;
+  }
+
+  /**
+   * Updates effector envelopes and target cue.
+   */
+  public updateEffectorEnvelopes(options: EffectorVisualOptions): void {
+    this.scene3d.updateEffectorEnvelopes(options);
+  }
+
+  /**
+   * Updates model-faithful Line-of-Sight (LOS) explanation ray for the selected track.
+   */
+  public updateLos(selectedTrack: SafeTrackView | null): void {
+    this.scene3d.updateLos(selectedTrack, this.showLos);
+  }
+
+  /**
    * Starts Three.js rendering animation loop.
    * INVARIANT: This loop renders visuals ONLY and MUST NOT advance simulation ticks.
    */
@@ -159,6 +233,20 @@ export class Renderer3D {
       if (this.getTracks) {
         const { tracks, selectedTrackNo } = this.getTracks();
         this.update(tracks, selectedTrackNo);
+
+        const selectedTrack = selectedTrackNo
+          ? tracks.find((t) => t.trackNo === selectedTrackNo) ?? null
+          : null;
+        this.scene3d.updateLos(selectedTrack, this.showLos);
+        this.scene3d.updateClusters(tracks, this.showClusters);
+      }
+      if (this.getCoverage) {
+        const coverage = this.getCoverage();
+        this.updateCoverage(coverage);
+      }
+      if (this.getEffectorOptions) {
+        const effOpts = this.getEffectorOptions();
+        this.updateEffectorEnvelopes(effOpts);
       }
       this.renderer.render(this.scene3d.scene, this.camera);
       this.animFrameId = requestAnimationFrame(renderLoop);

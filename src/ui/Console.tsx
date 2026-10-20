@@ -5,6 +5,7 @@ import { EngagementPanel } from './EngagementPanel';
 import { EventLog } from './EventLog';
 import { HotWash } from './HotWash';
 import { QuickGuide } from './QuickGuide';
+import { CrossSectionPanel } from './CrossSectionPanel';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
@@ -39,6 +40,206 @@ function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null):
     }));
 }
 
+function computeCursorCoords(
+  clientX: number,
+  clientY: number,
+  canvas: HTMLCanvasElement
+): { brg: number; rngKm: number } {
+  const rect = canvas.getBoundingClientRect();
+  const dx = clientX - rect.left - 260;
+  const dy = 260 - (clientY - rect.top);
+
+  const scale = 245 / 5000;
+  const rangeM = Math.hypot(dx, dy) / scale;
+  const bearingRad = Math.atan2(dx, dy);
+  let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
+  if (bearingDeg < 0) bearingDeg += 360;
+
+  return { brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) };
+}
+
+function findNearestTrackNo(
+  clickX: number,
+  clickY: number,
+  entities: TrackEntity[],
+  scale: number = 245 / 5000
+): string | null {
+  let nearestTrackNo: string | null = null;
+  let nearestDist = 15;
+
+  for (const entity of entities) {
+    if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
+    const ex = entity.pos.x * scale;
+    const ey = entity.pos.y * scale;
+    const d = Math.hypot(clickX - ex, clickY - ey);
+    if (d < nearestDist) {
+      nearestDist = d;
+      nearestTrackNo = entity.trackNo;
+    }
+  }
+
+  return nearestTrackNo;
+}
+
+interface TacticalViewportTabsProps {
+  viewMode: '2D' | '3D';
+  activeSensor: SensorMode;
+  cameraPreset: CameraPreset;
+  showEnvelopes: boolean;
+  showLos: boolean;
+  showClusters: boolean;
+  showTrainingAid: boolean;
+  showCrossSection: boolean;
+  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  onSetSensor: (m: SensorMode) => void;
+  onCameraPreset: (p: CameraPreset) => void;
+  onToggleEnvelopes: () => void;
+  onToggleLos: () => void;
+  onToggleClusters: () => void;
+  onToggleTrainingAid: () => void;
+  onToggleCrossSection: () => void;
+  onToggleViewMode: () => void;
+}
+
+const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
+  viewMode,
+  activeSensor,
+  cameraPreset,
+  showEnvelopes,
+  showLos,
+  showClusters,
+  showTrainingAid,
+  showCrossSection,
+  mode,
+  onSetSensor,
+  onCameraPreset,
+  onToggleEnvelopes,
+  onToggleLos,
+  onToggleClusters,
+  onToggleTrainingAid,
+  onToggleCrossSection,
+  onToggleViewMode,
+}) => {
+  return (
+    <div className="absolute top-2 left-2 z-20 flex flex-wrap gap-1 font-display text-[10px] max-w-[420px]">
+      {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+        <button
+          key={m}
+          onClick={() => onSetSensor(m)}
+          className={`px-2 py-0.5 border transition-colors ${
+            activeSensor === m
+              ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+              : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+          }`}
+        >
+          [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+        </button>
+      ))}
+
+      {viewMode === '3D' && (
+        <>
+          {(['OBLIQUE', 'TOP', 'POST'] as const).map((preset) => (
+            <button
+              key={preset}
+              onClick={() => onCameraPreset(preset)}
+              className={`px-2 py-0.5 border transition-colors ${
+                cameraPreset === preset
+                  ? 'border-friend text-friend bg-friend/20 font-bold'
+                  : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+              }`}
+            >
+              [{preset[0]}] {preset}
+            </button>
+          ))}
+
+          <button
+            onClick={onToggleEnvelopes}
+            title="Toggle 3D Effector Envelopes [E]"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showEnvelopes
+                ? 'border-amber text-amber bg-amber/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [E] {showEnvelopes ? 'WEAPONS ON' : 'WEAPONS OFF'}
+          </button>
+
+          <button
+            onClick={onToggleLos}
+            title="Toggle Modelled Line-of-Sight / Masking [K]"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showLos
+                ? 'border-friend text-friend bg-friend/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [K] {showLos ? 'LOS ON' : 'LOS OFF'}
+          </button>
+
+          <button
+            onClick={onToggleClusters}
+            title="Toggle Operator-Visible 3D Clusters [U]"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showClusters
+                ? 'border-phosphor text-phosphor bg-phosphor/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [U] {showClusters ? 'CLUSTERS ON' : 'CLUSTERS OFF'}
+          </button>
+
+          {mode === 'EVAL' ? (
+            <button
+              disabled
+              title="Training Aid locked and unavailable in EVALUATION mode (Rule F5)"
+              className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+            >
+              [X] AID (LOCKED IN EVAL)
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onToggleTrainingAid}
+                title="Toggle 3D Training Aid (Modelled Shadows & Ref-RCS Shells) [X]"
+                className={`px-2 py-0.5 border font-bold transition-colors ${
+                  showTrainingAid
+                    ? 'border-amber text-amber bg-amber/20'
+                    : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+                }`}
+              >
+                [X] {showTrainingAid ? 'AID ON' : 'AID OFF'}
+              </button>
+              <button
+                onClick={onToggleCrossSection}
+                title="Open 2D Elevation Cross-Section Along Bearing"
+                className={`px-2 py-0.5 border font-bold transition-colors ${
+                  showCrossSection
+                    ? 'border-amber text-amber bg-amber/20'
+                    : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+                }`}
+              >
+                X-SECTION
+              </button>
+            </>
+          )}
+        </>
+      )}
+
+      <button
+        onClick={onToggleViewMode}
+        title="Toggle 2D/3D Tactical View [V]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          viewMode === '3D'
+            ? 'border-friend text-friend bg-friend/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
+      </button>
+    </div>
+  );
+};
+
 export const Console: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvas3dRef = useRef<HTMLCanvasElement | null>(null);
@@ -48,6 +249,55 @@ export const Console: React.FC = () => {
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
   const [webGlError, setWebGlError] = useState<string | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('OBLIQUE');
+  const [showEnvelopes, setShowEnvelopes] = useState<boolean>(true);
+  const showEnvelopesRef = useRef<boolean>(true);
+  showEnvelopesRef.current = showEnvelopes;
+  const toggleEnvelopes = () => setShowEnvelopes((prev) => !prev);
+
+  const [showLos, setShowLos] = useState<boolean>(true);
+  const showLosRef = useRef<boolean>(true);
+  showLosRef.current = showLos;
+  const toggleLos = () => {
+    setShowLos((prev) => {
+      const next = !prev;
+      renderer3dRef.current?.setShowLos(next);
+      return next;
+    });
+  };
+
+  const [showClusters, setShowClusters] = useState<boolean>(true);
+  const showClustersRef = useRef<boolean>(true);
+  showClustersRef.current = showClusters;
+  const toggleClusters = () => {
+    setShowClusters((prev) => {
+      const next = !prev;
+      renderer3dRef.current?.setShowClusters(next);
+      return next;
+    });
+  };
+
+  const [showTrainingAid, setShowTrainingAid] = useState<boolean>(false);
+  const [showCrossSection, setShowCrossSection] = useState<boolean>(false);
+  const showTrainingAidRef = useRef<boolean>(false);
+  showTrainingAidRef.current = showTrainingAid;
+  const toggleTrainingAid = () => {
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
+    setShowTrainingAid((prev) => {
+      const next = !prev;
+      renderer3dRef.current?.setShowTrainingAid(next);
+      engineInstance.trainingAidActive = next;
+      return next;
+    });
+  };
+
+  const toggleCrossSection = () => {
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
+    setShowCrossSection((prev) => !prev);
+  };
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
   const recentEvents = useSessionStore((s) => s.ui.recentEvents);
@@ -98,7 +348,13 @@ export const Console: React.FC = () => {
     }
 
     try {
-      const { Renderer3D, checkWebGL2Support } = await import('@/render3d');
+      const {
+        Renderer3D,
+        checkWebGL2Support,
+        calculateRadarCoverage,
+        calculateEoirCoverage,
+        calculateRfCoverage,
+      } = await import('@/render3d');
       const cap = checkWebGL2Support();
       if (!cap.supported) {
         setWebGlError(cap.reason || 'WebGL2 not supported');
@@ -113,6 +369,8 @@ export const Console: React.FC = () => {
           maxRangeM: CONFIG.thresholds.radarMaxRangeM,
           rMinM: CONFIG.thresholds.rMinM,
           zones: engineInstance.spec?.zones || [],
+          mode: engineInstance.mode,
+          showTrainingAid: showTrainingAidRef.current,
           onContextLost: () => {
             renderer3dRef.current?.stop();
             setViewMode('2D');
@@ -125,6 +383,55 @@ export const Console: React.FC = () => {
           selectedTrackNo: engineInstance.selectedTrackNo,
         }));
 
+        r3d.setCoverageProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          return {
+            radar: calculateRadarCoverage({
+              sensorHealth: engineInstance.sensorHealth.RADAR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            eoir: calculateEoirCoverage({
+              azimuthDeg: engineInstance.eoirAzimuthDeg,
+              isNight: engineInstance.spec?.dayNight === 'NIGHT',
+              sensorHealth: engineInstance.sensorHealth.EOIR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            rf: calculateRfCoverage({
+              sensorHealth: engineInstance.sensorHealth.RF,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            activeSensor: useSessionStore.getState().ui.activeSensor,
+            visible: true,
+          };
+        });
+
+        r3d.setEffectorProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          const selectedEntity = engineInstance.selectedTrackNo
+            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
+            : null;
+
+          return {
+            activeEffector: useSessionStore.getState().ui.activeEffector,
+            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
+              ? {
+                  trackNo: selectedEntity.trackNo!,
+                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
+                  q: selectedEntity.q,
+                }
+              : null,
+            sensorHealth: engineInstance.sensorHealth,
+            chaosList: engineInstance.spec?.chaos,
+            tMs: currentSimMs,
+            visible: showEnvelopesRef.current,
+          };
+        });
+
+        r3d.setShowLos(showLosRef.current);
+        r3d.setShowClusters(showClustersRef.current);
         renderer3dRef.current = r3d;
       }
 
@@ -155,8 +462,15 @@ export const Console: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [abortSession]);
 
-  // Keyboard navigation & Hotkeys (including 'v' toggle and 3D camera presets)
-  useConsoleKeyboard(rendererRef, setLowFi, toggleViewMode, handleCameraPreset);
+  // Keyboard navigation & Hotkeys (including 'v' 2D/3D, presets, 'e' envelopes, 'k' LOS, 'u' clusters, and 'x' training aid)
+  useConsoleKeyboard(rendererRef, setLowFi, {
+    toggle3D: toggleViewMode,
+    setCameraPreset: handleCameraPreset,
+    toggleEnvelopes,
+    toggleLos,
+    toggleClusters,
+    toggleTrainingAid,
+  });
 
   // Automatically trigger HotWash AAR when simulation session ends
   useEffect(() => {
@@ -169,17 +483,7 @@ export const Console: React.FC = () => {
   // Track cursor range/bearing on Canvas
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const dx = e.clientX - rect.left - 260; // relative to center
-    const dy = 260 - (e.clientY - rect.top); // y-up
-
-    const scale = 245 / 5000; // 245px radius = 5000m
-    const rangeM = Math.hypot(dx, dy) / scale;
-    const bearingRad = Math.atan2(dx, dy);
-    let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
-    if (bearingDeg < 0) bearingDeg += 360;
-
-    setMousePos({ brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) });
+    setMousePos(computeCursorCoords(e.clientX, e.clientY, canvasRef.current));
   };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -188,22 +492,7 @@ export const Console: React.FC = () => {
     const clickX = e.clientX - rect.left - 260;
     const clickY = 260 - (e.clientY - rect.top);
 
-    const scale = 245 / 5000;
-    // Find nearest entity within 15px radius
-    let nearestTrackNo: string | null = null;
-    let nearestDist = 15;
-
-    for (const entity of engineInstance.curr) {
-      if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
-      const ex = entity.pos.x * scale;
-      const ey = entity.pos.y * scale;
-      const d = Math.hypot(clickX - ex, clickY - ey);
-      if (d < nearestDist) {
-        nearestDist = d;
-        nearestTrackNo = entity.trackNo;
-      }
-    }
-
+    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.curr);
     if (nearestTrackNo) {
       designate(nearestTrackNo, 'CLICK');
     }
@@ -287,64 +576,34 @@ export const Console: React.FC = () => {
             />
 
             {/* Overlaid Mode Selector Tabs Inside Canvas */}
-            <div className="absolute top-2 left-2 z-10 flex gap-1 font-display text-[10px]">
-              {/* Sensor Tabs (2D Mode) */}
-              {viewMode === '2D' &&
-                (['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
-                  <button
-                    key={m}
-                    onClick={() => setSensor(m)}
-                    className={`px-2 py-0.5 border transition-colors ${
-                      activeSensor === m
-                        ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
-                        : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                    }`}
-                  >
-                    [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
-                  </button>
-                ))}
-
-              {/* 3D Camera Presets (3D Mode) */}
-              {viewMode === '3D' && (
-                <>
-                  {(['OBLIQUE', 'TOP', 'POST'] as const).map((preset) => (
-                    <button
-                      key={preset}
-                      onClick={() => handleCameraPreset(preset)}
-                      className={`px-2 py-0.5 border transition-colors ${
-                        cameraPreset === preset
-                          ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
-                          : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                      }`}
-                    >
-                      [{preset[0]}] {preset}
-                    </button>
-                  ))}
-                </>
-              )}
-
-              {/* 2D / 3D Mode Toggle Button */}
-              <button
-                onClick={toggleViewMode}
-                title="Toggle 2D/3D Tactical View [V]"
-                className={`px-2 py-0.5 border font-bold transition-colors ${
-                  viewMode === '3D'
-                    ? 'border-friend text-friend bg-friend/20'
-                    : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                }`}
-              >
-                [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
-              </button>
-            </div>
+            <TacticalViewportTabs
+              viewMode={viewMode}
+              activeSensor={activeSensor}
+              cameraPreset={cameraPreset}
+              showEnvelopes={showEnvelopes}
+              showLos={showLos}
+              showClusters={showClusters}
+              showTrainingAid={showTrainingAid}
+              showCrossSection={showCrossSection}
+              mode={engineInstance.mode}
+              onSetSensor={setSensor}
+              onCameraPreset={handleCameraPreset}
+              onToggleEnvelopes={toggleEnvelopes}
+              onToggleLos={toggleLos}
+              onToggleClusters={toggleClusters}
+              onToggleTrainingAid={toggleTrainingAid}
+              onToggleCrossSection={toggleCrossSection}
+              onToggleViewMode={toggleViewMode}
+            />
 
             {/* Overlaid Cursor Bearing / Range Readout (2D) or 3D Camera Readout */}
-            <div className="absolute top-2 right-2 z-10 font-mono text-[10px] text-text-dim bg-carbon-900/80 border border-line px-2 py-0.5">
+            <div className="absolute top-2 right-2 z-10 font-mono text-[10px] text-text-dim bg-carbon-900/80 border border-line px-2 py-0.5 pointer-events-none select-none">
               {renderScopeReadout()}
             </div>
 
             {/* 3D Orbit Control Hint */}
             {viewMode === '3D' && (
-              <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5">
+              <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
                 DRAG: ORBIT | SCROLL: ZOOM
               </div>
             )}
@@ -403,6 +662,24 @@ export const Console: React.FC = () => {
 
       {/* 7. Operator Quick-Start Guide Modal */}
       {isQuickGuideOpen && <QuickGuide onClose={closeQuickGuide} />}
+
+      {/* 8. F5 Elevation Cross-Section Training Aid Modal */}
+      {showCrossSection && engineInstance.mode !== 'EVAL' && (
+        <CrossSectionPanel
+          onClose={() => setShowCrossSection(false)}
+          zones={engineInstance.spec?.zones || []}
+          selectedTrack={
+            engineInstance.selectedTrackNo
+              ? (() => {
+                  const ent = engineInstance.curr.find(
+                    (e) => e.trackNo === engineInstance.selectedTrackNo && e.step !== 'UNDETECTED'
+                  );
+                  return ent ? { trackNo: ent.trackNo!, pos: { ...ent.pos }, masked: ent.masked } : null;
+                })()
+              : null
+          }
+        />
+      )}
     </div>
   );
 };

@@ -133,6 +133,9 @@ export interface EngagementResolutionResult {
   killed: boolean;
   pk: number;
   u: number;
+  pk0?: number;
+  g?: number;
+  h?: number;
 }
 
 /**
@@ -146,7 +149,11 @@ export function resolveEngagement(
   killRng: () => number,
   context: EngagementContext = {}
 ): EngagementResolutionResult {
-  const pk = computeEffectivePk(effectorId, rangeM, target, context);
+  const pk0 = computeBasePk0(effectorId, target);
+  const g = computeRangeAttenuation(rangeM, effectorId);
+  const h = computeChaosMultiplier(effectorId, context);
+  const rawPk = pk0 * g * h;
+  const pk = Math.min(1.0, Math.max(0.0, rawPk));
   const u = killRng();
   const killed = u <= pk;
 
@@ -154,5 +161,8 @@ export function resolveEngagement(
     killed,
     pk,
     u,
+    pk0,
+    g,
+    h,
   };
 }

@@ -80,12 +80,36 @@ function handlePauseKey(): void {
   }
 }
 
+export interface ConsoleKeyboardActions {
+  toggleLowFi?: () => void;
+  toggle3D?: () => void;
+  setCameraPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void;
+  toggleEnvelopes?: () => void;
+  toggleLos?: () => void;
+  toggleClusters?: () => void;
+  toggleTrainingAid?: () => void;
+}
+
+function handlePresetKey(
+  lowerKey: string,
+  setPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void
+): boolean {
+  if (!setPreset) return false;
+  if (lowerKey === 'o') {
+    setPreset('OBLIQUE');
+    return true;
+  }
+  if (lowerKey === 't') {
+    setPreset('TOP');
+    return true;
+  }
+  return false;
+}
+
 function handleSystemKey(
   lowerKey: string,
   rawKey: string,
-  toggleLowFi: () => void,
-  toggle3D?: () => void,
-  setCameraPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void
+  actions: ConsoleKeyboardActions
 ): boolean {
   const store = useSessionStore.getState();
   if (lowerKey === 'm') {
@@ -105,31 +129,38 @@ function handleSystemKey(
     return true;
   }
   if (lowerKey === 'l') {
-    toggleLowFi();
+    actions.toggleLowFi?.();
     return true;
   }
   if (lowerKey === 'v') {
-    toggle3D?.();
+    actions.toggle3D?.();
     return true;
   }
-  if (setCameraPreset) {
-    if (lowerKey === 'o') {
-      setCameraPreset('OBLIQUE');
-      return true;
-    }
-    if (lowerKey === 't') {
-      setCameraPreset('TOP');
-      return true;
-    }
+  if (lowerKey === 'e') {
+    actions.toggleEnvelopes?.();
+    return true;
   }
-  return false;
+  if (lowerKey === 'k') {
+    actions.toggleLos?.();
+    return true;
+  }
+  if (lowerKey === 'u') {
+    actions.toggleClusters?.();
+    return true;
+  }
+  if (lowerKey === 'x') {
+    if (engineInstance.mode !== 'EVAL') {
+      actions.toggleTrainingAid?.();
+    }
+    return true;
+  }
+  return handlePresetKey(lowerKey, actions.setCameraPreset);
 }
 
 export function useConsoleKeyboard(
   rendererRef: React.RefObject<ConsoleRenderer | null>,
   setLowFi: React.Dispatch<React.SetStateAction<boolean>>,
-  toggle3D?: () => void,
-  setCameraPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void
+  actions: ConsoleKeyboardActions = {}
 ): void {
   useEffect(() => {
     const toggleLowFi = () => {
@@ -151,10 +182,10 @@ export function useConsoleKeyboard(
       if (handleEngagementKey(lower, e.repeat)) {
         return;
       }
-      handleSystemKey(lower, e.key, toggleLowFi, toggle3D, setCameraPreset);
+      handleSystemKey(lower, e.key, { ...actions, toggleLowFi });
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [rendererRef, setLowFi, toggle3D, setCameraPreset]);
+  }, [rendererRef, setLowFi, actions]);
 }

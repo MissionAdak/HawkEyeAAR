@@ -24,9 +24,10 @@ describe('Production Build & Airgap Guardrails (TASK-P0-01)', () => {
     expect(html).not.toContain('http://');
   });
 
-  it('verifies production bundle size is well under 2 MB limit', () => {
+  it('verifies production bundle size is well under 2 MB limit', (ctx) => {
     if (!fs.existsSync(distDir)) {
       // Fresh checkout without pre-existing dist/ - safely skip bundle size check
+      ctx.skip();
       return;
     }
 

@@ -308,13 +308,11 @@ export class EoirLayer {
   private drawTargetBox(
     ctx: CanvasRenderingContext2D,
     curr: TrackEntity,
-    sx: number,
-    sy: number,
-    scale: number,
-    rangeM: number,
+    proj: { sx: number; sy: number; scale: number; rangeM: number },
     targetHot: string,
     isSelected: boolean
   ): void {
+    const { sx, sy, scale, rangeM } = proj;
     const boxSize = Math.max(16, 24 * scale);
 
     ctx.save();
@@ -363,7 +361,7 @@ export class EoirLayer {
       this.drawSilhouette(ctx, curr, proj.sx, proj.sy, proj.scale, targetHot, isNight);
 
       const isSelected = curr.trackNo === opts.selectedTrackNo;
-      this.drawTargetBox(ctx, curr, proj.sx, proj.sy, proj.scale, proj.rangeM, targetHot, isSelected);
+      this.drawTargetBox(ctx, curr, proj, targetHot, isSelected);
     }
   }
 

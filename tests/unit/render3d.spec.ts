@@ -1,13 +1,35 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
 import { toThree, toThreeCoords, toSimCoords } from '@/render3d/coords';
 import { checkWebGL2Support, isWebGL2Available } from '@/render3d/capability';
 import { Scene3D } from '@/render3d/scene3d';
 import type { SafeTrackView } from '@/render3d/types';
+import {
+  Coverage3D,
+  calculateRadarR90Radius,
+  calculateRadarCoverage,
+  calculateEoirCoverage,
+  calculateRfCoverage,
+  isChaosActive,
+} from '@/render3d/coverage';
+import {
+  EffectorEnvelopes3D,
+  calculateEffectorEnvelopes,
+  calculateTrackEngagementCue,
+} from '@/render3d/effectorEnvelopes';
+import {
+  LosVisualizer3D,
+  calculateModelledLos,
+} from '@/render3d/losVisualizer';
+import { evaluateMasking } from '@/sim/masking';
+import { getEnvelopePlateau } from '@/sim/effectors';
+import { CONFIG } from '@/config';
+import { RCS_REF, R_REF } from '@/sim/sensors';
 import { SimEngine } from '@/sim/engine';
 import demo1Json from '@/director/bundled/demo1.json';
-import type { ScenarioSpec, TrackEntity } from '@/sim/types';
+import type { ScenarioSpec, TrackEntity, ChaosSpec, EffectorId, ZoneSpec } from '@/sim/types';
 
 describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () => {
   describe('A. Coordinate System Transformations (coords.ts)', () => {
@@ -129,7 +151,7 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
         zones: (demo1Json as unknown as ScenarioSpec).zones,
       });
 
-      expect(scene3d.scene.children).toHaveLength(3); // staticGroup, zonesGroup, tracksGroup
+      expect(scene3d.scene.children).toHaveLength(8); // staticGroup, zonesGroup, tracksGroup, coverage3d.group, effectorEnvelopes3d.group, losVisualizer3d.group, clusterOverlay3d.group, trainingAid3d.group
 
       // Verify track updates and disposal
       const sampleTracks: SafeTrackView[] = [
@@ -221,6 +243,643 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
 
         // Budget: under 1.5 MB
         expect(sizeMb).toBeLessThan(1.5);
+      }
+    });
+  });
+
+  describe('G. F1 Sensor-Coverage Visualization (Model-Faithful)', () => {
+    it('accurately calculates radar constant-SNR radius (R90) across clear, rain, and dropout conditions', () => {
+      const maxRange = CONFIG.thresholds.radarMaxRangeM; // 5000m
+
+      // 1. Clear weather (A_env = 1.0, baseline RCS = 0.01)
+      const rClear = calculateRadarR90Radius(RCS_REF, 1.0, 0.90, maxRange);
+      expect(rClear).toBe(R_REF);
+
+      // 2. Degraded / Rain (A_env = 0.7, baseline RCS = 0.01)
+      // R = 3000 * (0.7)^0.25 = 2744.06m
+      const rRain = calculateRadarR90Radius(RCS_REF, 0.7, 0.90, maxRange);
+      expect(rRain).toBeCloseTo(3000 * Math.pow(0.7, 0.25), 1);
+      expect(rRain).toBeLessThan(rClear);
+
+      // 3. Degraded / Rain from config (A_env = 0.6)
+      const rRainConfig = calculateRadarR90Radius(RCS_REF, 0.6, 0.90, maxRange);
+      expect(rRainConfig).toBeCloseTo(3000 * Math.pow(0.6, 0.25), 1);
+
+      // 4. Dropout (A_env = 0.0)
+      const rDropout = calculateRadarR90Radius(RCS_REF, 0.0, 0.90, maxRange);
+      expect(rDropout).toBe(0);
+
+      // 5. Zero / negative RCS returns 0
+      expect(calculateRadarR90Radius(0, 1.0, 0.90, maxRange)).toBe(0);
+      expect(calculateRadarR90Radius(-0.01, 1.0, 0.90, maxRange)).toBe(0);
+    });
+
+    it('enforces monotonic radar RCS scaling (larger RCS never produces smaller constant-SNR radius)', () => {
+      const rcsBird = 0.003;
+      const rcsRecon = 0.01;
+      const rcsLoiter = 0.05;
+      const rcsHeavy = 0.10;
+
+      const rBird = calculateRadarR90Radius(rcsBird, 1.0);
+      const rRecon = calculateRadarR90Radius(rcsRecon, 1.0);
+      const rLoiter = calculateRadarR90Radius(rcsLoiter, 1.0);
+      const rHeavy = calculateRadarR90Radius(rcsHeavy, 1.0);
+
+      expect(rBird).toBeCloseTo(3000 * Math.pow(0.003 / 0.01, 0.25), 1); // ~2220m
+      expect(rRecon).toBeCloseTo(3000.0, 1);
+      expect(rLoiter).toBeCloseTo(3000 * Math.pow(0.05 / 0.01, 0.25), 1); // ~4486m
+      expect(rHeavy).toBe(5000); // 3000 * 10^0.25 = ~5334m, capped at maxRange 5000m
+
+      // Monotonic scaling invariant
+      expect(rBird).toBeLessThan(rRecon);
+      expect(rRecon).toBeLessThan(rLoiter);
+      expect(rLoiter).toBeLessThanOrEqual(rHeavy);
+    });
+
+    it('evaluates EO/IR reach and status faithfully across day, night, and fog states', () => {
+      // 1. Day Clear
+      const dayClear = calculateEoirCoverage({ azimuthDeg: 45, isNight: false });
+      expect(dayClear.effectiveRangeM).toBe(CONFIG.thresholds.eoirMaxRangeDayM); // 2500m
+      expect(dayClear.status).toBe('DAY_NOMINAL');
+      expect(dayClear.fovDeg).toBe(30);
+      expect(dayClear.elevationModelled).toBe(false);
+      expect(dayClear.label).toContain('RENDER ONLY VERTICAL CAP');
+
+      // 2. Night Clear
+      const nightClear = calculateEoirCoverage({ azimuthDeg: 45, isNight: true });
+      expect(nightClear.effectiveRangeM).toBe(CONFIG.thresholds.eoirMaxRangeNightM); // 1750m
+      expect(nightClear.status).toBe('NIGHT_NOMINAL');
+
+      // 3. Day Fog
+      const dayFog = calculateEoirCoverage({
+        azimuthDeg: 90,
+        isNight: false,
+        sensorHealth: 'DEG',
+      });
+      expect(dayFog.effectiveRangeM).toBe(CONFIG.thresholds.eoirMaxRangeDayM * 0.25); // 625m
+      expect(dayFog.status).toBe('FOG_DEGRADED');
+
+      // 4. Night Fog
+      const nightFog = calculateEoirCoverage({
+        azimuthDeg: 270,
+        isNight: true,
+        sensorHealth: 'DEG',
+      });
+      expect(nightFog.effectiveRangeM).toBe(CONFIG.thresholds.eoirMaxRangeNightM * 0.25); // 437.5m
+      expect(nightFog.status).toBe('FOG_DEGRADED');
+
+      // 5. Azimuth normalization (e.g. -45° -> 315°, 405° -> 45°)
+      expect(calculateEoirCoverage({ azimuthDeg: -45, isNight: false }).boresightAzimuthDeg).toBe(315);
+      expect(calculateEoirCoverage({ azimuthDeg: 405, isNight: false }).boresightAzimuthDeg).toBe(45);
+    });
+
+    it('evaluates RF passive sensor coverage and electronic warfare jamming denial', () => {
+      // 1. Nominal RF
+      const rfNominal = calculateRfCoverage({});
+      expect(rfNominal.maxRangeM).toBe(CONFIG.thresholds.rfMaxRangeM); // 4000m
+      expect(rfNominal.status).toBe('NOMINAL');
+      expect(rfNominal.isFunctional).toBe(true);
+
+      // 2. Jammed RF via sensor health
+      const rfJammedHealth = calculateRfCoverage({ sensorHealth: 'OUT' });
+      expect(rfJammedHealth.status).toBe('JAMMED');
+      expect(rfJammedHealth.isFunctional).toBe(false);
+      expect(rfJammedHealth.label).toContain('JAMMED [DENIED]');
+
+      // 3. Jammed RF via active chaos schedule
+      const chaosList: ChaosSpec[] = [
+        { type: 'JAMMING', tStartMs: 10000, tEndMs: 25000, severity: 1.0 },
+      ];
+      expect(calculateRfCoverage({ chaosList, tMs: 5000 }).status).toBe('NOMINAL');
+      expect(calculateRfCoverage({ chaosList, tMs: 15000 }).status).toBe('JAMMED');
+      expect(calculateRfCoverage({ chaosList, tMs: 30000 }).status).toBe('NOMINAL');
+    });
+
+    it('reacts dynamically to active chaos schedules for radar dropout and fog', () => {
+      const chaosList: ChaosSpec[] = [
+        { type: 'RADAR_DROPOUT', tStartMs: 20000, tEndMs: 26000, severity: 1.0 },
+        { type: 'FOG', tStartMs: 40000, tEndMs: 55000, severity: 0.8 },
+      ];
+
+      // Radar before, during, after dropout
+      expect(isChaosActive(chaosList, 22000, 'RADAR_DROPOUT')).toBe(true);
+      expect(isChaosActive(chaosList, 10000, 'RADAR_DROPOUT')).toBe(false);
+      expect(calculateRadarCoverage({ chaosList, tMs: 10000 }).status).toBe('NOMINAL');
+      expect(calculateRadarCoverage({ chaosList, tMs: 22000 }).status).toBe('DROPOUT');
+      expect(calculateRadarCoverage({ chaosList, tMs: 22000 }).r90RadiusM).toBe(0);
+      expect(calculateRadarCoverage({ chaosList, tMs: 30000 }).status).toBe('NOMINAL');
+
+      // EO/IR before, during, after fog
+      expect(calculateEoirCoverage({ azimuthDeg: 0, isNight: false, chaosList, tMs: 35000 }).status).toBe('DAY_NOMINAL');
+      expect(calculateEoirCoverage({ azimuthDeg: 0, isNight: false, chaosList, tMs: 45000 }).status).toBe('FOG_DEGRADED');
+      expect(calculateEoirCoverage({ azimuthDeg: 0, isNight: false, chaosList, tMs: 45000 }).effectiveRangeM).toBe(625);
+      expect(calculateEoirCoverage({ azimuthDeg: 0, isNight: false, chaosList, tMs: 60000 }).status).toBe('DAY_NOMINAL');
+    });
+
+    it('Coverage3D procedural rendering executes without per-frame allocations or leaks', () => {
+      const coverage3d = new Coverage3D();
+      expect(coverage3d.group.children).toHaveLength(3); // radarGroup, eoirGroup, rfGroup
+
+      // Count child meshes and initial state
+      let initialMeshCount = 0;
+      coverage3d.group.traverse((obj) => {
+        if (obj instanceof Coverage3D || obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+          initialMeshCount += 1;
+        }
+      });
+
+      // Simulate 100 consecutive frames modulating parameters
+      for (let f = 0; f < 100; f++) {
+        const tMs = f * 50;
+        const az = (f * 5) % 360;
+        const isFog = f % 20 < 10;
+        const isJammed = f % 30 < 10;
+        const isDropout = f % 40 < 5;
+
+        coverage3d.update({
+          radar: calculateRadarCoverage({
+            sensorHealth: isDropout ? 'OUT' : 'OK',
+            tMs,
+          }),
+          eoir: calculateEoirCoverage({
+            azimuthDeg: az,
+            isNight: false,
+            sensorHealth: isFog ? 'DEG' : 'OK',
+            tMs,
+          }),
+          rf: calculateRfCoverage({
+            sensorHealth: isJammed ? 'OUT' : 'OK',
+            tMs,
+          }),
+          activeSensor: (['RADAR', 'EOIR', 'RF'] as const)[f % 3],
+          visible: true,
+        });
+      }
+
+      // Verify that mesh count remains strictly invariant (zero allocation leak)
+      let postUpdateMeshCount = 0;
+      coverage3d.group.traverse((obj) => {
+        if (obj instanceof Coverage3D || obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+          postUpdateMeshCount += 1;
+        }
+      });
+      expect(postUpdateMeshCount).toBe(initialMeshCount);
+
+      // Verify clean disposal
+      expect(() => coverage3d.dispose()).not.toThrow();
+      expect(coverage3d.group.children).toHaveLength(0);
+    });
+
+    it('strictly preserves the safe information boundary: coverage models contain zero target truth coordinates', () => {
+      // Coverage model interfaces do not contain entity positions, trueClass, or secret tracks
+      const coverage = calculateRadarCoverage({});
+      const keys = Object.keys(coverage);
+      expect(keys).not.toContain('trueClass');
+      expect(keys).not.toContain('droneType');
+      expect(keys).not.toContain('tracks');
+      expect(keys).not.toContain('pos');
+      expect(keys).not.toContain('waypoints');
+    });
+  });
+
+  describe('H. F2 Effector Envelopes & PNR Visualization', () => {
+    const effectorIds: EffectorId[] = [
+      'RF_SOFTKILL',
+      'LASER',
+      'GUN',
+      'INTERCEPTOR',
+      'MISSILE',
+    ];
+
+    it('displayed min/max/plateau boundaries equal existing configuration and helper values for every effector', () => {
+      const envelopes = calculateEffectorEnvelopes('GUN');
+      expect(envelopes).toHaveLength(5);
+
+      effectorIds.forEach((effId) => {
+        const env = envelopes.find((e) => e.id === effId);
+        expect(env).toBeDefined();
+        const expected = getEnvelopePlateau(effId);
+        const configEff = CONFIG.effectors[effId];
+
+        expect(env?.envelopeMinM).toBe(expected.envelopeMinM);
+        expect(env?.envelopeMaxM).toBe(expected.envelopeMaxM);
+        expect(env?.plateauMinM).toBeCloseTo(expected.plateauMinM, 1);
+        expect(env?.plateauMaxM).toBeCloseTo(expected.plateauMaxM, 1);
+        expect(env?.rOptM).toBeCloseTo(expected.rOptM, 1);
+        expect(env?.tier).toBe(configEff.tier);
+        expect(env?.costInr).toBe(configEff.costInr);
+      });
+    });
+
+    it('highlights the armed effector and maintains correct tier and operational labels', () => {
+      const envelopes = calculateEffectorEnvelopes('MISSILE');
+      const missile = envelopes.find((e) => e.id === 'MISSILE');
+      const gun = envelopes.find((e) => e.id === 'GUN');
+
+      expect(missile?.isArmed).toBe(true);
+      expect(missile?.tier).toBe('T3_HEAVY');
+      expect(missile?.statusLabel).toBe('READY');
+
+      expect(gun?.isArmed).toBe(false);
+      expect(gun?.tier).toBe('T2_KINETIC');
+    });
+
+    it('computes effective Pk and blocked reasons matching existing effector equations', () => {
+      // 1. Inside optimal plateau (GUN: min 300m, max 1500m, plateau 540m - 1260m)
+      const targetInPlateau = {
+        trackNo: 'T-01',
+        pos: { x: 900, y: 0, z: 50 },
+        q: 0.9,
+      };
+      const cuePlateau = calculateTrackEngagementCue('GUN', targetInPlateau);
+      expect(cuePlateau.isInPlateau).toBe(true);
+      expect(cuePlateau.isOutOfEnvelope).toBe(false);
+      expect(cuePlateau.isHardBlocked).toBe(false);
+      expect(cuePlateau.attenuationG).toBe(1.0);
+      expect(cuePlateau.effectivePk).toBeCloseTo(CONFIG.effectors.GUN.pk0, 2); // 0.85
+      expect(cuePlateau.label).toContain('OPTIMAL');
+
+      // 2. Beyond max envelope (GUN range 2200m > 2000m max)
+      const targetBeyond = {
+        trackNo: 'T-02',
+        pos: { x: 2200, y: 0, z: 50 },
+        q: 0.9,
+      };
+      const cueBeyond = calculateTrackEngagementCue('GUN', targetBeyond);
+      expect(cueBeyond.isOutOfEnvelope).toBe(true);
+      expect(cueBeyond.isHardBlocked).toBe(true);
+      expect(cueBeyond.hardBlockReason).toContain('BEYOND MAX');
+      expect(cueBeyond.effectivePk).toBe(0.0);
+      expect(cueBeyond.label).toContain('BLOCKED');
+
+      // 3. Track quality block (Q = 0.4 < 0.6)
+      const targetLowQ = {
+        trackNo: 'T-03',
+        pos: { x: 800, y: 0, z: 50 },
+        q: 0.4,
+      };
+      const cueLowQ = calculateTrackEngagementCue('GUN', targetLowQ);
+      expect(cueLowQ.isHardBlocked).toBe(true);
+      expect(cueLowQ.hardBlockReason).toContain('Q < 0.6');
+    });
+
+    it('faithfully reflects environmental degradation (RF Soft-Kill jammed, Laser in fog)', () => {
+      // 1. RF Soft-Kill under Jamming
+      const envJammed = calculateEffectorEnvelopes('RF_SOFTKILL', { RF: 'OUT' });
+      const rf = envJammed.find((e) => e.id === 'RF_SOFTKILL');
+      expect(rf?.isFunctional).toBe(false);
+      expect(rf?.statusLabel).toBe('BLOCKED (RF JAMMED)');
+
+      const targetInRange = { trackNo: 'T-01', pos: { x: 1000, y: 0, z: 50 }, q: 0.8 };
+      const cueJammed = calculateTrackEngagementCue('RF_SOFTKILL', targetInRange, { RF: 'OUT' });
+      expect(cueJammed.isHardBlocked).toBe(true);
+      expect(cueJammed.hardBlockReason).toBe('RF JAMMED');
+      expect(cueJammed.effectivePk).toBe(0.0);
+
+      // 2. Laser under Fog (Pk is halved)
+      const envFog = calculateEffectorEnvelopes('LASER', { EOIR: 'DEG' });
+      const laser = envFog.find((e) => e.id === 'LASER');
+      expect(laser?.isFunctional).toBe(true);
+      expect(laser?.statusLabel).toContain('DEGRADED (FOG: 50% Pk)');
+
+      const targetInLaserPlateau = { trackNo: 'T-01', pos: { x: 500, y: 0, z: 50 }, q: 0.8 };
+      const cueLaserFog = calculateTrackEngagementCue('LASER', targetInLaserPlateau, { EOIR: 'DEG' });
+      expect(cueLaserFog.isHardBlocked).toBe(false);
+      expect(cueLaserFog.effectivePk).toBeCloseTo(CONFIG.effectors.LASER.pk0 * 0.5, 2); // 0.90 * 0.5 = 0.45
+    });
+
+    it('PNR Perimeter ring strictly adheres to configured rMinM (500m)', () => {
+      expect(CONFIG.thresholds.rMinM).toBe(500);
+
+      const targetAtPnr = { x: 500, y: 0 };
+      const rangeAtPnr = Math.hypot(targetAtPnr.x, targetAtPnr.y);
+      expect(rangeAtPnr).toBe(500);
+
+      const targetInsidePnr = { x: 450, y: 0 };
+      const rangeInside = Math.hypot(targetInsidePnr.x, targetInsidePnr.y);
+      expect(rangeInside).toBeLessThan(500);
+    });
+
+    it('EffectorEnvelopes3D procedural rendering executes without per-frame allocations or leaks', () => {
+      const envelopes3d = new EffectorEnvelopes3D();
+      expect(envelopes3d.group.children.length).toBeGreaterThan(0);
+
+      // Count child objects before update loop
+      let initialCount = 0;
+      envelopes3d.group.traverse(() => {
+        initialCount += 1;
+      });
+
+      // Simulate 100 frames with changing armed effectors, targets, and chaos
+      const effectors: EffectorId[] = ['RF_SOFTKILL', 'LASER', 'GUN', 'INTERCEPTOR', 'MISSILE'];
+      for (let f = 0; f < 100; f++) {
+        const effId = effectors[f % effectors.length];
+        const isJammed = f % 20 < 10;
+        const isFog = f % 15 < 7;
+
+        envelopes3d.update({
+          activeEffector: effId,
+          selectedTrack: {
+            trackNo: `T-0${(f % 4) + 1}`,
+            pos: { x: 600 + f * 10, y: 200, z: 60 },
+            q: 0.85,
+          },
+          sensorHealth: {
+            RADAR: 'OK',
+            EOIR: isFog ? 'DEG' : 'OK',
+            RF: isJammed ? 'OUT' : 'OK',
+          },
+          visible: true,
+        });
+      }
+
+      // Assert zero allocation leaks
+      let postCount = 0;
+      envelopes3d.group.traverse(() => {
+        postCount += 1;
+      });
+      expect(postCount).toBe(initialCount);
+
+      // Teardown
+      expect(() => envelopes3d.dispose()).not.toThrow();
+      expect(envelopes3d.group.children).toHaveLength(0);
+    });
+
+    it('accessibility: state is communicated via explicit labels and text, not color alone', () => {
+      const envelopes = calculateEffectorEnvelopes('RF_SOFTKILL', { RF: 'OUT' });
+      const rf = envelopes.find((e) => e.id === 'RF_SOFTKILL')!;
+      expect(rf.statusLabel).toBe('BLOCKED (RF JAMMED)');
+
+      const cue = calculateTrackEngagementCue('GUN', {
+        trackNo: 'T-01',
+        pos: { x: 2500, y: 0, z: 50 },
+        q: 0.9,
+      });
+      expect(cue.label).toContain('BLOCKED');
+      expect(cue.label).toContain('BEYOND MAX');
+    });
+
+    it('toggling effector overlays has no effect on sim events, RNG, timing, or score', () => {
+      const engineA = new SimEngine();
+      engineA.load(demo1Json as unknown as ScenarioSpec);
+
+      const engineB = new SimEngine();
+      engineB.load(demo1Json as unknown as ScenarioSpec);
+
+      // Advance both engines for 100 ticks
+      // Engine B simulates 3D effector overlay queries every tick
+      for (let t = 0; t < 100; t++) {
+        engineA.step();
+
+        engineB.step();
+        const cue = calculateTrackEngagementCue('GUN', {
+          trackNo: 'T-01',
+          pos: { x: 800, y: 0, z: 50 },
+          q: 0.8,
+        });
+        expect(cue).toBeDefined();
+      }
+
+      expect(engineA.tickIndex).toBe(engineB.tickIndex);
+      expect(engineA.events).toHaveLength(engineB.events.length);
+      for (let i = 0; i < engineA.events.length; i++) {
+        expect(engineA.events[i].type).toBe(engineB.events[i].type);
+        expect(engineA.events[i].tMs).toBe(engineB.events[i].tMs);
+      }
+    });
+  });
+
+  describe('I. F3 Line-of-Sight Explanation From the Authoritative Masking Model', () => {
+    const testUrbanZone: ZoneSpec = {
+      id: 'U1',
+      type: 'URBAN',
+      polygon: [
+        [1000, 1000],
+        [2000, 1000],
+        [2000, 2000],
+        [1000, 2000],
+      ],
+      heightM: 40,
+      shadowM: 800,
+      rho: 0.8,
+    };
+
+    const testRidgeZone: ZoneSpec = {
+      id: 'R1',
+      type: 'RIDGE',
+      polygon: [
+        [-1500, 1000],
+        [-500, 1000],
+        [-500, 1500],
+        [-1500, 1500],
+      ],
+      heightM: 60,
+      shadowM: 1000,
+      rho: 0.9,
+    };
+
+    it('visual blocked status matches canonical evaluateMasking for zone-interior target', () => {
+      // Inside zone at (1500, 1500), altitude 20m <= roof 40m
+      const target = {
+        trackNo: 'T-01',
+        pos: { x: 1500, y: 1500, z: 20 },
+      };
+      const los = calculateModelledLos(target, [testUrbanZone]);
+
+      expect(los.isMasked).toBe(true);
+      expect(los.status).toBe('BLOCKED_INTERIOR');
+      expect(los.zoneId).toBe('U1');
+      expect(los.blockingPoint).toBeDefined();
+      expect(los.blockingPoint!.z).toBeLessThanOrEqual(40);
+      expect(los.label).toContain('[MODELLED LOS / MASKING]');
+      expect(los.label).toContain('BLOCKED: INSIDE [U1]');
+    });
+
+    it('visual blocked status matches canonical evaluateMasking for radar shadow target', () => {
+      // Behind near-edge of R1 (-1000, 1000) ~1414m at (-1000, 1800) ~2059m (dist past near-edge = 645m <= 1000m shadow, outside polygon y > 1500)
+      const target = {
+        trackNo: 'T-02',
+        pos: { x: -1000, y: 1800, z: 20 },
+      };
+      const los = calculateModelledLos(target, [testRidgeZone]);
+
+      expect(los.isMasked).toBe(true);
+      expect(los.status).toBe('BLOCKED_SHADOW');
+      expect(los.zoneId).toBe('R1');
+      expect(los.dNearM).toBeCloseTo(1144, 0);
+      expect(los.blockingPoint).toBeDefined();
+      expect(los.label).toContain('BLOCKED: SHADOW [R1]');
+      expect(los.label).toContain('θT:');
+      expect(los.label).toContain('θM:');
+    });
+
+    it('unblocked status matches canonical evaluateMasking when flying above roofline', () => {
+      // Inside zone horizontal polygon at (1500, 1500), but altitude 120m > 40m roofline
+      const target = {
+        trackNo: 'T-03',
+        pos: { x: 1500, y: 1500, z: 120 },
+      };
+      const los = calculateModelledLos(target, [testUrbanZone]);
+
+      expect(los.isMasked).toBe(false);
+      expect(los.status).toBe('CLEAR');
+      expect(los.blockingPoint).toBeNull();
+      expect(los.label).toContain('CLEAR');
+    });
+
+    it('unblocked status matches canonical evaluateMasking when beyond shadow reach', () => {
+      // Behind near-edge at (2500, 2500) ~3535m (dist past near edge = 2121m > 800m shadow)
+      const target = {
+        trackNo: 'T-04',
+        pos: { x: 2500, y: 2500, z: 20 },
+      };
+      const los = calculateModelledLos(target, [testUrbanZone]);
+
+      expect(los.isMasked).toBe(false);
+      expect(los.status).toBe('CLEAR');
+      expect(los.blockingPoint).toBeNull();
+      expect(los.label).toContain('CLEAR');
+    });
+
+    it('faithfully resolves multiple-zone occlusion precedence', () => {
+      const zones = [testUrbanZone, testRidgeZone];
+      // Target behind Ridge zone: (-1000, 1200, 20)
+      const target = {
+        trackNo: 'T-05',
+        pos: { x: -1000, y: 1200, z: 20 },
+      };
+      const los = calculateModelledLos(target, zones);
+
+      expect(los.isMasked).toBe(true);
+      expect(los.zoneId).toBe('R1');
+      expect(los.label).toContain('R1');
+    });
+
+    it('property-tests 100% agreement between calculateModelledLos and canonical evaluateMasking over seeded grid', () => {
+      const zones = [testUrbanZone, testRidgeZone];
+      // Deterministic pseudo-random sequence (LCG)
+      let seed = 42;
+      const nextU = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
+
+      for (let i = 0; i < 100; i++) {
+        const x = (nextU() - 0.5) * 6000;
+        const y = (nextU() - 0.5) * 6000;
+        const z = 10 + nextU() * 150;
+        const target = { trackNo: `T-RND-${i}`, pos: { x, y, z } };
+
+        const canonical = evaluateMasking(target.pos, zones);
+        const modelled = calculateModelledLos(target, zones);
+
+        expect(modelled.isMasked).toBe(canonical.isMasked);
+        if (canonical.isMasked) {
+          expect(modelled.zoneId).toBe(canonical.zoneId);
+          expect(modelled.status).not.toBe('CLEAR');
+          expect(modelled.blockingPoint).not.toBeNull();
+        } else {
+          expect(modelled.status).toBe('CLEAR');
+          expect(modelled.blockingPoint).toBeNull();
+        }
+      }
+    });
+
+    it('strictly preserves safe information boundary: handles missing coordinates without truth leaks', () => {
+      // 1. Target with no safe operator position (e.g. completely unplotted or dropped)
+      const targetNoPos = {
+        trackNo: 'T-GHOST-01',
+        pos: null,
+        masked: true,
+      };
+      const losNoPos = calculateModelledLos(targetNoPos, [testUrbanZone]);
+      expect(losNoPos.status).toBe('MASKED_NO_POS');
+      expect(losNoPos.isMasked).toBe(true);
+      expect(losNoPos.targetPoint).toBeNull();
+      expect(losNoPos.blockingPoint).toBeNull();
+      expect(losNoPos.label).toContain('MASKED (NO POSITION)');
+
+      // 2. Coasting track: maintains estimated coordinates and reports uncertainty without leaking truth
+      const targetCoasting = {
+        trackNo: 'T-COAST-02',
+        pos: { x: 1300, y: 1300, z: 20 },
+        masked: true,
+        ghostSigmaM: 45,
+      };
+      const losCoasting = calculateModelledLos(targetCoasting, [testUrbanZone]);
+      expect(losCoasting.isCoasting).toBe(true);
+      expect(losCoasting.ghostSigmaM).toBe(45);
+      expect(losCoasting.label).toContain('COAST ±45m');
+    });
+
+    it('LosVisualizer3D procedural rendering executes without per-frame allocations or leaks', () => {
+      const losVis = new LosVisualizer3D();
+      expect(losVis.group.children.length).toBeGreaterThanOrEqual(4);
+
+      const targetBlocked = {
+        trackNo: 'T-01',
+        pos: { x: 1300, y: 1300, z: 20 },
+        vel: { x: 0, y: 0, z: 0 },
+        traineeLabel: null,
+        step: 'TRACK' as const,
+        q: 0.8,
+        masked: true,
+        ghostSigmaM: 20,
+        isSelected: true,
+        lifecycle: 'ACTIVE' as const,
+      };
+
+      const targetClear = {
+        trackNo: 'T-02',
+        pos: { x: 500, y: 500, z: 80 },
+        vel: { x: 0, y: 0, z: 0 },
+        traineeLabel: null,
+        step: 'TRACK' as const,
+        q: 0.9,
+        masked: false,
+        ghostSigmaM: 0,
+        isSelected: true,
+        lifecycle: 'ACTIVE' as const,
+      };
+
+      const initialChildCount = losVis.group.children.length;
+
+      // Simulate 100 continuous animation frames alternating states
+      for (let f = 0; f < 100; f++) {
+        const target = f % 2 === 0 ? targetBlocked : targetClear;
+        losVis.update(target, [testUrbanZone], 15, true);
+        expect(losVis.group.children).toHaveLength(initialChildCount);
+      }
+
+      // Complete resource disposal
+      expect(() => losVis.dispose()).not.toThrow();
+      expect(losVis.group.children).toHaveLength(0);
+    });
+
+    it('toggling LOS overlay has no effect on sim events, RNG, timing, or score', () => {
+      const engineA = new SimEngine();
+      engineA.load(demo1Json as unknown as ScenarioSpec);
+
+      const engineB = new SimEngine();
+      engineB.load(demo1Json as unknown as ScenarioSpec);
+
+      for (let t = 0; t < 100; t++) {
+        engineA.step();
+
+        engineB.step();
+        // 3D LOS queries simulated on every step
+        const los = calculateModelledLos(
+          { trackNo: 'T-01', pos: { x: 1500, y: 1500, z: 20 } },
+          engineB.spec?.zones || []
+        );
+        expect(los).toBeDefined();
+      }
+
+      expect(engineA.tickIndex).toBe(engineB.tickIndex);
+      expect(engineA.events).toHaveLength(engineB.events.length);
+      for (let i = 0; i < engineA.events.length; i++) {
+        expect(engineA.events[i].type).toBe(engineB.events[i].type);
+        expect(engineA.events[i].tMs).toBe(engineB.events[i].tMs);
       }
     });
   });

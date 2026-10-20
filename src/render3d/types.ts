@@ -32,4 +32,32 @@ export interface Scene3DOptions {
   maxRangeM: number;
   rMinM: number;
   zones?: ZoneSpec[];
+  showCoverage?: boolean;
+  showEnvelopes?: boolean;
+  showLos?: boolean;
+  showTrainingAid?: boolean;
+  mode?: 'TRAIN' | 'EVAL' | 'DEMO';
 }
+
+export type {
+  RadarCoverageStatus,
+  EoirCoverageStatus,
+  RfCoverageStatus,
+  RadarCoverageModel,
+  EoirCoverageModel,
+  RfCoverageModel,
+  SensorCoverageState,
+} from './coverage';
+
+export type {
+  EffectorEnvelopeState,
+  TrackEngagementCue,
+  EffectorVisualOptions,
+} from './effectorEnvelopes';
+
+export type {
+  LosRayPoint,
+  LosBlockStatus,
+  LosExplanation,
+} from './losVisualizer';
+

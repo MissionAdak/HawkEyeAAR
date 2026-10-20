@@ -50,12 +50,18 @@ interface TrackAggregate {
  */
 export function aggregateAARMetrics(
   events: SimEvent[],
-  scenarioSpec?: ScenarioSpec
+  scenarioSpec?: ScenarioSpec,
+  trainingAidTicks?: number
 ): AARMetrics {
   // 1. Session Mode and Metadata
   let sessionMode: 'TRAIN' | 'EVAL' | 'DEMO' = scenarioSpec?.mode ?? 'TRAIN';
   let scenarioId = scenarioSpec?.id ?? 'sim';
   const startEv = events.find((e) => e.type === 'SIM_START');
+  const endEv = events.find((e) => e.type === 'SESSION_END');
+  const payloadTicks = typeof endEv?.payload?.trainingAidTicks === 'number' ? (endEv.payload.trainingAidTicks as number) : 0;
+  const aidTicks = typeof trainingAidTicks === 'number' ? trainingAidTicks : payloadTicks;
+  const trainingAidDurationSec = Number((aidTicks * 0.05).toFixed(1));
+  const trainingAidUsed = aidTicks > 0;
   if (startEv?.payload) {
     if (typeof startEv.payload.mode === 'string') {
       sessionMode = startEv.payload.mode as 'TRAIN' | 'EVAL' | 'DEMO';
@@ -527,5 +533,8 @@ export function aggregateAARMetrics(
     econScore,
     rScore,
     confusion,
+    trainingAidTicks: aidTicks,
+    trainingAidDurationSec,
+    trainingAidUsed,
   };
 }

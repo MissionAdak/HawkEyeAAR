@@ -198,6 +198,9 @@ export interface AARMetrics {
   econScore: number;
   rScore: number;
   confusion: number[][];
+  trainingAidTicks?: number;
+  trainingAidDurationSec?: number;
+  trainingAidUsed?: boolean;
 }
 
 export interface UserAction {

@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { toThree } from './coords';
+import { Coverage3D, type SensorCoverageState } from './coverage';
+import { EffectorEnvelopes3D, type EffectorVisualOptions } from './effectorEnvelopes';
+import { LosVisualizer3D } from './losVisualizer';
+import { ClusterOverlay3D } from './clusters';
+import { TrainingAid3D } from './trainingAid';
 import type { SafeTrackView, Scene3DOptions } from './types';
-import type { TrackClass, ZoneSpec } from '@/sim/types';
+import type { TrackClass, ZoneSpec, SensorMode } from '@/sim/types';
 
 // Tactical Color Tokens adhering to DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -28,6 +33,12 @@ export class Scene3D {
   private readonly staticGroup: THREE.Group;
   private readonly zonesGroup: THREE.Group;
   private readonly tracksGroup: THREE.Group;
+  public readonly coverage3d: Coverage3D;
+  public readonly effectorEnvelopes3d: EffectorEnvelopes3D;
+  public readonly losVisualizer3d: LosVisualizer3D;
+  public readonly clusterOverlay3d: ClusterOverlay3D;
+  public readonly trainingAid3d: TrainingAid3D;
+  private readonly zones: ZoneSpec[];
 
   // Track marker pool & meshes
   private readonly trackMeshMap: Map<string, TrackMeshRecord> = new Map();
@@ -56,13 +67,28 @@ export class Scene3D {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(COLOR_CARBON_950);
 
+    this.zones = options.zones || [];
     this.staticGroup = new THREE.Group();
     this.zonesGroup = new THREE.Group();
     this.tracksGroup = new THREE.Group();
+    this.coverage3d = new Coverage3D();
+    this.effectorEnvelopes3d = new EffectorEnvelopes3D();
+    this.losVisualizer3d = new LosVisualizer3D();
+    this.clusterOverlay3d = new ClusterOverlay3D();
+    this.trainingAid3d = new TrainingAid3D({ zones: this.zones, maxRangeM: options.maxRangeM });
 
     this.scene.add(this.staticGroup);
     this.scene.add(this.zonesGroup);
     this.scene.add(this.tracksGroup);
+    this.scene.add(this.coverage3d.group);
+    this.scene.add(this.effectorEnvelopes3d.group);
+    this.scene.add(this.losVisualizer3d.group);
+    this.scene.add(this.clusterOverlay3d.group);
+    this.scene.add(this.trainingAid3d.group);
+
+    if (options.showTrainingAid && options.mode !== 'EVAL') {
+      this.trainingAid3d.setVisible(true);
+    }
 
     // Initialize shared geometries
     this.sharedGeometries = {
@@ -439,10 +465,59 @@ export class Scene3D {
   }
 
   /**
+   * Updates model-faithful sensor coverage visualization.
+   */
+  public updateCoverage(coverageState: SensorCoverageState): void {
+    this.coverage3d.update(coverageState);
+  }
+
+  /**
+   * Filter active sensor coverage volume or show all.
+   */
+  public setSensorFilter(activeSensor: SensorMode | 'ALL'): void {
+    this.coverage3d.setSensorFilter(activeSensor);
+  }
+
+  /**
+   * Updates model-faithful effector reach, plateau, and target engagement cue.
+   */
+  public updateEffectorEnvelopes(options: EffectorVisualOptions): void {
+    this.effectorEnvelopes3d.update(options);
+  }
+
+  /**
+   * Updates model-faithful Line-of-Sight (LOS) explanation ray for the selected track.
+   */
+  public updateLos(selectedTrack: SafeTrackView | null, showLos: boolean = true): void {
+    this.losVisualizer3d.update(selectedTrack, this.zones, undefined, showLos);
+  }
+
+  /**
+   * Updates operator-visible spatial clustering overlay (Task F4).
+   */
+  public updateClusters(tracks: SafeTrackView[], showClusters: boolean = true): void {
+    this.clusterOverlay3d.update(tracks, showClusters);
+  }
+
+  /**
+   * Updates F5 Training Aid overlay visibility (strictly disabled in EVAL).
+   */
+  public updateTrainingAid(show: boolean): void {
+    this.trainingAid3d.setVisible(show);
+  }
+
+  /**
    * Complete scene teardown and memory cleanup.
    */
   public dispose(): void {
-    // 1. Dispose track resources
+    // 1. Dispose sensor coverage, effector resources, LOS visualizer, clusters, and training aid
+    this.coverage3d.dispose();
+    this.effectorEnvelopes3d.dispose();
+    this.losVisualizer3d.dispose();
+    this.clusterOverlay3d.dispose();
+    this.trainingAid3d.dispose();
+
+    // 2. Dispose track resources
     for (const record of this.trackMeshMap.values()) {
       if (record.labelSprite.material.map) {
         record.labelSprite.material.map.dispose();
@@ -454,11 +529,11 @@ export class Scene3D {
     }
     this.trackMeshMap.clear();
 
-    // 2. Dispose shared resources
+    // 3. Dispose shared resources
     Object.values(this.sharedGeometries).forEach((g) => g.dispose());
     Object.values(this.sharedMaterials).forEach((m) => m.dispose());
 
-    // 3. Clear scene groups
+    // 4. Clear scene groups
     this.scene.clear();
   }
 }

@@ -31,7 +31,7 @@ export function isPointInPolygon(px: number, py: number, polygon: [number, numbe
  * Finds the intersection between ray (0,0) -> (tx, ty) and segment (p1 -> p2).
  * Returns the distance from origin to intersection if valid, otherwise null.
  */
-function raySegmentIntersection(
+export function raySegmentIntersection(
   tx: number,
   ty: number,
   p1: [number, number],
