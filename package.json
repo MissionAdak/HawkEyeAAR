@@ -17,7 +17,6 @@
     "@fontsource/chakra-petch": "^5.1.1",
     "@fontsource/jetbrains-mono": "^5.1.2",
     "@fontsource/share-tech-mono": "^5.1.1",
-    "chart.js": "^4.4.8",
     "dexie": "^4.0.11",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

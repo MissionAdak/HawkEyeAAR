@@ -2,6 +2,8 @@
 
 **Product Requirements Document (v1.1, engineering hand-off)** | SIH PS 26247 | Ministry of Defence, Defence Services Staff College | Theme: Robotics and Drones | Category: Software
 
+> **NOTE: Backend, REST API, and SQLite architectures described below have been intentionally superseded by the v1.1 Offline-First Client Architecture.**
+
 ### v1.1 changes (review fixes)
 
 1. **Walkthrough (3.4) rebuilt** with one speed per drone class and sensor ranges and masking geometry that agree with each other. Session length is now 120 s. DEMO-1 and DEMO-2 are defined, and DEMO-1 doubles as a golden test.
@@ -348,6 +350,8 @@ function generateScenario(traineeId: string, sessionIdx: number, d: number,
 }
 ```
 
+> **NOTE: Backend, REST API, and SQLite architectures described below have been intentionally superseded by the v1.1 Offline-First Client Architecture.**
+
 ### 5.5 Module interfaces (in-process in v1; REST mirror reserved for later)
 
 In v1 there is no server: the UI calls these functions directly. The same request and response shapes are reserved for an optional FastAPI backend after the hackathon.
@@ -360,6 +364,8 @@ In v1 there is no server: the UI calls these functions directly. The same reques
 | aar.traineeTrend(id) (GET /api/aar/trainee/{id}/trend) | Per-metric series, difficulty series and weakness vector |
 | aar.unitSummary(unitId) (GET /api/unit/{id}/summary) | Cohort stats, percentiles, heatmap data, from EVAL sessions only |
 | io.exportSessions() and io.importSessions(json) (POST /api/sync/import) | Trainee laptop exports session JSON; instructor laptop imports it (USB or shared folder) |
+
+> **NOTE: Backend, REST API, and SQLite architectures described below have been intentionally superseded by the v1.1 Offline-First Client Architecture.**
 
 ### 5.6 Database schema (Dexie/IndexedDB stores in v1; the SQL below is the portable definition for a later SQLite backend)
 

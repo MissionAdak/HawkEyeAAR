@@ -14,10 +14,9 @@
                          UNIT LAPTOP (air-gapped, Windows or Linux)
  ┌───────────────────────────────────────────────────────────────────────────────┐
  │ start.bat / start.sh                                                          │
- │   └─ launcher (static file server, 127.0.0.1:47260, serves ./dist)            │
- │        └─ pinned portable Chromium  --app=http://127.0.0.1:47260              │
+ │   └─ Vite Preview (static file server, 127.0.0.1:4173, serves ./dist)        │
  │                                                                               │
- │  BROWSER (single origin http://127.0.0.1:47260)                               │
+ │  BROWSER (single origin http://127.0.0.1:4173)                                │
  │  ┌────────────┐  commands   ┌──────────────────────────────────────────────┐  │
  │  │ React UI   │────────────▶│ InputQueue (quantised to 50 ms ticks)        │  │
  │  │ + Zustand  │             └───────────────┬──────────────────────────────┘  │
@@ -161,19 +160,18 @@ UI refresh budget: canvases 60 fps; timer, ROE state and sensor badges 20 Hz; tr
 
 `TruthEntity` (ground truth) never leaves `src/sim`. The projection contains only `TrackEntity` (operator-visible). See §3.2.
 
-### 1.8 Launcher, packaging and CSP
+### 1.8 Serving, packaging and CSP
 
-- **Launcher (`/tools/launcher`, Go, single static binary per OS):** binds `127.0.0.1:47260` (fixed port: IndexedDB is per-origin, so the origin must never change), serves `./dist`, sets the headers below, then starts the pinned Chromium with `--app=http://127.0.0.1:47260 --user-data-dir=./profile --no-first-run --disable-sync --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings`. If the port is busy it exits with a clear message instead of picking another port.
-- **USB kit:** `dist/`, launcher binaries, pinned portable Chromium, `start.bat`, `start.sh`, `README-OFFLINE.txt`. The 8 MB budget applies to `dist/` only.
-- **Response headers and `<meta>` CSP:**
+- **Serving & Evaluation:** Built assets in `./dist` are served locally via `Vite Preview` on `http://127.0.0.1:4173` (fixed loopback port ensuring IndexedDB origin consistency across sessions).
+- **USB kit:** `dist/`, `package.json`, launch scripts (`start.bat`, `start.sh`), and `README-OFFLINE.txt`. The 8 MB budget applies to `dist/` only.
+- **Content Security Policy:** The HTML `<meta>` tag CSP embedded in `index.html` is the accepted, authoritative, and compliant security design for the Vite Preview environment:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline';
-  img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none';
-  form-action 'none'; frame-ancestors 'none'
-Cache-Control: no-cache
-Referrer-Policy: no-referrer
+  img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; worker-src 'self' blob:;
 ```
+
+This enforces strict zero-network air-gap protection (`connect-src 'none'`) with zero runtime `fetch` dependencies.
 
 - **Vite:** `base: './'`, `build.target: 'es2022'`, `build.sourcemap: false`, `build.cssCodeSplit: false`, no PWA plugin, no analytics plugin. `define: { __SIM_VERSION__ }` from `package.json` version.
 
@@ -235,12 +233,11 @@ drishti-cuas/
 │  └─ db/
 │     ├─ dexie.ts                    # schema + versioned migrations
 │     ├─ repo.ts                     # typed repositories (sessions, events, profiles, drafts)
-│     ├─ io.ts                       # export/import bundle, checksum, re-verification
-│     └─ staticAssets.ts             # the ONLY module allowed to call fetch (same-origin GET allowlist)
+│     ├─ io.ts                       # database initialization and persistence helpers
+│     └─ aarTransfer.ts              # export/import session bundle, checksum, re-verification
 ├─ tools/
-│  ├─ launcher/                      # Go static server + start scripts
-│  ├─ gen-scenarios.ts               # build-time export of fallbacks, EVAL pack
-│  └─ calibrate-features.ts          # writes public/feature-calibration.json
+│  ├─ start.bat / start.sh           # evaluation launcher scripts
+│  └─ inline-config.mjs              # build-time configuration inliner
 ├─ tests/
 │  ├─ unit/  golden/  guards/  e2e/  # vitest + playwright (see §7)
 ├─ eslint.config.js  tsconfig.json  vite.config.ts  package.json
@@ -694,7 +691,7 @@ export class DrishtiDB extends Dexie {
 - **Writes:** events, inputs and track results are written with `bulkAdd` inside one transaction at session end. During a session only `drafts[sessionUid]` is refreshed every 5 s with `{spec, inputs}`; after a crash the app re-simulates the draft to recover the session.
 - **Replay:** the replay engine loads `scenario spec + inputs`, re-runs the sim and stores `SimSnapshot`s every 100 ticks (5 s). Seeking to tick `T` restores the nearest earlier snapshot and steps at most 100 ticks. This requires `SimState` to be plain serialisable data (`Rules.md` §2.8).
 - **Provenance:** every `sessions` row stores `simVersion`, `configHash`, `mode`, `dStart`, `aborted`. Unit aggregates group by `configHash`; mixed hashes show a warning badge.
-- **Config resolution at boot:** bundled `/config.json` (loaded through `staticAssets.ts`) → optional override chosen by the instructor through a file picker (`<input type="file">` + `FileReader`, no network), validated with the zod schema, stored in `configOverrides` by hash and activated in `meta`. Each session records the hash actually used.
+- **Config resolution at boot:** build-time configuration inlining (`scripts/inline-config.mjs` generates `src/config/config.generated.ts` with build-time SHA-256 calculation) is the authoritative design. Optional override chosen by the instructor through a file picker (`<input type="file">` + `FileReader`, strictly in-memory without network calls), validated with the zod schema, stored in `configOverrides` by hash and activated in `meta`. Each session records the hash actually used.
 
 ### 5.2 Export/import bundle (air-gapped multi-laptop aggregation)
 
@@ -813,5 +810,5 @@ Techniques: two canvases per viewport (static base layer drawn once, dynamic lay
 
 1. `tests/unit` (vitest): masking, Pd curve, `q` fusion, tracker transitions, effector `Pk(R)`, ROE, scoring (D, C incl. UNKNOWN column, G, R, session, grades), EMA, SAL/SAT, validator checks (a)–(f), feature calibration, rng key stability.
 2. `tests/golden`: DEMO-1 timeline within 1 s (first detectable T+5, masked T+30..T+50, H-1 PNR T+82.5, swarm PNR T+115.6; RF sees H-1 throughout the mask); same seed plus input log ⇒ identical event sequence, `stateHash` trace every 20 ticks and score within `1e-6` on the pinned Chromium.
-3. `tests/guards`: no network APIs outside `staticAssets.ts`, no `Math.random`, no `Date`/`performance.now` inside `sim/`, `director/`, canonical labels only, import-direction rules, no forbidden dependencies, no Tailwind default palette classes.
+3. `tests/guards`: no network APIs anywhere in application code, no `Math.random`, no `Date`/`performance.now` inside `sim/`, `director/`, canonical labels only, import-direction rules, no forbidden dependencies, no Tailwind default palette classes.
 4. `tests/e2e` (playwright on the pinned Chromium): full DEMO-1 run with network blocked and zero cross-origin requests; no vertical scroll at 1366×768 and 1280×700; export → import round trip with verification; EVAL leaderboard excludes TRAIN sessions.

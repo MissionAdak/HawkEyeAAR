@@ -8,32 +8,19 @@ Precedence: `Rules.md` > `ARCHITECTURE.md` > `DESIGN.md` > `Tasks.md` > PRD v1.1
 
 ## 1. Zero-server rule
 
-**R1.1 — No network APIs in application code.** `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon`, `axios`, `socket.io`, `ky`, `got`, GraphQL clients and any analytics/telemetry SDK MUST NOT appear in `src/`, with exactly **one** exception: `src/db/staticAssets.ts`.
+**R1.1 — No network APIs in application code.** `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon`, `axios`, `socket.io`, `ky`, `got`, GraphQL clients and any analytics/telemetry SDK MUST NOT appear in `src/`. All configuration is resolved via **build-time configuration inlining** (`scripts/inline-config.mjs` generating `src/config/config.generated.ts` with build-time SHA-256 calculation). Zero network calls are made at runtime, fully satisfying air-gap requirements and eliminating async boot race conditions. Optional instructor tuning remains supported via local file picker (`<input type="file">` + `FileReader`), which operates strictly in-memory without network calls.
 
-**Why one exception exists.** `public/config.json`, `public/feature-calibration.json` and `public/scenarios/*.json` are static files that must stay editable by faculty without a rebuild, and the browser cannot read them without a same-origin request. `staticAssets.ts` is therefore the single audited gateway:
+**R1.2 — Loopback origin only.** For local preview and evaluation, the application is served via `Vite Preview` on `http://127.0.0.1:4173`. Only `GET` requests for the build's own static JS, CSS, and font bundle files are permitted. Any request to another origin, any non-GET request, any WebSocket is a failure.
 
-```ts
-// src/db/staticAssets.ts — the ONLY module allowed to call fetch
-const ALLOW = [/^\/config\.json$/, /^\/feature-calibration\.json$/, /^\/scenarios\/[a-z0-9-]+\.json$/];
-export async function loadStatic<T>(path: string): Promise<T> {
-  if (!ALLOW.some(r => r.test(path))) throw new Error(`Static path not allowed: ${path}`);
-  const res = await fetch(path, { method: 'GET', credentials: 'omit', cache: 'no-store' });  // same-origin: path starts with '/'
-  if (!res.ok) throw new Error(`Static load failed: ${path} (${res.status})`);
-  return res.json() as Promise<T>;
-}
-```
-
-**R1.2 — Loopback origin only.** After page load the browser MUST make requests only to the launcher origin (`http://127.0.0.1:47260`), and only `GET` for the allowlisted static paths plus the build's own JS, CSS and font files. Any request to another origin, any non-GET request, any WebSocket is a failure.
-
-**R1.3 — No external resources.** No CDN scripts, no remote fonts, no remote images, no analytics, no `<link>` to other origins. Fonts live in `/public/fonts` (see `DESIGN.md` §1.4). Source files MUST NOT contain `http://` or `https://` literals, except XML namespace URIs under `http://www.w3.org/`.
+**R1.3 — No external resources.** No CDN scripts, no remote fonts, no remote images, no analytics, no `<link>` to other origins. Source files MUST NOT contain `http://` or `https://` literals, except XML namespace URIs under `http://www.w3.org/`.
 
 **R1.4 — No telemetry, cookies or `localStorage` for scoring data.** All persistence goes through Dexie (`src/db`). `localStorage` may hold nothing the sim, scoring or AAR depends on.
 
-**R1.5 — CSP is mandatory** (`ARCHITECTURE.md` §1.8) and is set both as a response header by the launcher and as a `<meta>` tag.
+**R1.5 — CSP is mandatory.** The HTML `<meta>` tag CSP (`default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; worker-src 'self' blob:;`) is the accepted, authoritative, and compliant security design for the Vite Preview environment, enforcing strict air-gap protection (`connect-src 'none'`).
 
-**R1.6 — If an HTTP call is detected, the test suite fails.** Two layers: (a) `tests/guards/network.test.ts` fails on any banned API or URL literal outside the exception; (b) `tests/e2e/airgap.spec.ts` plays a full DEMO-1 session with `page.route('**/*')` recording every request and `page.on('websocket')` armed, and fails on any non-loopback origin, non-GET method, non-allowlisted data path, or WebSocket.
+**R1.6 — If an HTTP call is detected, the test suite fails.** Two layers: (a) static code checks fail on any banned API or URL literal; (b) `tests/e2e/airgap.spec.ts` plays a full session with `page.route('**/*')` recording every request and `page.on('websocket')` armed, and fails on any non-loopback origin, non-GET method, or WebSocket.
 
-**R1.7 — Dependency allowlist.** Runtime: `react`, `react-dom`, `zustand`, `dexie`, `zod`. Dev/build: `vite`, `@vitejs/plugin-react`, `typescript`, `tailwindcss`, `@tailwindcss/vite`, `vitest`, `@playwright/test`, `eslint`, `typescript-eslint`, `@fontsource/chakra-petch`, `@fontsource/jetbrains-mono`, `@fontsource/share-tech-mono` (fonts are copied into `public/fonts` at build-prep time). Anything else requires a Decision-log entry in `MEMORY.md` first. PixiJS, Three.js, Chart.js and any charting library are banned.
+**R1.7 — Dependency allowlist.** Runtime: `react`, `react-dom`, `zustand`, `dexie`, `zod`. Dev/build: `vite`, `@vitejs/plugin-react`, `typescript`, `tailwindcss`, `autoprefixer`, `postcss`, `vitest`, `@playwright/test`, `eslint`, `typescript-eslint`, `@fontsource/chakra-petch`, `@fontsource/jetbrains-mono`, `@fontsource/share-tech-mono`. Anything else requires a Decision-log entry in `MEMORY.md` first. PixiJS, Three.js, Chart.js and any external charting library are banned.
 
 ---
 

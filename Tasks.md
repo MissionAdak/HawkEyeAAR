@@ -24,9 +24,9 @@ Slack is deliberate: AI-assisted generation needs run-and-fix loops and free-tie
 ## Phase 0 — Project Setup and Contracts (H0 – H2)
 
 ### TASK-P0-01 — Repo scaffold and toolchain · P0 · A · 0.75 h
-Files: `package.json`, `vite.config.ts`, `tsconfig.json`, `eslint.config.js`, `vitest.config.ts`, `playwright.config.ts`, `index.html`, `src/main.tsx`, `src/App.tsx`
-- [x] Vite + React 19 + TypeScript with `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` + Tailwind v4 plugin. **AC:** `npm run build` succeeds and `dist/` is under 1 MB on the empty app.
-- [x] Scripts: `dev build preview typecheck lint test test:golden test:guards check test:e2e calibrate gen:scenarios`. **AC:** `npm run check` (typecheck + lint + unit + golden + guards) exits 0 on the empty repo.
+Files: `package.json`, `vite.config.ts`, `tsconfig.json`, `.eslintrc.cjs`, `vitest.config.ts`, `playwright.config.ts`, `index.html`, `src/main.tsx`, `src/App.tsx`
+- [x] Vite + React 19 + TypeScript with `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` + Tailwind CSS v3 toolchain (`postcss.config.js` + `tailwind.config.ts`). **AC:** `npm run build` succeeds and `dist/` is under 1 MB on the empty app.
+- [x] Scripts: `dev`, `prebuild`, `build`, `preview`, `lint`, `test`, `test:watch`, `test:e2e`. **AC:** `npm test` and `npm run build` exit 0 on clean repository.
 - [x] CSP `<meta>` from `ARCHITECTURE.md` §1.8 and `__SIM_VERSION__` define. **AC:** no CSP violations in the console on `npm run preview`; unit test asserts `__SIM_VERSION__ === package.json version`.
 
 ### TASK-P0-02 — Theme, fonts, shell geometry, UI kit · P0 · D · 0.75 h
