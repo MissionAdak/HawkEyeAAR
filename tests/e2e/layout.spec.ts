@@ -8,7 +8,7 @@ test.describe('Tactical C2 Zero-Overflow Layout Audit', () => {
     await page.goto('/');
 
     // 1. Wait for canvas to be mounted
-    const canvas = page.locator('canvas');
+    const canvas = page.locator('canvas').first();
     await expect(canvas).toBeVisible();
 
     // 2. Assert zero vertical overflow
@@ -67,5 +67,31 @@ test.describe('Tactical C2 Zero-Overflow Layout Audit', () => {
     await page.goto('/');
     const disclaimer = page.getByText('SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION');
     await expect(disclaimer).toBeVisible();
+  });
+
+  test('3D toggle preserves zero-overflow layout geometry', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/');
+
+    // 1. Locate and click [V] 3D VIEW button
+    const toggleBtn = page.getByRole('button', { name: /3D VIEW/ });
+    await expect(toggleBtn).toBeVisible();
+    await toggleBtn.click();
+
+    // 2. 3D canvas is visible and zero vertical overflow holds
+    const canvas3d = page.locator('canvas').nth(1);
+    await expect(canvas3d).toBeVisible();
+
+    const overflowMetrics = await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      innerHeight: window.innerHeight,
+    }));
+    expect(overflowMetrics.scrollHeight).toBeLessThanOrEqual(overflowMetrics.innerHeight);
+
+    // 3. Toggle back to 2D
+    const toggleBackBtn = page.getByRole('button', { name: /2D RADAR/ });
+    await expect(toggleBackBtn).toBeVisible();
+    await toggleBackBtn.click();
+    await expect(page.locator('canvas').first()).toBeVisible();
   });
 });

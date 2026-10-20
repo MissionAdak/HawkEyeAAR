@@ -338,9 +338,9 @@ All tasks in this track are planned additions. The existing 2D Canvas baseline r
 
 ### TASK-3D-01 — 3D Renderer Foundation, Lazy Chunking & View Toggle · P1 · A · 2.5 h
 Files: `src/render3d/{index,renderer3d,capability,coords}.ts`, `vite.config.ts`, `src/ui/Console.tsx`
-- [ ] Vite rollup chunking configuration: isolate `three` and `src/render3d/**` into `render3d.[hash].js`. **AC:** Production build emits separate 3D chunk under 1.5 MB; initial entry bundle contains 0 bytes of Three.js.
-- [ ] WebGL2 capability detection and error recovery: probe `canvas.getContext('webgl2')`. On failure, disable 3D toggle (`NO WEBGL2`); on `webglcontextlost`, seamlessly fall back to 2D console with banner. **AC:** Unit/e2e test verifies simulated context loss immediately restores 2D canvas without pausing or crashing simulation.
-- [ ] Tactical viewport and camera presets: landscape canvas embedding with zero vertical scroll at 1366×768; camera presets `OBLIQUE`, `TOP`, `POST`. **AC:** `V` hotkey toggles 2D/3D in $< 16\text{ ms}$; Playwright asserts `scrollHeight <= innerHeight` at 1366×768.
+- [x] Vite rollup chunking configuration: isolate `three` and `src/render3d/**` into `render3d.[hash].js`. **AC:** Production build emits separate 3D chunk under 1.5 MB; initial entry bundle contains 0 bytes of Three.js.
+- [x] WebGL2 capability detection and error recovery: probe `canvas.getContext('webgl2')`. On failure, disable 3D toggle (`NO WEBGL2`); on `webglcontextlost`, seamlessly fall back to 2D console with banner. **AC:** Unit/e2e test verifies simulated context loss immediately restores 2D canvas without pausing or crashing simulation.
+- [x] Tactical viewport and camera presets: landscape canvas embedding with zero vertical scroll at 1366×768; camera presets `OBLIQUE`, `TOP`, `POST`. **AC:** `V` hotkey toggles 2D/3D in $< 16\text{ ms}$; Playwright asserts `scrollHeight <= innerHeight` at 1366×768.
 
 ### TASK-3D-02 — Safe Track View-Model & Ground-Truth Redaction Boundary · P0 · B · 1.5 h
 Files: `src/sim/types.ts`, `src/sim/engine.ts`, `tests/guards/truthLeak.spec.ts`

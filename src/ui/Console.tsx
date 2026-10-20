@@ -7,12 +7,47 @@ import { HotWash } from './HotWash';
 import { QuickGuide } from './QuickGuide';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
-import type { SensorMode } from '@/sim/types';
+import type { SensorMode, TrackEntity } from '@/sim/types';
+import type { SafeTrackView, CameraPreset } from '@/render3d/types';
+import type { Renderer3D } from '@/render3d';
+import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
+
+/**
+ * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3 & D-37).
+ * Filters out undetected tracks and excludes all truth properties (trueClass, droneType, valueInr, etc.).
+ */
+function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null): SafeTrackView[] {
+  return curr
+    .filter(
+      (e) =>
+        e.trackNo &&
+        e.step !== 'UNDETECTED' &&
+        (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
+    )
+    .map((e) => ({
+      trackNo: e.trackNo!,
+      pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
+      vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
+      traineeLabel: e.traineeLabel,
+      step: e.step,
+      q: e.q,
+      masked: e.masked,
+      ghostSigmaM: e.ghostSigmaM,
+      isSelected: e.trackNo === selectedTrackNo,
+      lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+    }));
+}
 
 export const Console: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvas3dRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ConsoleRenderer | null>(null);
+  const renderer3dRef = useRef<Renderer3D | null>(null);
+
+  const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
+  const [webGlError, setWebGlError] = useState<string | null>(null);
+  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('OBLIQUE');
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
   const recentEvents = useSessionStore((s) => s.ui.recentEvents);
@@ -28,12 +63,11 @@ export const Console: React.FC = () => {
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
 
-  // Initialize Canvas Renderer Loop
+  // Initialize Canvas 2D Renderer Loop
   useEffect(() => {
     if (!canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    // Set internal resolution matching CSS 520x520
     canvas.width = 520;
     canvas.height = 520;
 
@@ -47,6 +81,68 @@ export const Console: React.FC = () => {
     };
   }, []);
 
+  // Cleanup 3D Renderer on unmount
+  useEffect(() => {
+    return () => {
+      renderer3dRef.current?.dispose();
+      renderer3dRef.current = null;
+    };
+  }, []);
+
+  // Toggle 2D / 3D Tactical View with WebGL2 probe and graceful fallback
+  const toggleViewMode = async () => {
+    if (viewMode === '3D') {
+      renderer3dRef.current?.stop();
+      setViewMode('2D');
+      return;
+    }
+
+    try {
+      const { Renderer3D, checkWebGL2Support } = await import('@/render3d');
+      const cap = checkWebGL2Support();
+      if (!cap.supported) {
+        setWebGlError(cap.reason || 'WebGL2 not supported');
+        return;
+      }
+
+      if (!renderer3dRef.current && canvas3dRef.current) {
+        canvas3dRef.current.width = 520;
+        canvas3dRef.current.height = 520;
+
+        const r3d = new Renderer3D(canvas3dRef.current, {
+          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
+          rMinM: CONFIG.thresholds.rMinM,
+          zones: engineInstance.spec?.zones || [],
+          onContextLost: () => {
+            renderer3dRef.current?.stop();
+            setViewMode('2D');
+            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
+          },
+        });
+
+        r3d.setTrackProvider(() => ({
+          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
+          selectedTrackNo: engineInstance.selectedTrackNo,
+        }));
+
+        renderer3dRef.current = r3d;
+      }
+
+      renderer3dRef.current?.start();
+      setViewMode('3D');
+      setWebGlError(null);
+    } catch (err) {
+      console.error('[Console] Failed to load 3D view:', err);
+      setWebGlError('Failed to load 3D renderer. Restoring 2D mode.');
+      setViewMode('2D');
+    }
+  };
+
+  const handleCameraPreset = (preset: CameraPreset) => {
+    setCameraPreset(preset);
+    renderer3dRef.current?.setPreset(preset);
+  };
+
   // Scored-session visibility guard: abort session if tab is hidden during EVAL (Rules.md R2.10)
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -59,8 +155,8 @@ export const Console: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [abortSession]);
 
-  // Keyboard navigation & Hotkeys
-  useConsoleKeyboard(rendererRef, setLowFi);
+  // Keyboard navigation & Hotkeys (including 'v' toggle and 3D camera presets)
+  useConsoleKeyboard(rendererRef, setLowFi, toggleViewMode, handleCameraPreset);
 
   // Automatically trigger HotWash AAR when simulation session ends
   useEffect(() => {
@@ -113,6 +209,25 @@ export const Console: React.FC = () => {
     }
   };
 
+  const renderScopeReadout = () => {
+    if (viewMode === '3D') {
+      return (
+        <span>
+          3D VIEW | CAM: <span className="text-friend">{cameraPreset}</span>
+        </span>
+      );
+    }
+    if (mousePos) {
+      return (
+        <span>
+          AZ <span className="text-phosphor">{String(mousePos.brg).padStart(3, '0')}°</span> | RNG{' '}
+          <span className="text-phosphor">{mousePos.rngKm.toFixed(2)} km</span>
+        </span>
+      );
+    }
+    return <span>PPI SCOPE 360°</span>;
+  };
+
   return (
     <div className="console bg-carbon-950 overflow-hidden select-none">
       {/* 1. Top Bar (45px) */}
@@ -146,7 +261,7 @@ export const Console: React.FC = () => {
 
           {/* 520px x 520px Canvas Frame bounded by var(--radar) */}
           <div
-            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center"
+            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden"
             style={{
               width: 'var(--radar)',
               height: 'var(--radar)',
@@ -160,37 +275,92 @@ export const Console: React.FC = () => {
               onMouseMove={handleMouseMove}
               onMouseLeave={() => setMousePos(null)}
               onClick={handleCanvasClick}
-              className="cursor-crosshair block"
+              className={`cursor-crosshair ${viewMode === '2D' ? 'block' : 'hidden'}`}
             />
 
-            {/* Overlaid Mode Selector Tabs Inside Canvas (Zero Height Consumption) */}
+            {/* Three.js 3D Viewport Canvas */}
+            <canvas
+              ref={canvas3dRef}
+              width={520}
+              height={520}
+              className={`cursor-grab active:cursor-grabbing ${viewMode === '3D' ? 'block' : 'hidden'}`}
+            />
+
+            {/* Overlaid Mode Selector Tabs Inside Canvas */}
             <div className="absolute top-2 left-2 z-10 flex gap-1 font-display text-[10px]">
-              {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
-                <button
-                  key={m}
-                  onClick={() => setSensor(m)}
-                  className={`px-2 py-0.5 border transition-colors ${
-                    activeSensor === m
-                      ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
-                      : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                  }`}
-                >
-                  [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
-                </button>
-              ))}
+              {/* Sensor Tabs (2D Mode) */}
+              {viewMode === '2D' &&
+                (['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+                  <button
+                    key={m}
+                    onClick={() => setSensor(m)}
+                    className={`px-2 py-0.5 border transition-colors ${
+                      activeSensor === m
+                        ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+                        : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+                    }`}
+                  >
+                    [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+                  </button>
+                ))}
+
+              {/* 3D Camera Presets (3D Mode) */}
+              {viewMode === '3D' && (
+                <>
+                  {(['OBLIQUE', 'TOP', 'POST'] as const).map((preset) => (
+                    <button
+                      key={preset}
+                      onClick={() => handleCameraPreset(preset)}
+                      className={`px-2 py-0.5 border transition-colors ${
+                        cameraPreset === preset
+                          ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+                          : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+                      }`}
+                    >
+                      [{preset[0]}] {preset}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {/* 2D / 3D Mode Toggle Button */}
+              <button
+                onClick={toggleViewMode}
+                title="Toggle 2D/3D Tactical View [V]"
+                className={`px-2 py-0.5 border font-bold transition-colors ${
+                  viewMode === '3D'
+                    ? 'border-friend text-friend bg-friend/20'
+                    : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+                }`}
+              >
+                [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
+              </button>
             </div>
 
-            {/* Overlaid Cursor Bearing / Range Readout */}
+            {/* Overlaid Cursor Bearing / Range Readout (2D) or 3D Camera Readout */}
             <div className="absolute top-2 right-2 z-10 font-mono text-[10px] text-text-dim bg-carbon-900/80 border border-line px-2 py-0.5">
-              {mousePos ? (
-                <span>
-                  AZ <span className="text-phosphor">{String(mousePos.brg).padStart(3, '0')}°</span> | RNG{' '}
-                  <span className="text-phosphor">{mousePos.rngKm.toFixed(2)} km</span>
-                </span>
-              ) : (
-                <span>PPI SCOPE 360°</span>
-              )}
+              {renderScopeReadout()}
             </div>
+
+            {/* 3D Orbit Control Hint */}
+            {viewMode === '3D' && (
+              <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5">
+                DRAG: ORBIT | SCROLL: ZOOM
+              </div>
+            )}
+
+            {/* WebGL Error / Context Loss Fallback Banner */}
+            {webGlError && (
+              <div className="absolute bottom-2 left-2 z-20 text-[9px] font-mono text-amber border border-amber px-2 py-1 bg-carbon-950/95 flex items-center gap-2">
+                <span>⚠ {webGlError}</span>
+                <button
+                  onClick={() => setWebGlError(null)}
+                  className="text-text-dim hover:text-text-main font-bold ml-1"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Low-Fidelity Indicator */}
             {lowFi && (

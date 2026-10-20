@@ -1,6 +1,6 @@
 import { PALETTE } from './palette';
 import { mulberry32 } from '@/sim/rng';
-import type { TrackEntity, ScenarioSpec } from '@/sim/types';
+import type { TrackEntity, ScenarioSpec, Vec3 } from '@/sim/types';
 
 // Pre-cached Reusable Vector Silhouettes as Path2D (Zero Allocations in Loop)
 const SafePath2D = typeof Path2D !== 'undefined'
@@ -273,6 +273,65 @@ export class EoirLayer {
     ctx.restore();
   }
 
+  private computeScreenProjection(
+    lerped: Vec3,
+    azimuthDeg: number,
+    width: number,
+    height: number,
+    pad: number
+  ): { sx: number; sy: number; rangeM: number; scale: number } | null {
+    const rangeM = Math.hypot(lerped.x, lerped.y);
+    if (rangeM < 1) return null;
+
+    const targetAzRad = Math.atan2(lerped.x, lerped.y);
+    let targetAzDeg = (targetAzRad * 180) / Math.PI;
+    if (targetAzDeg < 0) targetAzDeg += 360;
+
+    let deltaAz = targetAzDeg - azimuthDeg;
+    while (deltaAz > 180) deltaAz -= 360;
+    while (deltaAz < -180) deltaAz += 360;
+
+    // 30° Bounding Cone Filter (±15°)
+    if (Math.abs(deltaAz) > 15) return null;
+
+    const cx = width / 2;
+    const cy = height / 2;
+    const sx = cx + (deltaAz / 15) * ((width - pad * 2) / 2);
+    const elevRad = Math.atan2(lerped.z - 15, rangeM);
+    const elevDeg = (elevRad * 180) / Math.PI;
+    const sy = cy - (elevDeg / 10) * ((height - pad * 2) / 2);
+    const scale = Math.max(0.2, Math.min(2.2, 500 / Math.max(120, rangeM)));
+
+    return { sx, sy, rangeM, scale };
+  }
+
+  private drawTargetBox(
+    ctx: CanvasRenderingContext2D,
+    curr: TrackEntity,
+    sx: number,
+    sy: number,
+    scale: number,
+    rangeM: number,
+    targetHot: string,
+    isSelected: boolean
+  ): void {
+    const boxSize = Math.max(16, 24 * scale);
+
+    ctx.save();
+    ctx.strokeStyle = isSelected ? PALETTE.friend : targetHot;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.strokeRect(sx - boxSize / 2, sy - boxSize / 2, boxSize, boxSize);
+    ctx.setLineDash([]);
+
+    ctx.font = '9px "JetBrains Mono"';
+    ctx.fillStyle = isSelected ? PALETTE.friend : targetHot;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${curr.trackNo ?? 'TRK'} ${Math.round(rangeM)}m`, sx + boxSize / 2 + 3, sy - boxSize / 2);
+    ctx.restore();
+  }
+
   private drawEntities(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -281,8 +340,6 @@ export class EoirLayer {
     targetHot: string,
     isNight: boolean
   ): void {
-    const cx = width / 2;
-    const cy = height / 2;
     const pad = 24;
 
     this.prevMap.clear();
@@ -294,50 +351,19 @@ export class EoirLayer {
       if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED') continue;
 
       const prev = this.prevMap.get(curr.id) ?? curr;
-      const lerpedX = prev.pos.x * (1 - opts.alpha) + curr.pos.x * opts.alpha;
-      const lerpedY = prev.pos.y * (1 - opts.alpha) + curr.pos.y * opts.alpha;
-      const lerpedZ = prev.pos.z * (1 - opts.alpha) + curr.pos.z * opts.alpha;
+      const lerped: Vec3 = {
+        x: prev.pos.x * (1 - opts.alpha) + curr.pos.x * opts.alpha,
+        y: prev.pos.y * (1 - opts.alpha) + curr.pos.y * opts.alpha,
+        z: prev.pos.z * (1 - opts.alpha) + curr.pos.z * opts.alpha,
+      };
 
-      const rangeM = Math.hypot(lerpedX, lerpedY);
-      if (rangeM < 1) continue;
+      const proj = this.computeScreenProjection(lerped, opts.azimuthDeg, width, height, pad);
+      if (!proj) continue;
 
-      const targetAzRad = Math.atan2(lerpedX, lerpedY);
-      let targetAzDeg = (targetAzRad * 180) / Math.PI;
-      if (targetAzDeg < 0) targetAzDeg += 360;
+      this.drawSilhouette(ctx, curr, proj.sx, proj.sy, proj.scale, targetHot, isNight);
 
-      let deltaAz = targetAzDeg - opts.azimuthDeg;
-      while (deltaAz > 180) deltaAz -= 360;
-      while (deltaAz < -180) deltaAz += 360;
-
-      // 30° Bounding Cone Filter (±15°)
-      if (Math.abs(deltaAz) > 15) continue;
-
-      const sx = cx + (deltaAz / 15) * ((width - pad * 2) / 2);
-      const elevRad = Math.atan2(lerpedZ - 15, rangeM);
-      const elevDeg = (elevRad * 180) / Math.PI;
-      const sy = cy - (elevDeg / 10) * ((height - pad * 2) / 2);
-
-      const scale = Math.max(0.2, Math.min(2.2, 500 / Math.max(120, rangeM)));
-
-      this.drawSilhouette(ctx, curr, sx, sy, scale, targetHot, isNight);
-
-      // Target lock box & distance tag
       const isSelected = curr.trackNo === opts.selectedTrackNo;
-      const boxSize = Math.max(16, 24 * scale);
-
-      ctx.save();
-      ctx.strokeStyle = isSelected ? PALETTE.friend : targetHot;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 2]);
-      ctx.strokeRect(sx - boxSize / 2, sy - boxSize / 2, boxSize, boxSize);
-      ctx.setLineDash([]);
-
-      ctx.font = '9px "JetBrains Mono"';
-      ctx.fillStyle = isSelected ? PALETTE.friend : targetHot;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(`${curr.trackNo ?? 'TRK'} ${Math.round(rangeM)}m`, sx + boxSize / 2 + 3, sy - boxSize / 2);
-      ctx.restore();
+      this.drawTargetBox(ctx, curr, proj.sx, proj.sy, proj.scale, proj.rangeM, targetHot, isSelected);
     }
   }
 

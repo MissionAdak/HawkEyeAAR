@@ -26,5 +26,15 @@ export default defineConfig({
     outDir: 'dist',
     assetsInlineLimit: 4096,
     chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, '/');
+          if (normalizedId.includes('node_modules/three') || normalizedId.includes('/src/render3d/')) {
+            return 'render3d';
+          }
+        },
+      },
+    },
   },
 });

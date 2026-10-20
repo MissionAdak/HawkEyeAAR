@@ -80,7 +80,13 @@ function handlePauseKey(): void {
   }
 }
 
-function handleSystemKey(lowerKey: string, rawKey: string, toggleLowFi: () => void): boolean {
+function handleSystemKey(
+  lowerKey: string,
+  rawKey: string,
+  toggleLowFi: () => void,
+  toggle3D?: () => void,
+  setCameraPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void
+): boolean {
   const store = useSessionStore.getState();
   if (lowerKey === 'm') {
     store.openAar();
@@ -102,12 +108,28 @@ function handleSystemKey(lowerKey: string, rawKey: string, toggleLowFi: () => vo
     toggleLowFi();
     return true;
   }
+  if (lowerKey === 'v') {
+    toggle3D?.();
+    return true;
+  }
+  if (setCameraPreset) {
+    if (lowerKey === 'o') {
+      setCameraPreset('OBLIQUE');
+      return true;
+    }
+    if (lowerKey === 't') {
+      setCameraPreset('TOP');
+      return true;
+    }
+  }
   return false;
 }
 
 export function useConsoleKeyboard(
-  rendererRef: React.MutableRefObject<ConsoleRenderer | null>,
-  setLowFi: React.Dispatch<React.SetStateAction<boolean>>
+  rendererRef: React.RefObject<ConsoleRenderer | null>,
+  setLowFi: React.Dispatch<React.SetStateAction<boolean>>,
+  toggle3D?: () => void,
+  setCameraPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void
 ): void {
   useEffect(() => {
     const toggleLowFi = () => {
@@ -129,10 +151,10 @@ export function useConsoleKeyboard(
       if (handleEngagementKey(lower, e.repeat)) {
         return;
       }
-      handleSystemKey(lower, e.key, toggleLowFi);
+      handleSystemKey(lower, e.key, toggleLowFi, toggle3D, setCameraPreset);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [rendererRef, setLowFi]);
+  }, [rendererRef, setLowFi, toggle3D, setCameraPreset]);
 }

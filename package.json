@@ -23,6 +23,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.4",
+    "three": "0.173.0",
     "zod": "^3.24.2",
     "zustand": "^5.0.3"
   },
@@ -31,6 +32,7 @@
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
+    "@types/three": "0.173.0",
     "@typescript-eslint/eslint-plugin": "^8.24.1",
     "@typescript-eslint/parser": "^8.24.1",
     "@vitejs/plugin-react": "^4.3.4",
