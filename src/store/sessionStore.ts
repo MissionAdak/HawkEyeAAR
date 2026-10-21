@@ -14,6 +14,7 @@ import {
   DEFAULT_SCENARIO_ID,
   getScenarioCatalogEntry,
   loadCatalogScenario,
+  generateLocalSeed,
 } from '@/director/catalog';
 import { validate } from '@/director/validate';
 
@@ -21,6 +22,15 @@ import { validate } from '@/director/validate';
 export const engineInstance = new SimEngine();
 export { clockInstance };
 let activeRecorder: EventRecorder | null = null;
+let isFinalizingSession = false;
+
+export function getActiveRecorder(): EventRecorder | null {
+  return activeRecorder;
+}
+
+export function getIsFinalizingSession(): boolean {
+  return isFinalizingSession;
+}
 
 const initialSnapshot: UiSnapshot = {
   tick: 0,
@@ -76,11 +86,15 @@ export interface SessionState {
   // Session lifecycle
   loadScenario: (spec: ScenarioSpec) => Promise<void>;
   loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
-  restartSession: () => Promise<void>;
+  restartSession: (options?: { freshSeed?: boolean }) => Promise<void>;
+  rerunExactSeedSession: () => Promise<void>;
   setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
 
-function getQuantisedTick(): { tRawMs: number; applyTick: number } {
+function getQuantisedTick(): { tRawMs: number; applyTick: number } | null {
+  if (isFinalizingSession || engineInstance.sessionEnded) {
+    return null;
+  }
   const currentTick = engineInstance.tickIndex;
   const tRawMs = typeof performance !== 'undefined'
     ? clockInstance.getRawMs()
@@ -99,55 +113,61 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   simSpeed: 1.0,
 
   designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'DESIGNATE', trackNo, via },
     });
   },
 
   classify: (trackNo: string, label: TrackClass) => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'CLASSIFY', trackNo, label },
     });
   },
 
   selectEffector: (effectorId: EffectorId) => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'SELECT_EFFECTOR', effectorId },
     });
   },
 
   fire: (trackNo: string) => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'FIRE', trackNo },
     });
   },
 
   assess: (trackNo: string, result: 'KILL' | 'NO_KILL' | 'UNKNOWN') => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'ASSESS', trackNo, result },
     });
   },
 
   setSensor: (mode: SensorMode) => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'SET_SENSOR', mode },
     });
     engineInstance.activeSensor = mode;
@@ -155,19 +175,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setEoirAzimuth: (deg: number) => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'SET_EOIR_AZIMUTH', deg },
     });
   },
 
   cycleTrack: (direction: 'NEXT' | 'PREV') => {
-    const { tRawMs, applyTick } = getQuantisedTick();
+    const tick = getQuantisedTick();
+    if (!tick) return;
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'CYCLE_TRACK', direction },
     });
   },
@@ -177,11 +199,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (engineInstance.mode === 'EVAL') {
       return;
     }
+    const tick = getQuantisedTick();
+    if (!tick) return;
     clockInstance.pause();
-    const { tRawMs, applyTick } = getQuantisedTick();
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'PAUSE' },
     });
     set((s) => ({ ui: { ...s.ui, isPaused: true } }));
@@ -191,11 +214,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (engineInstance.mode === 'EVAL') {
       return;
     }
+    const tick = getQuantisedTick();
+    if (!tick) return;
     clockInstance.resume();
-    const { tRawMs, applyTick } = getQuantisedTick();
     engineInstance.inputQueue.push({
-      tRawMs,
-      applyTick,
+      tRawMs: tick.tRawMs,
+      applyTick: tick.applyTick,
       action: { type: 'RESUME' },
     });
     set((s) => ({ ui: { ...s.ui, isPaused: false } }));
@@ -224,16 +248,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return;
     }
 
-    // Stop the previous recorder and drain pending writes before starting new session
-    engineInstance.onEvent = null;
+    isFinalizingSession = true;
+    clockInstance.pause();
 
+    const isPreviousActive =
+      engineInstance.spec !== null &&
+      !engineInstance.sessionEnded &&
+      engineInstance.tickIndex > 0;
+
+    // Finalize previous session if active using established abort lifecycle
+    // Old recorder is intentionally kept connected so SESSION_END and final metrics are recorded.
+    if (isPreviousActive) {
+      engineInstance.abort('SCENARIO_SWITCH', `Switched to scenario ${spec.id}`);
+    }
+
+    // Stop the previous recorder and drain pending writes before starting new session
     if (activeRecorder) {
       try {
         await activeRecorder.stop();
       } catch (error) {
-        console.error('[Recorder] Failed to finish previous session:', error);
+        console.error('[Recorder Error] Failed to persist previous session events:', error);
+        isFinalizingSession = false;
+        throw error;
+      } finally {
+        activeRecorder = null;
+        engineInstance.onEvent = null;
       }
-      activeRecorder = null;
     }
 
     const recorderForSession = new EventRecorder();
@@ -254,7 +294,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     recorderForSession.start();
 
     engineInstance.load(spec);
+    await recorderForSession.flush();
     clockInstance.reset();
+    isFinalizingSession = false;
 
     const catalogEntry = getScenarioCatalogEntry(spec.id);
     const scenarioId = catalogEntry ? catalogEntry.id : (spec.id.startsWith('PROCEDURAL-') ? 'PROCEDURAL-1' : spec.id);
@@ -285,18 +327,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  restartSession: async (): Promise<void> => {
+  restartSession: async (options?: { freshSeed?: boolean }): Promise<void> => {
     if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
       console.warn('[SessionStore] Restarting is prohibited mid-EVAL.');
       return;
     }
 
-    const activeSpec = engineInstance.spec;
-    if (activeSpec) {
-      await get().loadScenario(structuredClone(activeSpec));
-    } else {
-      await get().loadScenarioById(DEFAULT_SCENARIO_ID);
+    const currentId = get().currentScenarioId;
+    const useFreshSeed = options?.freshSeed !== false;
+    const seed = useFreshSeed ? generateLocalSeed() : engineInstance.spec?.seed;
+
+    await get().loadScenarioById(currentId, seed);
+  },
+
+  rerunExactSeedSession: async (): Promise<void> => {
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Exact-seed rerun is prohibited mid-EVAL.');
+      return;
     }
+
+    const currentId = get().currentScenarioId;
+    const exactSeed = engineInstance.spec?.seed;
+
+    await get().loadScenarioById(currentId, exactSeed);
   },
 
   setSpeed: (speed: number) => {

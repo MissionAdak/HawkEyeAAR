@@ -14,6 +14,10 @@ export function createSessionUid(): string {
   return `session-${Date.now()}`;
 }
 
+// Fallback in-memory storage for test/Node environments where indexedDB is not available
+const inMemoryFallbackEvents: StoredSimEvent[] = [];
+let mockPersistenceFailure = false;
+
 export class EventRecorder {
   private readonly sessionUid: string;
   private buffer: StoredSimEvent[] = [];
@@ -22,6 +26,10 @@ export class EventRecorder {
 
   constructor(sessionUid: string = createSessionUid()) {
     this.sessionUid = sessionUid;
+  }
+
+  public getSessionUid(): string {
+    return this.sessionUid;
   }
 
   public start(): void {
@@ -69,9 +77,17 @@ export class EventRecorder {
       const batch = this.buffer.splice(0, this.buffer.length);
 
       try {
-        await db.transaction('rw', db.events, async () => {
-          await db.events.bulkAdd(batch);
-        });
+        if (mockPersistenceFailure) {
+          throw new Error('Simulated IndexedDB persistence failure');
+        }
+
+        if (typeof indexedDB === 'undefined') {
+          inMemoryFallbackEvents.push(...batch);
+        } else {
+          await db.transaction('rw', db.events, async () => {
+            await db.events.bulkAdd(batch);
+          });
+        }
       } catch (error) {
         // Restore the failed batch before events recorded during the write.
         this.buffer = [...batch, ...this.buffer];
@@ -96,3 +112,21 @@ export class EventRecorder {
     await this.flush();
   }
 }
+
+export async function getRecordedEventsForSession(sessionUid: string): Promise<StoredSimEvent[]> {
+  if (typeof indexedDB === 'undefined') {
+    return inMemoryFallbackEvents
+      .filter((e) => e.sessionUid === sessionUid)
+      .sort((a, b) => a.seq - b.seq);
+  }
+  return await db.events.where('sessionUid').equals(sessionUid).sortBy('seq');
+}
+
+export function clearFallbackEventsForTest(): void {
+  inMemoryFallbackEvents.length = 0;
+}
+
+export function setMockPersistenceFailureForTest(fail: boolean): void {
+  mockPersistenceFailure = fail;
+}
+

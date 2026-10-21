@@ -10,17 +10,29 @@ import {
 } from '@/director/catalog';
 import { validateDetailed, validate } from '@/director/validate';
 import { TRUE_CLASSES, type TrueClass } from '@/sim/taxonomy';
-import { useSessionStore, engineInstance } from '@/store/sessionStore';
+import {
+  useSessionStore,
+  engineInstance,
+  getActiveRecorder,
+} from '@/store/sessionStore';
+import {
+  getRecordedEventsForSession,
+  clearFallbackEventsForTest,
+  setMockPersistenceFailureForTest,
+} from '@/db/recorder';
 import type { ScenarioSpec } from '@/sim/types';
 
-describe('Scenario Catalog & Validation (TASK 12)', () => {
+describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
   beforeEach(async () => {
+    clearFallbackEventsForTest();
+    setMockPersistenceFailureForTest(false);
     // Reset engine session state before loading default scenario
     engineInstance.abort('TEST_RESET');
     await useSessionStore.getState().loadScenarioById(DEFAULT_SCENARIO_ID);
   });
 
   afterEach(() => {
+    setMockPersistenceFailureForTest(false);
     engineInstance.abort('TEST_CLEANUP');
   });
 
@@ -36,6 +48,24 @@ describe('Scenario Catalog & Validation (TASK 12)', () => {
     const defaultEntry = getScenarioCatalogEntry(DEFAULT_SCENARIO_ID);
     expect(defaultEntry).toBeDefined();
     expect(defaultEntry?.id).toBe('DEMO-1');
+  });
+
+  it('verifies that every catalog scenario has durationSec: 120 matching ScenarioSpec.durationMs', () => {
+    for (const entry of SCENARIO_CATALOG) {
+      expect(entry.durationSec).toBe(120);
+      const spec = entry.getSpec();
+      expect(spec.durationMs).toBe(120_000);
+      expect(spec.durationMs).toBe(entry.durationSec * 1000);
+    }
+  });
+
+  it('verifies that all catalog entries apply seed overrides when passed to getSpec', () => {
+    const testSeed = 7777;
+    for (const entry of SCENARIO_CATALOG) {
+      const specWithSeed = entry.getSpec(testSeed);
+      expect(specWithSeed.seed).toBe(testSeed);
+      expect(validate(specWithSeed)).toBe(true);
+    }
   });
 
   it('validates DEMO-1 against the fairness validator', () => {
@@ -89,9 +119,14 @@ describe('Scenario Catalog & Validation (TASK 12)', () => {
     expect(allClassesInSpectrum.size).toBe(6);
   });
 
-  it('validates PROCEDURAL-1 generated scenario', () => {
+  it('validates PROCEDURAL-1 generated scenario with default difficulty 0.3', () => {
     const entry = getScenarioCatalogEntry('PROCEDURAL-1');
     expect(entry).toBeDefined();
+    const defaultSpec = entry!.getSpec();
+    expect(defaultSpec.difficulty).toBe(0.3);
+    expect(defaultSpec.durationMs).toBe(120_000);
+    expect(validate(defaultSpec)).toBe(true);
+
     const spec = entry!.getSpec(1337, 0.4);
     const res = validateDetailed(spec);
     expect(res.valid).toBe(true);
@@ -103,6 +138,7 @@ describe('Scenario Catalog & Validation (TASK 12)', () => {
     expect(entry?.isAdaptive).toBe(false);
     expect(entry?.adaptiveNote).toBeDefined();
     expect(entry?.adaptiveNote).toContain('unlinked');
+    expect(entry?.adaptiveNote).toContain('0.3');
   });
 
   it('throws an error when loading an unknown scenario ID via loadCatalogScenario', () => {
@@ -137,24 +173,154 @@ describe('Scenario Catalog & Validation (TASK 12)', () => {
       expect(startEvent?.payload.seed).toBe(2026);
     });
 
-    it('restartSession reloads the active scenario and its seed, not always DEMO-1', async () => {
+    it('finalizes previous active session with SCENARIO_SWITCH and persists exactly one SESSION_END event before switching', async () => {
       const store = useSessionStore.getState();
-      // First load SWARM-1
-      await store.loadScenarioById('SWARM-1');
-      expect(useSessionStore.getState().currentScenarioId).toBe('SWARM-1');
-      expect(engineInstance.spec?.id).toBe('SWARM-1');
-      expect(engineInstance.spec?.seed).toBe(4040);
+      // Ensure DEMO-1 is running
+      await store.loadScenarioById('DEMO-1');
+      const oldSessionUid = getActiveRecorder()!.getSessionUid();
 
-      // Now call restartSession
+      // Advance engine by 10 ticks (500 ms) so session is actively running
+      for (let i = 0; i < 10; i++) {
+        engineInstance.step();
+      }
+      expect(engineInstance.tickIndex).toBe(10);
+      expect(engineInstance.sessionEnded).toBe(false);
+
+      // Now switch scenario to DEMO-2 while old session was active
+      const switched = await store.loadScenarioById('DEMO-2');
+      expect(switched).toBe(true);
+
+      // Verify old session's persisted events in recorder storage
+      const oldSessionEvents = await getRecordedEventsForSession(oldSessionUid);
+      expect(oldSessionEvents.length).toBeGreaterThan(0);
+
+      const sessionEndEvents = oldSessionEvents.filter((e) => e.type === 'SESSION_END');
+      expect(sessionEndEvents).toHaveLength(1);
+
+      const endEvent = sessionEndEvents[0];
+      expect(endEvent.payload.reason).toBe('SCENARIO_SWITCH');
+      expect(endEvent.payload.aborted).toBe(true);
+      expect(endEvent.payload.durationMs).toBe(500);
+      expect(endEvent.payload.metrics).toBeDefined();
+
+      // Verify new session is freshly initialized
+      const newSessionUid = getActiveRecorder()!.getSessionUid();
+      expect(newSessionUid).not.toBe(oldSessionUid);
+      expect(engineInstance.tickIndex).toBe(0);
+      expect(engineInstance.spec?.id).toBe('DEMO-2');
+
+      const newSessionEvents = await getRecordedEventsForSession(newSessionUid);
+      const newStartEvent = newSessionEvents.find((e) => e.type === 'SIM_START');
+      expect(newStartEvent?.payload.scenarioId).toBe('DEMO-2');
+    });
+
+    it('does not append duplicate SESSION_END if session had already ended naturally before switching', async () => {
+      const store = useSessionStore.getState();
+      await store.loadScenarioById('DEMO-1');
+      const oldSessionUid = getActiveRecorder()!.getSessionUid();
+
+      // Run 5 ticks and end naturally / abort
+      for (let i = 0; i < 5; i++) engineInstance.step();
+      store.abortSession('USER_MANUAL_ABORT');
+      expect(engineInstance.sessionEnded).toBe(true);
+
+      const eventsBeforeSwitch = await getRecordedEventsForSession(oldSessionUid);
+      const endsBefore = eventsBeforeSwitch.filter((e) => e.type === 'SESSION_END');
+      expect(endsBefore).toHaveLength(1);
+      expect(endsBefore[0].payload.reason).toBe('USER_MANUAL_ABORT');
+
+      // Now switch scenario to SWARM-1
+      await store.loadScenarioById('SWARM-1');
+
+      // The old session must STILL have exactly one SESSION_END
+      const eventsAfterSwitch = await getRecordedEventsForSession(oldSessionUid);
+      const endsAfter = eventsAfterSwitch.filter((e) => e.type === 'SESSION_END');
+      expect(endsAfter).toHaveLength(1);
+      expect(endsAfter[0].payload.reason).toBe('USER_MANUAL_ABORT');
+    });
+
+    it('handles recorder persistence errors honestly and refuses to replace session if flush fails', async () => {
+      const store = useSessionStore.getState();
+      await store.loadScenarioById('DEMO-1');
+      expect(useSessionStore.getState().currentScenarioId).toBe('DEMO-1');
+
+      // Step 5 ticks
+      for (let i = 0; i < 5; i++) engineInstance.step();
+
+      // Simulate a persistence failure during recorder flush
+      setMockPersistenceFailureForTest(true);
+
+      const success = await store.loadScenarioById('SWARM-1');
+      expect(success).toBe(false);
+
+      // Interface state must NOT claim SWARM-1 is loaded
+      expect(useSessionStore.getState().currentScenarioId).toBe('DEMO-1');
+
+      setMockPersistenceFailureForTest(false);
+    });
+
+    it('restartSession reloads active scenario with a fresh seed and preserves previous session replay data', async () => {
+      const store = useSessionStore.getState();
+      await store.loadScenarioById('SWARM-1');
+      const initialSeed = engineInstance.spec?.seed;
+      expect(initialSeed).toBe(4040);
+      const oldSessionUid = getActiveRecorder()!.getSessionUid();
+
+      // Run 10 ticks
+      for (let i = 0; i < 10; i++) engineInstance.step();
+
+      // Execute fresh restart
       await store.restartSession();
 
-      // Must reload SWARM-1, not DEMO-1
+      // Selected scenario is preserved
       expect(useSessionStore.getState().currentScenarioId).toBe('SWARM-1');
       expect(engineInstance.spec?.id).toBe('SWARM-1');
-      expect(engineInstance.spec?.seed).toBe(4040);
 
+      // Seed must be fresh (different from initial 4040)
+      const freshSeed = engineInstance.spec?.seed;
+      expect(freshSeed).toBeDefined();
+      expect(typeof freshSeed).toBe('number');
+      expect(freshSeed).not.toBe(4040);
+
+      // SIM_START records the actual new seed
       const startEvent = engineInstance.events.find((e) => e.type === 'SIM_START');
       expect(startEvent?.payload.scenarioId).toBe('SWARM-1');
+      expect(startEvent?.payload.seed).toBe(freshSeed);
+
+      // Previous session's replay data was preserved
+      const oldEvents = await getRecordedEventsForSession(oldSessionUid);
+      expect(oldEvents.some((e) => e.type === 'SESSION_END')).toBe(true);
+      expect(oldEvents.find((e) => e.type === 'SIM_START')?.payload.seed).toBe(4040);
+    });
+
+    it('rerunExactSeedSession retains the exact seed for benchmarking', async () => {
+      const store = useSessionStore.getState();
+      await store.loadScenarioById('DEMO-2', 8888);
+      expect(engineInstance.spec?.seed).toBe(8888);
+
+      for (let i = 0; i < 5; i++) engineInstance.step();
+
+      await store.rerunExactSeedSession();
+
+      expect(useSessionStore.getState().currentScenarioId).toBe('DEMO-2');
+      expect(engineInstance.spec?.seed).toBe(8888);
+
+      const startEvent = engineInstance.events.find((e) => e.type === 'SIM_START');
+      expect(startEvent?.payload.seed).toBe(8888);
+    });
+
+    it('drops user actions while session is ended', () => {
+      const store = useSessionStore.getState();
+      engineInstance.abort('TEST_ACTION_DROP');
+      expect(engineInstance.sessionEnded).toBe(true);
+
+      const initialQueueLen = engineInstance.inputQueue.getPendingCount();
+      store.designate('T-01');
+      store.classify('T-01', 'HOSTILE_ATTACK');
+      store.fire('T-01');
+      store.assess('T-01', 'KILL');
+
+      expect(engineInstance.inputQueue.getPendingCount()).toBe(initialQueueLen);
     });
 
     it('repeated scenario loading resets event sequences and preserves isolation', async () => {

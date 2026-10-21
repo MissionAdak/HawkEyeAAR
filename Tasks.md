@@ -400,3 +400,14 @@ Files: `src/director/catalog.ts`, `src/ui/ScenarioModal.tsx`, `src/ui/TrackTable
 - [x] Evaluated Session Lifecycle & Recorder Sequencing: `loadScenario` awaits `activeRecorder.stop()`, eliminating race conditions and preserving previous session AAR event data in IndexedDB.
 - [x] Scenario Selector UI & Confirmation Guard: Accessible tactical scenario selection modal with objective descriptions, class badges, active indicator, explicit restart action, and a confirmation dialog before replacing active running sessions. Locked in EVAL mode.
 - [x] Verification & Test Suite: 17 unit tests in `catalog.spec.ts` (247 unit tests total) and 5 Playwright E2E tests in `scenario.spec.ts` (11 E2E tests total) pass at 1366×768 and 1280×700 with zero overflow.
+
+### TASK-12A-01 — Scenario Selector Final Consistency & Session-Lifecycle Audit · P0 · C/D · 2.0 h
+Files: `src/store/sessionStore.ts`, `src/director/catalog.ts`, `src/db/recorder.ts`, `src/ui/ScenarioModal.tsx`, `tests/unit/catalog.spec.ts`, `tests/e2e/scenario.spec.ts`
+- [x] Active Session Finalization Before Scenario Switch: `loadScenario` checks active session state, aborts old session with `SCENARIO_SWITCH` termination reason and aggregate metrics, records exactly one `SESSION_END` event to the old recorder, pauses the clock, awaits full persistence/flush, and prevents action queue mutation during transition.
+- [x] No Duplicate `SESSION_END`: If a session has already naturally completed or was previously aborted, switching scenarios drains pending writes without appending duplicate terminal events.
+- [x] Honest Persistence Error Handling: If recorder flush fails during scenario switch, the store rejects the load, catches the error honestly, and refuses to claim the new scenario is active.
+- [x] Fresh Restart-Seed Semantics & Exact Replay Action: `restartSession()` generates a fresh 31-bit local seed without network calls via `generateLocalSeed()` and applies it across all catalog specs; `SIM_START` records the new seed; previous session replay data is preserved. `rerunExactSeedSession()` is provided as an explicit benchmark action.
+- [x] Scenario Durations & Catalog Metadata Reconciled: All catalog scenario specs verified at `120s` (`durationMs: 120_000`), strictly complying with `ScenarioSpec.durationMs: 120_000 | 30_000` schema. `durationSec: 120` displayed in `ScenarioModal` UI and verified in E2E.
+- [x] Procedural Scenario Difficulty Reconciled: Procedural generator defaults verified at `d = 0.3` (`difficulty = 0.3`) across code, UI disclaimer, and test suite.
+- [x] Verification & Test Coverage: 24 unit tests in `catalog.spec.ts` (254 unit tests total across 24 files, all passing), 11 Playwright E2E tests passing, ESLint 0 errors / 0 warnings, production build clean at 1.50 MB total bundle.
+

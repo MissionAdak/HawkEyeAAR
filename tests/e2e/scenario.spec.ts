@@ -34,8 +34,16 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(modal.getByText('FULL SPECTRUM — Mixed-Class Scenario')).toBeVisible();
     await expect(modal.getByText('PROCEDURAL TRAIN — Difficulty-Scaled Scenario')).toBeVisible();
 
-    // Verify DEMO-1 has ACTIVE SESSION badge
+    // Verify duration displays 120s for every scenario
+    await expect(modal.locator('[data-testid="scenario-duration-DEMO-1"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-DEMO-2"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-SWARM-1"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-SPECTRUM-1"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-PROCEDURAL-1"]')).toHaveText(/DURATION:\s*120s/i);
+
+    // Verify DEMO-1 has ACTIVE SESSION badge and restart action
     await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByText('ACTIVE SESSION')).toBeVisible();
+    await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByRole('button', { name: /RESTART/i })).toBeVisible();
 
     // Close modal via Escape key
     await page.keyboard.press('Escape');

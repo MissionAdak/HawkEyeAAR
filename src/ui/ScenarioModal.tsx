@@ -165,6 +165,12 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
                       ID: {entry.id}
                     </span>
                     <span
+                      data-testid={`scenario-duration-${entry.id}`}
+                      className="font-mono text-[10px] px-1.5 py-0.5 bg-carbon-800 border border-line text-text-dim"
+                    >
+                      DURATION: {entry.durationSec}s
+                    </span>
+                    <span
                       className={`text-[9px] font-mono px-1.5 py-0.5 border ${
                         entry.category === 'DEMO'
                           ? 'border-amber text-amber bg-amber/10'
@@ -196,11 +202,11 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
                         isEvalActive
                           ? 'Locked in EVAL mode'
                           : isActive
-                            ? 'Restart current scenario session'
+                            ? 'Restart current scenario session with fresh seed'
                             : `Load ${entry.name}`
                       }
                     >
-                      {isActive ? '[R] RESTART SCENARIO' : '[LOAD SCENARIO]'}
+                      {isActive ? '[R] RESTART (NEW SEED)' : '[LOAD SCENARIO]'}
                     </button>
                   </div>
                 </div>
@@ -292,7 +298,7 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
               <br />
               {isRestartConfirm ? (
                 <>
-                  Restarting <span className="text-amber font-bold">{pendingScenario.name}</span> will finalize the active run and start a fresh session with the same scenario and seed.
+                  Restarting <span className="text-amber font-bold">{pendingScenario.name}</span> will cleanly finalize the active session, persist events to AAR storage, and start a fresh session with a newly generated seed.
                 </>
               ) : (
                 <>

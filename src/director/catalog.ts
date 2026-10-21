@@ -9,6 +9,7 @@ export interface ScenarioCatalogEntry {
   category: 'DEMO' | 'TRAIN';
   description: string;
   objective: string;
+  durationSec: number;
   classes: TrueClass[];
   tags: string[];
   isAdaptive: boolean;
@@ -333,6 +334,19 @@ export const spectrumSpec: ScenarioSpec = {
 
 export const DEFAULT_SCENARIO_ID = 'DEMO-1';
 
+/**
+ * Generate a fresh seed locally within the 31-bit positive integer range,
+ * strictly without any external network requests (Rules.md R2.8 air-gap).
+ */
+export function generateLocalSeed(): number {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const array = new Uint32Array(1);
+    crypto.getRandomValues(array);
+    return (array[0] & 0x7fffffff) || 1;
+  }
+  return 1337;
+}
+
 export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
   {
     id: 'DEMO-1',
@@ -340,10 +354,17 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
     category: 'DEMO',
     description: 'Baseline urban terrain masking scenario featuring low-altitude FPV attack and airspace clutter.',
     objective: 'Test radar terrain masking line-of-sight awareness, civilian quadcopter restraint, and avian discrimination.',
+    durationSec: 120,
     classes: ['HOSTILE_ATTACK', 'CIVIL_UAS', 'BIRD'],
     tags: ['BASELINE', 'URBAN', 'TERRAIN-MASKING'],
     isAdaptive: false,
-    getSpec: () => structuredClone(demo1Json) as unknown as ScenarioSpec,
+    getSpec: (seed?: number) => {
+      const spec = structuredClone(demo1Json) as unknown as ScenarioSpec;
+      if (typeof seed === 'number' && Number.isFinite(seed)) {
+        spec.seed = seed;
+      }
+      return spec;
+    },
   },
   {
     id: 'DEMO-2',
@@ -351,10 +372,17 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
     category: 'TRAIN',
     description: 'Low-cost ISR recon drone drill with civil and bird clutter, evaluating ROE and CER proportionality.',
     objective: 'Demonstrate restraint and cost-effective engagement against low-value ISR quads using RF softkill or laser rather than expensive kinetic munitions.',
+    durationSec: 120,
     classes: ['HOSTILE_ISR', 'CIVIL_UAS', 'BIRD'],
     tags: ['PROPORTIONALITY', 'CER', 'ISR', 'NON-KINETIC'],
     isAdaptive: false,
-    getSpec: () => structuredClone(demo2Spec),
+    getSpec: (seed?: number) => {
+      const spec = structuredClone(demo2Spec);
+      if (typeof seed === 'number' && Number.isFinite(seed)) {
+        spec.seed = seed;
+      }
+      return spec;
+    },
   },
   {
     id: 'SWARM-1',
@@ -362,10 +390,17 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
     category: 'TRAIN',
     description: 'Multi-axis saturation attack featuring coordinated micro-swarm elements attacking simultaneously.',
     objective: 'Practice rapid target classification and wide-beam RF softkill counter-swarm engagement under high track density.',
+    durationSec: 120,
     classes: ['SWARM_ELEMENT', 'CIVIL_UAS', 'BIRD'],
     tags: ['SWARM', 'SATURATION', 'HIGH-DENSITY', 'MULTI-AXIS'],
     isAdaptive: false,
-    getSpec: () => structuredClone(swarmSpec),
+    getSpec: (seed?: number) => {
+      const spec = structuredClone(swarmSpec);
+      if (typeof seed === 'number' && Number.isFinite(seed)) {
+        spec.seed = seed;
+      }
+      return spec;
+    },
   },
   {
     id: 'SPECTRUM-1',
@@ -373,6 +408,7 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
     category: 'TRAIN',
     description: 'Comprehensive operational air defense exercise including all six ground-truth airspace classes.',
     objective: 'Correctly classify and engage or hold fire on all 6 target classes: FPV Attack, Recon Quad, Swarm Element, Civilian UAS, Bird, and Friendly with IFF.',
+    durationSec: 120,
     classes: [
       'HOSTILE_ATTACK',
       'HOSTILE_ISR',
@@ -383,22 +419,31 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
     ],
     tags: ['ALL-CLASSES', '6-CLASS', 'IFF', 'FULL-SPECTRUM'],
     isAdaptive: false,
-    getSpec: () => structuredClone(spectrumSpec),
+    getSpec: (seed?: number) => {
+      const spec = structuredClone(spectrumSpec);
+      if (typeof seed === 'number' && Number.isFinite(seed)) {
+        spec.seed = seed;
+      }
+      return spec;
+    },
   },
   {
     id: 'PROCEDURAL-1',
     name: 'PROCEDURAL TRAIN — Difficulty-Scaled Scenario',
     category: 'TRAIN',
-    description: 'Procedurally generated training scenario scaling threat density and approach vectors to difficulty d.',
+    description: 'Procedurally generated training scenario scaling threat density and approach vectors to difficulty d (default d = 0.3).',
     objective: 'Exercise tactical response against dynamically generated threat axes and urban masking geometry.',
+    durationSec: 120,
     classes: ['HOSTILE_ATTACK', 'SWARM_ELEMENT'],
     tags: ['PROCEDURAL', 'VARIABLE-AXIS', 'DIFFICULTY-SCALED'],
     isAdaptive: false,
     adaptiveNote:
-      'Dynamically generated threat geometry scaled to difficulty d. (Historical EMA weakness vector adaptation is unlinked in generator v1.1.0).',
-    getSpec: (seed = 42, difficulty = 0.3) => {
-      const generated = generateScenario('trainee-default', 1, difficulty, [], seed);
-      generated.id = `PROCEDURAL-${seed}`;
+      'Dynamically generated threat geometry scaled to difficulty d (default d = 0.3). (Historical EMA weakness vector adaptation is unlinked in generator v1.1.0).',
+    getSpec: (seed?: number, difficulty = 0.3) => {
+      const actualSeed = typeof seed === 'number' && Number.isFinite(seed) ? seed : 42;
+      const generated = generateScenario('trainee-default', 1, difficulty, [], actualSeed);
+      generated.id = `PROCEDURAL-${actualSeed}`;
+      generated.seed = actualSeed;
       return generated;
     },
   },
