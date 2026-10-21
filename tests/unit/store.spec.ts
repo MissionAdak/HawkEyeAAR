@@ -76,4 +76,49 @@ describe('Zustand sessionStore & InputQueue Facade', () => {
     expect(snapshot.trackRows.length).toBeLessThanOrEqual(150);
     expect(snapshot.trackRows).toHaveLength(150);
   });
+
+  it('sessionStore.fire does not permit duplicate releases for the same track in the same tick', () => {
+    const store = useSessionStore.getState();
+    const target = engineInstance.curr[0];
+    expect(target).toBeDefined();
+    const trackNo = target.trackNo ?? 'T-01';
+
+    expect(engineInstance.inputQueue.getPendingCount()).toBe(0);
+
+    // Call store.fire 10 times consecutively
+    for (let i = 0; i < 10; i++) {
+      store.fire(trackNo);
+    }
+
+    // Only 1 FIRE action should be queued; 9 duplicate releases must be rejected
+    expect(engineInstance.inputQueue.getPendingCount()).toBe(1);
+    expect(engineInstance.inputQueue.hasPendingFire(trackNo)).toBe(true);
+  });
+
+  it('sessionStore.fire rejects firing on targets with step ASSESS or CLOSED or lifecycle !== ACTIVE', () => {
+    const store = useSessionStore.getState();
+    const target = engineInstance.curr[0];
+    expect(target).toBeDefined();
+    const trackNo = target.trackNo ?? 'T-01';
+
+    // 1. ASSESS step
+    target.step = 'ASSESS';
+    engineInstance.inputQueue.clear();
+    store.fire(trackNo);
+    expect(engineInstance.inputQueue.getPendingCount()).toBe(0);
+
+    // 2. CLOSED step
+    target.step = 'CLOSED';
+    engineInstance.inputQueue.clear();
+    store.fire(trackNo);
+    expect(engineInstance.inputQueue.getPendingCount()).toBe(0);
+
+    // 3. Inactive lifecycle
+    target.step = 'TARGET';
+    target.lifecycle = 'NEUTRALISED';
+    engineInstance.inputQueue.clear();
+    store.fire(trackNo);
+    expect(engineInstance.inputQueue.getPendingCount()).toBe(0);
+  });
 });
+

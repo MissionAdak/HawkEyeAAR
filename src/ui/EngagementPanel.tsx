@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSessionStore } from '@/store/sessionStore';
 import { CONFIG } from '@/config';
 import { CLASSES, SHORT_CODES, CLASS_LABELS, type TrackClass } from '@/sim/taxonomy';
@@ -296,11 +296,29 @@ const EffectorFireButton: React.FC<EffectorFireButtonProps> = ({
         disabled={isHardBlocked}
         onClick={(e) => {
           e.stopPropagation();
-          if (selectedTrack && !isHardBlocked) fire(selectedTrack.trackNo);
         }}
-        onMouseDown={handleMissileMouseDown}
+        onMouseDown={() => {
+          if (isHardBlocked) return;
+          handleMissileMouseDown();
+        }}
         onMouseUp={handleMissileMouseUp}
         onMouseLeave={handleMissileMouseUp}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!e.repeat && !isHardBlocked) {
+              handleMissileMouseDown();
+            }
+          }
+        }}
+        onKeyUp={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            e.stopPropagation();
+            handleMissileMouseUp();
+          }
+        }}
         className={`w-full py-1.5 text-center font-display font-bold text-[11px] border border-threat text-threat relative overflow-hidden ${
           isHardBlocked ? 'opacity-30 cursor-not-allowed' : 'hover:bg-threat/20'
         }`}
@@ -327,6 +345,13 @@ const EffectorFireButton: React.FC<EffectorFireButtonProps> = ({
       onClick={(e) => {
         e.stopPropagation();
         if (selectedTrack && !isHardBlocked) fire(selectedTrack.trackNo);
+      }}
+      onKeyDown={(e) => {
+        if (e.key.toLowerCase() === 'f' || e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          if (selectedTrack && !isHardBlocked) fire(selectedTrack.trackNo);
+        }
       }}
       className={`w-full py-1 text-center font-display font-bold text-[11px] border ${borderClass} ${
         isHardBlocked ? 'opacity-30 cursor-not-allowed' : ''
@@ -517,8 +542,12 @@ export const EngagementPanel: React.FC = () => {
     }
   }, [selectedTrack?.trackNo, selectedTrack?.rangeKm, activeEffector, bestEffectorEntry, inRangeEffectors.length, rangeM, selectEffector, selectedTrack]);
 
-  const handleMissileMouseDown = () => {
+  const handleMissileMouseDown = useCallback(() => {
     if (!selectedTrack) return;
+    if (holdIntervalRef.current !== null) {
+      clearInterval(holdIntervalRef.current);
+      holdIntervalRef.current = null;
+    }
     setMissileHoldProgress(0);
     const start = performance.now();
     holdIntervalRef.current = window.setInterval(() => {
@@ -534,15 +563,62 @@ export const EngagementPanel: React.FC = () => {
         setMissileHoldProgress(0);
       }
     }, 20);
-  };
+  }, [fire, selectedTrack]);
 
-  const handleMissileMouseUp = () => {
+  const handleMissileMouseUp = useCallback(() => {
     if (holdIntervalRef.current !== null) {
       clearInterval(holdIntervalRef.current);
       holdIntervalRef.current = null;
     }
     setMissileHoldProgress(0);
-  };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (holdIntervalRef.current !== null) {
+        clearInterval(holdIntervalRef.current);
+        holdIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  // Global [F] keyboard activation path for holding heavy missile when selected
+  useEffect(() => {
+    if (activeEffector !== 'MISSILE' || !selectedTrack) return;
+
+    const missileEff = CONFIG.effectors.MISSILE;
+    const isMissileQualityBlocked = selectedTrack.q < 0.6;
+    const isMissileOutOfEnvelope =
+      rangeM < missileEff.envelopeMinM || rangeM > missileEff.envelopeMaxM;
+    const isMissileHardBlocked = isMissileQualityBlocked || isMissileOutOfEnvelope;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key.toLowerCase() === 'f') {
+        if (!e.repeat && !isMissileHardBlocked) {
+          handleMissileMouseDown();
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key.toLowerCase() === 'f') {
+        handleMissileMouseUp();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [activeEffector, selectedTrack, rangeM, handleMissileMouseDown, handleMissileMouseUp]);
 
   // Determine tactical assistant state
   const isTargetClosed = selectedTrack?.step === 'CLOSED';

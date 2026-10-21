@@ -42,6 +42,10 @@ function handleEngagementKey(key: string, isRepeat: boolean): boolean {
 
   const store = useSessionStore.getState();
   if (key === 'f') {
+    if (store.ui.activeEffector === 'MISSILE') {
+      // Heavy missile requires continuous hold release (handled by EngagementPanel)
+      return true;
+    }
     if (!isRepeat) store.fire(track.trackNo);
     return true;
   }

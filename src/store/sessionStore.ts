@@ -143,6 +143,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   fire: (trackNo: string) => {
+    const target = engineInstance.curr.find((e) => e.trackNo === trackNo);
+    if (
+      target &&
+      (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS')
+    ) {
+      return;
+    }
+    if (engineInstance.inputQueue.hasPendingFire(trackNo)) {
+      return;
+    }
     const tick = getQuantisedTick();
     if (!tick) return;
     engineInstance.inputQueue.push({

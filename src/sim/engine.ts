@@ -671,6 +671,9 @@ export class SimEngine {
   private handleFire(action: { trackNo: string }, tRawMs?: number): void {
     const target = this.curr.find((e) => e.trackNo === action.trackNo);
     if (!target) return;
+    if (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS') {
+      return;
+    }
 
     const rangeM = Math.hypot(target.pos.x, target.pos.y);
     const zones = this.spec?.zones || [];
