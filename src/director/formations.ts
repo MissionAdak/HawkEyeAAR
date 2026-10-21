@@ -258,6 +258,7 @@ export function generateFormationScenario(
 
   const d = options.difficulty ?? 0.3;
   const maxAttempts = 30;
+  let lastValidCandidate: ScenarioSpec | null = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const attemptSeed = hash32(`${seed}|formation_director|${attempt}`);
@@ -385,6 +386,7 @@ export function generateFormationScenario(
     // Strict validator check after full expansion and mutation
     const validation = validateDetailed(spec);
     if (validation.valid) {
+      lastValidCandidate = spec;
       if (options.historyFeatures && options.historyFeatures.length > 0) {
         if (!isNovel(features, options.historyFeatures)) {
           continue; // Mutate and retry if novelty threshold not met
@@ -392,6 +394,10 @@ export function generateFormationScenario(
       }
       return spec;
     }
+  }
+
+  if (lastValidCandidate) {
+    return lastValidCandidate;
   }
 
   throw new Error(`Failed to generate valid formation scenario after ${maxAttempts} attempts.`);

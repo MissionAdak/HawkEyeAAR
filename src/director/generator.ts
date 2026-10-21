@@ -36,6 +36,7 @@ export function generateScenario(
   options?: GenerateScenarioOptions
 ): ScenarioSpec {
   const maxAttempts = 20;
+  let lastValidCandidate: ScenarioSpec | null = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Golden determinism: derive seed from traineeId, sessionIdx, salt, and attempt counter
@@ -157,12 +158,20 @@ export function generateScenario(
       features,
     };
 
-    if (validate(spec) && (historyFeatures.length === 0 || isNovel(features, historyFeatures))) {
-      return spec;
+    if (validate(spec)) {
+      lastValidCandidate = spec;
+      if (historyFeatures.length === 0 || isNovel(features, historyFeatures)) {
+        return spec;
+      }
     }
   }
 
-  // Fallback to verified bundled scenario if all procedural attempts fail
+  // Fallback to last valid candidate if novelty could not be satisfied
+  if (lastValidCandidate) {
+    return lastValidCandidate;
+  }
+
+  // Fallback to verified bundled scenario if all procedural attempts fail validation
   const fallbackSeed = hash32(`${traineeId}|${sessionIdx}|fallback`);
   const fallback = structuredClone(demo1Json) as unknown as ScenarioSpec;
   fallback.id = `FALLBACK-${fallbackSeed}`;

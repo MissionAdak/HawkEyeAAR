@@ -21,6 +21,51 @@ export function getThreatPositionAt(threat: ThreatSpawn, tMs: number): Vec3 {
     return threat.waypoints[0];
   }
 
+  if (threat.profile === 'POP_UP_DIVE') {
+    const w0 = threat.waypoints[0];
+    const dtSec = (tMs - threat.spawnTMs) / 1000;
+    const r0 = Math.hypot(w0.x, w0.y);
+    const speed = threat.speedMps;
+    const distTraveled = speed * dtSec;
+    const currentR = Math.max(0, r0 - distTraveled);
+
+    const ux = r0 > 0 ? -w0.x / r0 : 0;
+    const uy = r0 > 0 ? -w0.y / r0 : 0;
+
+    const posX = w0.x + ux * distTraveled;
+    const posY = w0.y + uy * distTraveled;
+
+    const popupDistM = CONFIG.terrain?.popUp?.popupDistM ?? 900;
+    const climbRateMps = CONFIG.terrain?.popUp?.climbRateMps ?? 15;
+    const peakZ = CONFIG.terrain?.popUp?.peakZM ?? 150;
+    const terminalTargetZ = CONFIG.terrain?.popUp?.terminalTargetZM ?? 20;
+    const baseZ = w0.z ?? 20;
+
+    let posZ = baseZ;
+
+    if (currentR > popupDistM) {
+      posZ = baseZ;
+    } else {
+      const distAtPopup = Math.max(0, r0 - popupDistM);
+      const timeAtPopup = distAtPopup / speed;
+      const timeSincePopup = dtSec - timeAtPopup;
+      const climbTime = (peakZ - baseZ) / climbRateMps;
+
+      if (timeSincePopup <= climbTime) {
+        posZ = baseZ + timeSincePopup * climbRateMps;
+      } else {
+        const timeSincePeak = timeSincePopup - climbTime;
+        const distAtPeak = speed * (timeAtPopup + climbTime);
+        const remainingR = Math.max(0, r0 - distAtPeak);
+        const diveTimeTotal = remainingR / speed;
+        const frac = diveTimeTotal > 0 ? Math.min(1, timeSincePeak / diveTimeTotal) : 1;
+        posZ = peakZ + (terminalTargetZ - peakZ) * frac;
+      }
+    }
+
+    return { x: posX, y: posY, z: posZ };
+  }
+
   const dtSec = (tMs - threat.spawnTMs) / 1000;
   let distRemaining = threat.speedMps * dtSec;
 

@@ -435,6 +435,60 @@ export class SimEngine {
     qMin: number,
     currentSimMs: number
   ): void {
+    if (entity.profile === 'POP_UP_DIVE') {
+      const distToAsset = Math.hypot(entity.pos.x, entity.pos.y);
+      const popupDistM = CONFIG.terrain?.popUp?.popupDistM ?? 900;
+      const climbRateMps = CONFIG.terrain?.popUp?.climbRateMps ?? 15;
+      const peakZ = CONFIG.terrain?.popUp?.peakZM ?? 150;
+      const terminalTargetZ = CONFIG.terrain?.popUp?.terminalTargetZM ?? 20;
+
+      const speedMps = Math.hypot(entity.vel.x, entity.vel.y) || 30;
+
+      if (distToAsset > popupDistM) {
+        // Phase 1: Approach at low altitude (20m)
+        const dx = -entity.pos.x;
+        const dy = -entity.pos.y;
+        if (distToAsset > 0.1) {
+          entity.vel.x = (dx / distToAsset) * speedMps;
+          entity.vel.y = (dy / distToAsset) * speedMps;
+        }
+        if (entity.pos.z > 20) {
+          entity.vel.z = -8;
+        } else {
+          entity.vel.z = 0;
+          entity.pos.z = 20;
+        }
+      } else if (entity.pos.z < peakZ && entity.vel.z >= 0) {
+        // Phase 2: Climb to peakZ at climbRateMps
+        const dx = -entity.pos.x;
+        const dy = -entity.pos.y;
+        if (distToAsset > 0.1) {
+          entity.vel.x = (dx / distToAsset) * speedMps;
+          entity.vel.y = (dy / distToAsset) * speedMps;
+        }
+        entity.vel.z = climbRateMps;
+      } else {
+        // Phase 3: Terminal dive to asset target
+        if (entity.pos.z >= peakZ) {
+          entity.pos.z = peakZ;
+        }
+        const dX = -entity.pos.x;
+        const dY = -entity.pos.y;
+        const dZ = terminalTargetZ - entity.pos.z;
+        const dist3D = Math.hypot(dX, dY, dZ);
+
+        if (dist3D > 0.1) {
+          entity.vel.x = (dX / dist3D) * speedMps;
+          entity.vel.y = (dY / dist3D) * speedMps;
+          entity.vel.z = (dZ / dist3D) * speedMps;
+        } else {
+          entity.vel.x = 0;
+          entity.vel.y = 0;
+          entity.vel.z = 0;
+        }
+      }
+    }
+
     entity.pos.x += entity.vel.x * 0.05;
     entity.pos.y += entity.vel.y * 0.05;
     entity.pos.z += entity.vel.z * 0.05;

@@ -314,6 +314,25 @@ describe('OPTIONAL TASK 12 — Procedural Scenario Formations', () => {
       expect(sim).toBeLessThan(0.85);
       expect(isNovel(specLine.features, [specStack.features])).toBe(true);
     });
+
+    it('retains and returns the last valid candidate when novelty is exhausted instead of throwing', () => {
+      const blockingKinds = ['LINE_ABREAST', 'V_WEDGE', 'STACK', 'DECOY_LEAD'] as const;
+      const historyFeatures = blockingKinds.map((k) =>
+        generateFormationScenario({ seed: 100, formationKind: k, difficulty: 0.3 }).features
+      );
+
+      expect(() => {
+        const fallbackSpec = generateFormationScenario({
+          seed: 5555,
+          difficulty: 0.3,
+          historyFeatures,
+        });
+        expect(fallbackSpec).toBeDefined();
+        expect(fallbackSpec.formations).toBeDefined();
+        expect(fallbackSpec.formations?.length).toBeGreaterThan(0);
+        expect(validateDetailed(fallbackSpec).valid).toBe(true);
+      }).not.toThrow();
+    });
   });
 
   describe('Live Operator Airgap vs AAR Truth Gating', () => {
@@ -387,6 +406,26 @@ describe('OPTIONAL TASK 12 — Procedural Scenario Formations', () => {
       expect(spec.formations![0].kind).toBe('V_WEDGE');
       expect(spec.threats.length).toBeGreaterThanOrEqual(2);
       expect(spec.threats[0].formation?.kind).toBe('V_WEDGE');
+      expect(validate(spec)).toBe(true);
+    });
+
+    it('returns last valid candidate with formations intact when novelty is exhausted in generateScenario', () => {
+      const initial = generateScenario('TRAINEE-FORMATION', 1, 0.4, [], 0, {
+        useFormations: true,
+        formationKind: 'V_WEDGE',
+        spacingM: 100,
+      });
+
+      const spec = generateScenario('TRAINEE-FORMATION', 1, 0.4, [initial.features], 0, {
+        useFormations: true,
+        formationKind: 'V_WEDGE',
+        spacingM: 100,
+      });
+
+      expect(spec.formations).toBeDefined();
+      expect(spec.formations).toHaveLength(1);
+      expect(spec.formations![0].kind).toBe('V_WEDGE');
+      expect(spec.threats.length).toBeGreaterThanOrEqual(2);
       expect(validate(spec)).toBe(true);
     });
   });

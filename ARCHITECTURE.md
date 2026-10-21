@@ -279,7 +279,7 @@ export interface Vec3 { x: number; y: number; z: number }          // metres: x 
 export type DroneClassId =
   | 'RECON_QUAD' | 'FPV_ATTACK' | 'SWARM_ELEMENT_FW' | 'LOITERING_FW'
   | 'CIVIL_QUAD' | 'BIRD_FLOCK' | 'FRIENDLY_UAS';
-export type BehaviourProfile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'TRANSIT';
+export type BehaviourProfile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'TRANSIT' | 'POP_UP_DIVE';
 export type Phase = 'CRUISE' | 'DESCENDING' | 'HUGGING' | 'CLIMBING';
 
 /** Ground truth. Lives only inside src/sim. NEVER passed to render/, ui/, store/. */

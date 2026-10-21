@@ -4,7 +4,7 @@ export type { TrackClass, TrueClass };
 
 export type SensorMode = 'RADAR' | 'EOIR' | 'RF';
 export type ZoneType = 'URBAN' | 'RIDGE' | 'FOREST';
-export type Profile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'LOITER';
+export type Profile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'LOITER' | 'POP_UP_DIVE';
 export type EffectorId = 'RF_SOFTKILL' | 'LASER' | 'GUN' | 'INTERCEPTOR' | 'MISSILE';
 export type ChaosType = 'FOG' | 'JAMMING' | 'RAIN' | 'RADAR_DROPOUT';
 

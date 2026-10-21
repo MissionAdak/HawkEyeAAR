@@ -17,12 +17,18 @@ export interface BehaviourContext {
  */
 export class BehaviourController {
   private erraticRng: (() => number) | null = null;
+  private popupPhase: 'APPROACH' | 'CLIMB' | 'DIVE' = 'APPROACH';
+  private reachedPeak: boolean = false;
 
   constructor(context: BehaviourContext) {
     if (context.profile === 'ERRATIC') {
       const trajSeed = streamSeed(context.scenarioSeed, 'traj', context.entityIndex);
       this.erraticRng = mulberry32(trajSeed);
     }
+  }
+
+  public getPopupPhase(): 'APPROACH' | 'CLIMB' | 'DIVE' {
+    return this.popupPhase;
   }
 
   public step(pos: Vec3, vel: Vec3, context: BehaviourContext): { pos: Vec3; vel: Vec3 } {
@@ -119,6 +125,68 @@ export class BehaviourController {
           vel.x = jitterSpeed * Math.cos(jitterAngle);
           vel.y = jitterSpeed * Math.sin(jitterAngle);
           vel.z = (this.erraticRng() - 0.5) * 2;
+        }
+        break;
+      }
+
+      case 'POP_UP_DIVE': {
+        const distToAsset = Math.hypot(pos.x, pos.y);
+        const popupDistM = 900;
+        const climbRateMps = 15;
+        const peakZ = 150;
+        const terminalTargetZ = 20;
+
+        if (!this.reachedPeak) {
+          if (distToAsset > popupDistM) {
+            this.popupPhase = 'APPROACH';
+            // Approach phase: low terrain hug altitude
+            const dx = -pos.x;
+            const dy = -pos.y;
+            if (distToAsset > 0.1) {
+              vel.x = (dx / distToAsset) * speedMps;
+              vel.y = (dy / distToAsset) * speedMps;
+            }
+            if (pos.z > 20) {
+              vel.z = -8;
+            } else {
+              vel.z = 0;
+              pos.z = 20;
+            }
+          } else {
+            // Climb phase: pop up at climbRateMps = 15 m/s until peakZ = 150 m
+            this.popupPhase = 'CLIMB';
+            const dx = -pos.x;
+            const dy = -pos.y;
+            if (distToAsset > 0.1) {
+              vel.x = (dx / distToAsset) * speedMps;
+              vel.y = (dy / distToAsset) * speedMps;
+            }
+            if (pos.z < peakZ) {
+              vel.z = climbRateMps;
+            } else {
+              vel.z = 0;
+              pos.z = peakZ;
+              this.reachedPeak = true;
+              this.popupPhase = 'DIVE';
+            }
+          }
+        } else {
+          // Terminal dive phase: straight dive to asset target (0, 0, terminalTargetZ)
+          this.popupPhase = 'DIVE';
+          const dX = -pos.x;
+          const dY = -pos.y;
+          const dZ = terminalTargetZ - pos.z;
+          const dist3D = Math.hypot(dX, dY, dZ);
+
+          if (dist3D > 0.1) {
+            vel.x = (dX / dist3D) * speedMps;
+            vel.y = (dY / dist3D) * speedMps;
+            vel.z = (dZ / dist3D) * speedMps;
+          } else {
+            vel.x = 0;
+            vel.y = 0;
+            vel.z = 0;
+          }
         }
         break;
       }
