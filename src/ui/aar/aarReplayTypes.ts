@@ -1,4 +1,4 @@
-import type { TrueClass, TrackClass, EffectorId, ZoneSpec } from '@/sim/types';
+import type { TrueClass, TrackClass, EffectorId, ZoneSpec, FormationMemberSpec } from '@/sim/types';
 
 /**
  * Post-Session AAR Replay Truth Track.
@@ -21,6 +21,7 @@ export interface AarReplayTruthTrack {
   isMasked: boolean;
   coastingSinceMs?: number | null;
   ghostSigmaM?: number;
+  formation?: FormationMemberSpec;
 }
 
 export interface AarMaskingEventMarker {

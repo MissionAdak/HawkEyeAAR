@@ -76,6 +76,25 @@ export interface ZoneSpec {
   rho: number;
 }
 
+export type FormationKind = 'LINE_ABREAST' | 'V_WEDGE' | 'STACK' | 'DECOY_LEAD' | 'HELIX';
+
+export interface FormationMemberSpec {
+  groupId: string;
+  kind: FormationKind;
+  index: number;
+  count: number;
+  leaderId: string;
+  spacingM?: number;
+}
+
+export interface FormationGroupSpec {
+  groupId: string;
+  kind: FormationKind;
+  leaderId: string;
+  memberIds: string[];
+  spacingM: number;
+}
+
 export interface ThreatSpawn {
   id: string;
   droneType: DroneType;
@@ -89,6 +108,7 @@ export interface ThreatSpawn {
   emitsRf: boolean;
   remoteId: boolean;
   iff: boolean;
+  formation?: FormationMemberSpec;
 }
 
 export interface ChaosSpec {
@@ -133,6 +153,7 @@ export interface ScenarioSpec {
   roeText: string;
   levers: { id: string; reason: string }[];
   features: number[];
+  formations?: FormationGroupSpec[];
   benchId?: string;
 }
 

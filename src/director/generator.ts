@@ -1,8 +1,15 @@
-import type { ScenarioSpec, ThreatSpawn, ZoneSpec } from '@/sim/types';
+import type { ScenarioSpec, ThreatSpawn, ZoneSpec, FormationKind, FormationGroupSpec } from '@/sim/types';
 import { mulberry32, hash32, streamSeed } from '@/sim/rng';
 import { validate } from './validate';
 import { isNovel } from './novelty';
+import { expandFormation } from './formations';
 import demo1Json from './bundled/demo1.json';
+
+export interface GenerateScenarioOptions {
+  useFormations?: boolean;
+  formationKind?: FormationKind;
+  spacingM?: number;
+}
 
 /**
  * Normalizes a 33-dimensional vector to unit L2 length.
@@ -25,7 +32,8 @@ export function generateScenario(
   sessionIdx: number,
   d: number,
   historyFeatures: number[][] = [],
-  salt: number = 0
+  salt: number = 0,
+  options?: GenerateScenarioOptions
 ): ScenarioSpec {
   const maxAttempts = 20;
 
@@ -62,6 +70,33 @@ export function generateScenario(
       });
     }
 
+    let finalThreats = threats;
+    let formations: FormationGroupSpec[] | undefined;
+
+    if (options?.useFormations && threats.length >= 2) {
+      const kind: FormationKind = options.formationKind ?? 'V_WEDGE';
+      const formCount = Math.min(threats.length, 4);
+      const baseThreat = threats[0];
+      const expanded = expandFormation({
+        groupId: `GRP-${seed}`,
+        kind,
+        count: formCount,
+        spacingM: options.spacingM,
+        baseSpawn: baseThreat,
+      });
+
+      finalThreats = expanded;
+      formations = [
+        {
+          groupId: `GRP-${seed}`,
+          kind,
+          leaderId: baseThreat.id,
+          memberIds: expanded.map((t) => t.id),
+          spacingM: options.spacingM ?? (kind === 'STACK' ? 60 : kind === 'DECOY_LEAD' ? 150 : 100),
+        },
+      ];
+    }
+
     const zones: ZoneSpec[] = [
       {
         id: 'U1',
@@ -80,9 +115,17 @@ export function generateScenario(
 
     // Build 33-dimensional feature vector per ARCHITECTURE.md 5.2
     const rawFeatures = new Array(33).fill(0.05);
-    rawFeatures[0] = count / 12; // hostile count / 12
+    rawFeatures[0] = finalThreats.length / 12; // hostile count / 12
     rawFeatures[1] = 0; // decoy ratio
     rawFeatures[2] = 1.0; // fraction TERRAIN_HUG
+    if (formations && formations.length > 0) {
+      const k = formations[0].kind;
+      rawFeatures[3] = k === 'LINE_ABREAST' ? 1 : 0;
+      rawFeatures[4] = k === 'V_WEDGE' ? 1 : 0;
+      rawFeatures[5] = k === 'STACK' ? 1 : 0;
+      rawFeatures[6] = k === 'DECOY_LEAD' ? 1 : 0;
+      rawFeatures[7] = k === 'HELIX' ? 1 : 0;
+    }
     rawFeatures[32] = d; // difficulty
 
     const features = normalizeFeatures(rawFeatures);
@@ -99,12 +142,18 @@ export function generateScenario(
       durationMs: 120000,
       asset: { x: 0, y: 0, rMinM: 500 },
       zones,
-      threats,
+      threats: finalThreats,
       decoys: [],
       chaos: [],
       triggers: [],
+      formations,
       roeText: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
-      levers: [{ id: 'ADAPTIVE_TRAIN', reason: 'Adapted to trainee weakness profile' }],
+      levers: [
+        {
+          id: formations ? 'PROCEDURAL_FORMATION' : 'ADAPTIVE_TRAIN',
+          reason: formations ? `Procedural formation ${formations[0].kind}` : 'Adapted to trainee weakness profile',
+        },
+      ],
       features,
     };
 

@@ -172,6 +172,10 @@ export function reconstructAarReplayState(
     const traineeLabel =
       raw.lbl && raw.lbl !== 'NONE' ? (raw.lbl as TrackClass) : null;
 
+    const matchingSpawn =
+      spec?.threats.find((th) => th.id === raw.id) ??
+      spec?.decoys?.find((d) => d.id === raw.id);
+
     tracks.push({
       id: raw.id,
       trackNo: raw.tNo,
@@ -183,6 +187,7 @@ export function reconstructAarReplayState(
       trail,
       isMasked,
       coastingSinceMs,
+      formation: matchingSpawn?.formation,
     });
   }
 
