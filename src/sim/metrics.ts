@@ -164,14 +164,14 @@ const TRACK_EVENT_HANDLERS: Record<string, TrackEventHandler> = {
     target.tVis = ev.tMs;
   },
   DETECT: (ev, target) => {
-    if (target.tVis === null) target.tVis = ev.tMs;
+    target.tVis ??= ev.tMs;
   },
   TRACK_INIT: (ev, target) => {
     target.tTrk = ev.tMs;
     if (ev.trackNo) target.trackNo = ev.trackNo;
   },
   DESIGNATE: (ev, target) => {
-    if (target.tDesig === null) target.tDesig = ev.tMs;
+    target.tDesig ??= ev.tMs;
   },
   CLASSIFY: (ev, target) => {
     const p = ev.payload as { label?: TrackClass };
