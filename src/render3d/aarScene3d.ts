@@ -20,6 +20,11 @@ interface AarTrackMeshRecord {
   trailLine: THREE.Line;
   labelSprite: THREE.Sprite;
   selectionBox: THREE.LineSegments | null;
+  labelKey: string;
+}
+
+function getTrackLabelKey(track: AarReplayTruthTrack): string {
+  return `${track.trackNo ?? 'TRK'}|${track.trueClass}|${track.traineeLabel ?? ''}|${track.q}|${track.isMasked}`;
 }
 
 export class AarScene3D {
@@ -289,6 +294,7 @@ export class AarScene3D {
     const trailMat = this.getTrailMaterial(track.trueClass);
     const trailLine = new THREE.Line(trailGeo, trailMat);
 
+    const labelKey = getTrackLabelKey(track);
     // Operator estimate & truth label sprite
     const spriteMat = new THREE.SpriteMaterial({
       map: this.createLabelTexture(
@@ -318,6 +324,7 @@ export class AarScene3D {
       trailLine,
       labelSprite,
       selectionBox: null,
+      labelKey,
     };
     this.trackMeshMap.set(track.id, record);
     return record;
@@ -353,6 +360,21 @@ export class AarScene3D {
       record.trailLine.visible = false;
     }
 
+    // Refresh label texture if state changed
+    const labelKey = getTrackLabelKey(track);
+    if (record.labelKey !== labelKey) {
+      record.labelSprite.material.map?.dispose();
+      record.labelSprite.material.map = this.createLabelTexture(
+        track.trackNo ?? 'TRK',
+        track.trueClass,
+        track.traineeLabel,
+        track.q,
+        track.isMasked
+      );
+      record.labelSprite.material.needsUpdate = true;
+      record.labelKey = labelKey;
+    }
+
     // Selection bracket
     if (isSelected && !record.selectionBox) {
       record.selectionBox = new THREE.LineSegments(this.geometries.selection, this.materials.selectionBox);
@@ -368,6 +390,7 @@ export class AarScene3D {
       if (!presentTrackIds.has(id)) {
         record.altitudeStem.geometry.dispose();
         record.trailLine.geometry.dispose();
+        record.labelSprite.material.map?.dispose();
         record.labelSprite.material.dispose();
         this.tracksGroup.remove(record.group);
         this.trackMeshMap.delete(id);
@@ -384,7 +407,7 @@ export class AarScene3D {
     // 1. Render Truth Tracks & Historic Trails
     for (const track of state.tracks) {
       presentTrackIds.add(track.id);
-      const isSelected = track.trackNo === selectedTrackNo;
+      const isSelected = Boolean(selectedTrackNo && track.trackNo === selectedTrackNo);
       const tPos = toThree(track.truthPos.x, track.truthPos.y, track.truthPos.z);
 
       const record = this.trackMeshMap.get(track.id) ?? this.createTrackRecord(track);
@@ -422,6 +445,7 @@ export class AarScene3D {
     for (const [, record] of this.trackMeshMap) {
       record.altitudeStem.geometry.dispose();
       record.trailLine.geometry.dispose();
+      record.labelSprite.material.map?.dispose();
       record.labelSprite.material.dispose();
       this.tracksGroup.remove(record.group);
     }

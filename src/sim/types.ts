@@ -112,12 +112,14 @@ export interface TriggerSpec {
   maxFires: 1;
 }
 
+export type SessionMode = 'TRAIN' | 'EVAL' | 'DEMO';
+
 export interface ScenarioSpec {
   id: string;
   schemaVersion: 1;
   simVersion: string;
   configHash: string;
-  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  mode: SessionMode;
   seed: number;
   difficulty: number;
   dayNight: 'DAY' | 'NIGHT';
@@ -172,7 +174,7 @@ export type Grade = 'PROFICIENT_IN_SIMULATION' | 'DEVELOPING' | 'NEEDS_RETRAININ
 
 export interface AARMetrics {
   sessionUid: string;
-  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  mode: SessionMode;
   score: number;
   grade: Grade;
   metMs: number | null;

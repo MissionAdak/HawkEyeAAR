@@ -4,6 +4,7 @@ import type {
   ScenarioSpec,
   AARMetrics,
   Grade,
+  SessionMode,
   TrackClass,
   TrueClass,
   EffectorId,
@@ -49,7 +50,7 @@ interface TrackAggregate {
  * Pure function to aggregate complete AARMetrics from the recorded SimEvent stream (Rules.md DT-8, TASK-P3-03).
  */
 interface SessionMetadata {
-  sessionMode: 'TRAIN' | 'EVAL' | 'DEMO';
+  sessionMode: SessionMode;
   scenarioId: string;
   aidTicks: number;
   trainingAidDurationSec: number;
@@ -61,7 +62,7 @@ function extractSessionMetadata(
   scenarioSpec?: ScenarioSpec,
   trainingAidTicks?: number
 ): SessionMetadata {
-  let sessionMode: 'TRAIN' | 'EVAL' | 'DEMO' = scenarioSpec?.mode ?? 'TRAIN';
+  let sessionMode: SessionMode = scenarioSpec?.mode ?? 'TRAIN';
   let scenarioId = scenarioSpec?.id ?? 'sim';
   const startEv = events.find((e) => e.type === 'SIM_START');
   const endEv = events.find((e) => e.type === 'SESSION_END');
@@ -71,7 +72,7 @@ function extractSessionMetadata(
   const trainingAidUsed = aidTicks > 0;
   if (startEv?.payload) {
     if (typeof startEv.payload.mode === 'string') {
-      sessionMode = startEv.payload.mode as 'TRAIN' | 'EVAL' | 'DEMO';
+      sessionMode = startEv.payload.mode as SessionMode;
     }
     if (typeof startEv.payload.scenarioId === 'string') {
       scenarioId = startEv.payload.scenarioId;
@@ -152,53 +153,52 @@ function handleEngagePayload(
   }
 }
 
+type TrackEventHandler = (ev: SimEvent, target: TrackAggregate, state: EventProcessingState) => void;
+
+const TRACK_EVENT_HANDLERS: Record<string, TrackEventHandler> = {
+  SPAWN: (ev, target) => {
+    const p = ev.payload as { trueClass?: TrueClass; droneType?: string; valueInr?: number | null };
+    if (p.trueClass) target.trueClass = p.trueClass;
+    if (p.droneType) target.droneType = p.droneType;
+    if (p.valueInr !== undefined) target.valueInr = p.valueInr;
+    target.tVis = ev.tMs;
+  },
+  DETECT: (ev, target) => {
+    if (target.tVis === null) target.tVis = ev.tMs;
+  },
+  TRACK_INIT: (ev, target) => {
+    target.tTrk = ev.tMs;
+    if (ev.trackNo) target.trackNo = ev.trackNo;
+  },
+  DESIGNATE: (ev, target) => {
+    if (target.tDesig === null) target.tDesig = ev.tMs;
+  },
+  CLASSIFY: (ev, target) => {
+    const p = ev.payload as { label?: TrackClass };
+    if (p.label) target.traineeLabel = p.label;
+    target.tCls ??= ev.tMs;
+  },
+  ENGAGE: (ev, target, state) => {
+    handleEngagePayload(target, ev.payload ?? {}, ev.tMs, state);
+  },
+  ENGAGE_RESULT: (ev, target) => {
+    if ((ev.payload as { killed?: boolean })?.killed) target.neutralised = true;
+  },
+  LEAK: (ev, target) => {
+    target.leaked = true;
+    target.tPnr ??= ev.tMs;
+  },
+};
+
 function processEvent(ev: SimEvent, target: TrackAggregate | null, state: EventProcessingState): void {
-  switch (ev.type) {
-    case 'SPAWN':
-      if (target) {
-        const p = ev.payload as { trueClass?: TrueClass; droneType?: string; valueInr?: number | null };
-        if (p.trueClass) target.trueClass = p.trueClass;
-        if (p.droneType) target.droneType = p.droneType;
-        if (p.valueInr !== undefined) target.valueInr = p.valueInr;
-        target.tVis = ev.tMs;
-      }
-      break;
-    case 'DETECT':
-      if (target?.tVis === null) target.tVis = ev.tMs;
-      break;
-    case 'TRACK_INIT':
-      if (target) {
-        target.tTrk = ev.tMs;
-        if (ev.trackNo) target.trackNo = ev.trackNo;
-      }
-      break;
-    case 'DESIGNATE':
-      if (target?.tDesig === null) target.tDesig = ev.tMs;
-      break;
-    case 'CLASSIFY':
-      if (target) {
-        const p = ev.payload as { label?: TrackClass };
-        if (p.label) target.traineeLabel = p.label;
-        target.tCls ??= ev.tMs;
-      }
-      break;
-    case 'ENGAGE':
-      if (target) handleEngagePayload(target, ev.payload ?? {}, ev.tMs, state);
-      break;
-    case 'ENGAGE_RESULT':
-      if (target && (ev.payload as { killed?: boolean })?.killed) target.neutralised = true;
-      break;
-    case 'LEAK':
-      if (target) {
-        target.leaked = true;
-        target.tPnr ??= ev.tMs;
-      }
-      break;
-    case 'ROE_VIOLATION':
-      state.roeViolationCount += 1;
-      break;
-    default:
-      break;
+  if (ev.type === 'ROE_VIOLATION') {
+    state.roeViolationCount += 1;
+    return;
+  }
+  if (!target) return;
+  const handler = TRACK_EVENT_HANDLERS[ev.type];
+  if (handler) {
+    handler(ev, target, state);
   }
 }
 
@@ -274,55 +274,72 @@ interface ConfusionMetrics {
   hostilePrecision: number;
 }
 
+interface ConfusionAccumulator {
+  correctClsCount: number;
+  coveredCount: number;
+  hostilePredictedCount: number;
+  hostileTrueAndPredictedCount: number;
+}
+
+function getPredictedColumn(label: TrackClass | null): number {
+  if (!label) return 7;
+  const idx = (CLASSES as readonly string[]).indexOf(label);
+  return idx >= 0 ? idx : 7;
+}
+
+function recordTrackConfusion(
+  t: TrackAggregate,
+  confusion: number[][],
+  acc: ConfusionAccumulator
+): void {
+  const trueRow = TRUE_CLASSES.indexOf(t.trueClass);
+  const predCol = getPredictedColumn(t.traineeLabel);
+  if (trueRow >= 0 && predCol >= 0) {
+    confusion[trueRow][predCol] += 1;
+  }
+
+  if (t.traineeLabel === t.trueClass) {
+    acc.correctClsCount += 1;
+  }
+  if (t.traineeLabel && t.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT') {
+    acc.coveredCount += 1;
+  }
+
+  const isPredHostile = t.traineeLabel ? isHostile(t.traineeLabel) : false;
+  if (isPredHostile) {
+    acc.hostilePredictedCount += 1;
+    if (isHostile(t.trueClass)) {
+      acc.hostileTrueAndPredictedCount += 1;
+    }
+  }
+}
+
 function computeClassificationConfusion(
   allTracks: TrackAggregate[],
   hostileTracks: TrackAggregate[]
 ): ConfusionMetrics {
   const confusion: number[][] = Array.from({ length: 6 }, () => new Array(8).fill(0));
-  let correctClsCount = 0;
-  let coveredCount = 0;
-  let hostilePredictedCount = 0;
-  let hostileTrueAndPredictedCount = 0;
+  const acc: ConfusionAccumulator = {
+    correctClsCount: 0,
+    coveredCount: 0,
+    hostilePredictedCount: 0,
+    hostileTrueAndPredictedCount: 0,
+  };
 
   for (const t of allTracks) {
-    const trueRow = TRUE_CLASSES.indexOf(t.trueClass);
-    let predCol = 7;
-    if (t.traineeLabel) {
-      const idx = (CLASSES as readonly string[]).indexOf(t.traineeLabel);
-      predCol = idx >= 0 ? idx : 7;
-    }
-
-    if (trueRow >= 0 && predCol >= 0) {
-      confusion[trueRow][predCol] += 1;
-    }
-
-    if (t.traineeLabel === t.trueClass) {
-      correctClsCount += 1;
-    }
-    if (t.traineeLabel && t.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT') {
-      coveredCount += 1;
-    }
-
-    const isTrueHostile = isHostile(t.trueClass);
-    const isPredHostile = t.traineeLabel ? isHostile(t.traineeLabel) : false;
-    if (isPredHostile) {
-      hostilePredictedCount += 1;
-      if (isTrueHostile) {
-        hostileTrueAndPredictedCount += 1;
-      }
-    }
+    recordTrackConfusion(t, confusion, acc);
   }
 
   const totalTracksCount = Math.max(1, allTracks.length);
-  const clsAccuracy = Number((correctClsCount / totalTracksCount).toFixed(3));
-  const clsCoverage = Number((coveredCount / totalTracksCount).toFixed(3));
+  const clsAccuracy = Number((acc.correctClsCount / totalTracksCount).toFixed(3));
+  const clsCoverage = Number((acc.coveredCount / totalTracksCount).toFixed(3));
   const hostileRecall =
     hostileTracks.length > 0
-      ? Number((hostileTrueAndPredictedCount / hostileTracks.length).toFixed(3))
+      ? Number((acc.hostileTrueAndPredictedCount / hostileTracks.length).toFixed(3))
       : 1.0;
   const hostilePrecision =
-    hostilePredictedCount > 0
-      ? Number((hostileTrueAndPredictedCount / hostilePredictedCount).toFixed(3))
+    acc.hostilePredictedCount > 0
+      ? Number((acc.hostileTrueAndPredictedCount / acc.hostilePredictedCount).toFixed(3))
       : 1.0;
 
   return { confusion, clsAccuracy, clsCoverage, hostileRecall, hostilePrecision };

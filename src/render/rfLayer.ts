@@ -276,24 +276,33 @@ export class RfLayer {
     }
   }
 
-  private fillSignalRow(wfU32: Uint32Array, seedTimeMs: number, currEntities: TrackEntity[]): void {
+  private fillBackgroundSpeckle(wfU32: Uint32Array, seedTimeMs: number): void {
     for (let b = 0; b < 200; b++) {
       const speckle = hash32(seedTimeMs, b) % 25;
       const green = 0x15 + (speckle >> 1);
       const red = 0x0b + (speckle >> 2);
       wfU32[b] = 0xff000000 | (0x10 << 16) | (green << 8) | red;
     }
+  }
+
+  private paintEmitterBin(wfU32: Uint32Array, bin: number, tag: string): void {
+    const isRid = tag === 'RID';
+    const color = isRid ? 0xffffcc00 : 0xff66ff00;
+    const sideColor = isRid ? 0xccbb9900 : 0xcc44aa00;
+
+    wfU32[bin] = color;
+    if (bin > 0) wfU32[bin - 1] = sideColor;
+    if (bin < 199) wfU32[bin + 1] = sideColor;
+  }
+
+  private fillSignalRow(wfU32: Uint32Array, seedTimeMs: number, currEntities: TrackEntity[]): void {
+    this.fillBackgroundSpeckle(wfU32, seedTimeMs);
 
     for (const e of currEntities) {
-      if (e.lifecycle !== 'ACTIVE' && e.lifecycle !== 'LEAKED') continue;
-      if (!e.emitsRf) continue;
-
-      const { bin, tag } = this.getEmitterChannel(e);
-      const color = tag === 'RID' ? 0xffffcc00 : 0xff66ff00;
-
-      wfU32[bin] = color;
-      if (bin > 0) wfU32[bin - 1] = tag === 'RID' ? 0xccbb9900 : 0xcc44aa00;
-      if (bin < 199) wfU32[bin + 1] = tag === 'RID' ? 0xccbb9900 : 0xcc44aa00;
+      if ((e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED') && e.emitsRf) {
+        const { bin, tag } = this.getEmitterChannel(e);
+        this.paintEmitterBin(wfU32, bin, tag);
+      }
     }
   }
 
