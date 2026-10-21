@@ -6,6 +6,164 @@ interface AarEngagementInspectorProps {
   onClose: () => void;
 }
 
+function getChaosDescription(h?: number): string {
+  if (h === 0.5) return 'FOG ACTIVE';
+  if (h === 0.0) return 'JAMMING';
+  return 'CLEAR';
+}
+
+function getTrueClassColor(trueClass?: string): string {
+  if (trueClass === 'CIVIL_UAS') return 'text-threat';
+  if (trueClass === 'FRIENDLY') return 'text-friend';
+  return 'text-text-main';
+}
+
+const ProbabilityBreakdown: React.FC<{ data: AarEngagementInspectionData }> = ({ data }) => {
+  return (
+    <div className="border border-line bg-carbon-950 p-3 space-y-2.5">
+      <div className="text-[10px] font-display text-text-dim tracking-wider">
+        RECORDED PROBABILITY INPUTS & SEEDED DRAW
+      </div>
+
+      <div className="grid grid-cols-5 gap-2 text-center">
+        <div className="p-2 border border-line bg-carbon-900">
+          <div className="text-[9px] text-text-dim">EFFECTIVE Pk</div>
+          <div className="text-base font-bold text-phosphor mt-0.5">
+            {(data.pk * 100).toFixed(1)}%
+          </div>
+          <div className="text-[9px] text-text-dim mt-0.5">pk = {data.pk.toFixed(4)}</div>
+        </div>
+
+        <div className="p-2 border border-line bg-carbon-900">
+          <div className="text-[9px] text-text-dim">SEEDED DRAW (u)</div>
+          <div className="text-base font-bold text-text-main mt-0.5">
+            {data.u.toFixed(4)}
+          </div>
+          <div className="text-[9px] text-text-dim mt-0.5">kill PRNG stream</div>
+        </div>
+
+        <div className="p-2 border border-line bg-carbon-900">
+          <div className="text-[9px] text-text-dim">BASE Pk0</div>
+          <div className="text-base font-bold text-text-main mt-0.5">
+            {data.pk0 !== undefined ? `${(data.pk0 * 100).toFixed(0)}%` : 'N/A'}
+          </div>
+          <div className="text-[9px] text-text-dim mt-0.5">
+            {data.pk0 !== undefined ? `pk0 = ${data.pk0.toFixed(2)}` : 'legacy record'}
+          </div>
+        </div>
+
+        <div className="p-2 border border-line bg-carbon-900">
+          <div className="text-[9px] text-text-dim">RANGE ATTEN g(R)</div>
+          <div className="text-base font-bold text-text-main mt-0.5">
+            {data.g !== undefined ? data.g.toFixed(2) : 'N/A'}
+          </div>
+          <div className="text-[9px] text-text-dim mt-0.5">
+            {data.rangeM > 0 ? `${Math.round(data.rangeM)}m range` : 'open'}
+          </div>
+        </div>
+
+        <div className="p-2 border border-line bg-carbon-900">
+          <div className="text-[9px] text-text-dim">CHAOS MULT h(env)</div>
+          <div className="text-base font-bold text-text-main mt-0.5">
+            {data.h !== undefined ? data.h.toFixed(2) : 'N/A'}
+          </div>
+          <div className="text-[9px] text-text-dim mt-0.5">
+            {getChaosDescription(data.h)}
+          </div>
+        </div>
+      </div>
+
+      {data.pk0 !== undefined && data.g !== undefined && data.h !== undefined && (
+        <div className="text-[10px] text-text-dim font-mono bg-carbon-900 p-2 border border-line/60 flex items-center justify-between">
+          <span>MATHEMATICAL CHECK: Pk = Pk0 · g(R) · h(chaos)</span>
+          <span className="text-text-main font-bold">
+            {data.pk0.toFixed(2)} × {data.g.toFixed(2)} × {data.h.toFixed(2)} = {(data.pk0 * data.g * data.h).toFixed(4)} (diff: {Math.abs(data.pk - data.pk0 * data.g * data.h).toExponential(2)})
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const OperationalRoeAudit: React.FC<{ data: AarEngagementInspectionData }> = ({ data }) => {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {/* Left: Engagement Identity & Economics */}
+      <div className="border border-line bg-carbon-950 p-3 space-y-2">
+        <div className="text-[10px] font-display text-text-dim tracking-wider">
+          ENGAGEMENT WEAPON & ECONOMICS
+        </div>
+
+        <div className="space-y-1.5 text-[11px]">
+          <div className="flex justify-between">
+            <span className="text-text-dim">WEAPON RELEASED:</span>
+            <span className="text-friend font-bold">{data.effectorName}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-dim">ENGAGEMENT RANGE:</span>
+            <span className="text-text-main">{Math.round(data.rangeM)}m ({(data.rangeM / 1000).toFixed(2)} km)</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-dim">EFFECTOR COST:</span>
+            <span className="text-text-main">₹{data.costInr.toLocaleString('en-IN')}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-dim">TARGET COMMERCIAL VALUE:</span>
+            <span className="text-text-main">
+              {data.targetValueInr ? `₹${data.targetValueInr.toLocaleString('en-IN')}` : 'NOT DECLARED'}
+            </span>
+          </div>
+          <div className="flex justify-between border-t border-line/50 pt-1">
+            <span className="text-text-dim">COST-EXCHANGE RATIO (CER):</span>
+            <span className={`font-bold ${data.isUnfavourableCer ? 'text-threat' : 'text-phosphor'}`}>
+              {data.cer !== undefined ? `CER ${data.cer.toFixed(2)}` : 'N/A'}
+              {data.isUnfavourableCer && ' [UNFAVOURABLE]'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Right: ROE & Overflight Audit */}
+      <div className="border border-line bg-carbon-950 p-3 space-y-2">
+        <div className="text-[10px] font-display text-text-dim tracking-wider">
+          RULES OF ENGAGEMENT (ROE) AUDIT
+        </div>
+
+        <div className="space-y-1.5 text-[11px]">
+          <div className="flex justify-between">
+            <span className="text-text-dim">TARGET IDENTIFIER:</span>
+            <span className="text-friend font-bold">{data.trackNo}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-dim">TRUE CLASSIFICATION:</span>
+            <span className={`font-bold ${getTrueClassColor(data.trueClass)}`}>
+              {data.trueClass ?? 'UNKNOWN'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-dim">CLASSIFICATION STATUS:</span>
+            <span className={data.roeGate?.classifiedOk ? 'text-phosphor' : 'text-threat font-bold'}>
+              {data.roeGate?.classifiedOk ? 'CLASSIFIED PRIOR TO RELEASE' : 'UNCLASSIFIED (-20 PTS)'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-dim">URBAN OVERFLIGHT ZONE:</span>
+            <span className="text-text-main">
+              {data.zoneId ? `${data.zoneId} (ρ = ${data.rhoZone ?? 0})` : 'OPEN SECTOR'}
+            </span>
+          </div>
+          <div className="flex justify-between border-t border-line/50 pt-1">
+            <span className="text-text-dim">COLLATERAL HAZARD:</span>
+            <span className={`font-bold ${data.isKineticOverDenseZone ? 'text-threat' : 'text-phosphor'}`}>
+              {data.isKineticOverDenseZone ? '⚠ KINETIC OVER URBAN ZONE' : 'SAFE GATED'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const AarEngagementInspector: React.FC<AarEngagementInspectorProps> = ({ data, onClose }) => {
   const formatTime = (ms: number) => {
     const totalSec = Math.floor(ms / 1000);
@@ -65,144 +223,10 @@ export const AarEngagementInspector: React.FC<AarEngagementInspectorProps> = ({ 
           </div>
 
           {/* 2. Recorded Probability Breakdown */}
-          <div className="border border-line bg-carbon-950 p-3 space-y-2.5">
-            <div className="text-[10px] font-display text-text-dim tracking-wider">
-              RECORDED PROBABILITY INPUTS & SEEDED DRAW
-            </div>
-
-            <div className="grid grid-cols-5 gap-2 text-center">
-              <div className="p-2 border border-line bg-carbon-900">
-                <div className="text-[9px] text-text-dim">EFFECTIVE Pk</div>
-                <div className="text-base font-bold text-phosphor mt-0.5">
-                  {(data.pk * 100).toFixed(1)}%
-                </div>
-                <div className="text-[9px] text-text-dim mt-0.5">pk = {data.pk.toFixed(4)}</div>
-              </div>
-
-              <div className="p-2 border border-line bg-carbon-900">
-                <div className="text-[9px] text-text-dim">SEEDED DRAW (u)</div>
-                <div className="text-base font-bold text-text-main mt-0.5">
-                  {data.u.toFixed(4)}
-                </div>
-                <div className="text-[9px] text-text-dim mt-0.5">kill PRNG stream</div>
-              </div>
-
-              <div className="p-2 border border-line bg-carbon-900">
-                <div className="text-[9px] text-text-dim">BASE Pk0</div>
-                <div className="text-base font-bold text-text-main mt-0.5">
-                  {data.pk0 !== undefined ? `${(data.pk0 * 100).toFixed(0)}%` : 'N/A'}
-                </div>
-                <div className="text-[9px] text-text-dim mt-0.5">
-                  {data.pk0 !== undefined ? `pk0 = ${data.pk0.toFixed(2)}` : 'legacy record'}
-                </div>
-              </div>
-
-              <div className="p-2 border border-line bg-carbon-900">
-                <div className="text-[9px] text-text-dim">RANGE ATTEN g(R)</div>
-                <div className="text-base font-bold text-text-main mt-0.5">
-                  {data.g !== undefined ? data.g.toFixed(2) : 'N/A'}
-                </div>
-                <div className="text-[9px] text-text-dim mt-0.5">
-                  {data.rangeM > 0 ? `${Math.round(data.rangeM)}m range` : 'open'}
-                </div>
-              </div>
-
-              <div className="p-2 border border-line bg-carbon-900">
-                <div className="text-[9px] text-text-dim">CHAOS MULT h(env)</div>
-                <div className="text-base font-bold text-text-main mt-0.5">
-                  {data.h !== undefined ? data.h.toFixed(2) : 'N/A'}
-                </div>
-                <div className="text-[9px] text-text-dim mt-0.5">
-                  {data.h === 0.5 ? 'FOG ACTIVE' : data.h === 0.0 ? 'JAMMING' : 'CLEAR'}
-                </div>
-              </div>
-            </div>
-
-            {data.pk0 !== undefined && data.g !== undefined && data.h !== undefined && (
-              <div className="text-[10px] text-text-dim font-mono bg-carbon-900 p-2 border border-line/60 flex items-center justify-between">
-                <span>MATHEMATICAL CHECK: Pk = Pk0 · g(R) · h(chaos)</span>
-                <span className="text-text-main font-bold">
-                  {data.pk0.toFixed(2)} × {data.g.toFixed(2)} × {data.h.toFixed(2)} = {(data.pk0 * data.g * data.h).toFixed(4)} (diff: {Math.abs(data.pk - data.pk0 * data.g * data.h).toExponential(2)})
-                </span>
-              </div>
-            )}
-          </div>
+          <ProbabilityBreakdown data={data} />
 
           {/* 3. Operational & ROE Audit */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Left: Engagement Identity & Economics */}
-            <div className="border border-line bg-carbon-950 p-3 space-y-2">
-              <div className="text-[10px] font-display text-text-dim tracking-wider">
-                ENGAGEMENT WEAPON & ECONOMICS
-              </div>
-
-              <div className="space-y-1.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-text-dim">WEAPON RELEASED:</span>
-                  <span className="text-friend font-bold">{data.effectorName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-dim">ENGAGEMENT RANGE:</span>
-                  <span className="text-text-main">{Math.round(data.rangeM)}m ({(data.rangeM / 1000).toFixed(2)} km)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-dim">EFFECTOR COST:</span>
-                  <span className="text-text-main">₹{data.costInr.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-dim">TARGET COMMERCIAL VALUE:</span>
-                  <span className="text-text-main">
-                    {data.targetValueInr ? `₹${data.targetValueInr.toLocaleString('en-IN')}` : 'NOT DECLARED'}
-                  </span>
-                </div>
-                <div className="flex justify-between border-t border-line/50 pt-1">
-                  <span className="text-text-dim">COST-EXCHANGE RATIO (CER):</span>
-                  <span className={`font-bold ${data.isUnfavourableCer ? 'text-threat' : 'text-phosphor'}`}>
-                    {data.cer !== undefined ? `CER ${data.cer.toFixed(2)}` : 'N/A'}
-                    {data.isUnfavourableCer && ' [UNFAVOURABLE]'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: ROE & Overflight Audit */}
-            <div className="border border-line bg-carbon-950 p-3 space-y-2">
-              <div className="text-[10px] font-display text-text-dim tracking-wider">
-                RULES OF ENGAGEMENT (ROE) AUDIT
-              </div>
-
-              <div className="space-y-1.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-text-dim">TARGET IDENTIFIER:</span>
-                  <span className="text-friend font-bold">{data.trackNo}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-dim">TRUE CLASSIFICATION:</span>
-                  <span className={`font-bold ${data.trueClass === 'CIVIL_UAS' ? 'text-threat' : data.trueClass === 'FRIENDLY' ? 'text-friend' : 'text-text-main'}`}>
-                    {data.trueClass ?? 'UNKNOWN'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-dim">CLASSIFICATION STATUS:</span>
-                  <span className={data.roeGate?.classifiedOk ? 'text-phosphor' : 'text-threat font-bold'}>
-                    {data.roeGate?.classifiedOk ? 'CLASSIFIED PRIOR TO RELEASE' : 'UNCLASSIFIED (-20 PTS)'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-dim">URBAN OVERFLIGHT ZONE:</span>
-                  <span className="text-text-main">
-                    {data.zoneId ? `${data.zoneId} (ρ = ${data.rhoZone ?? 0})` : 'OPEN SECTOR'}
-                  </span>
-                </div>
-                <div className="flex justify-between border-t border-line/50 pt-1">
-                  <span className="text-text-dim">COLLATERAL HAZARD:</span>
-                  <span className={`font-bold ${data.isKineticOverDenseZone ? 'text-threat' : 'text-phosphor'}`}>
-                    {data.isKineticOverDenseZone ? '⚠ KINETIC OVER URBAN ZONE' : 'SAFE GATED'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <OperationalRoeAudit data={data} />
 
           {/* 4. Oracle ("School Solution") Comparison */}
           {data.oracleEffector && (

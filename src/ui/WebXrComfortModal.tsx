@@ -73,28 +73,28 @@ export const WebXrComfortModal: React.FC<WebXrComfortModalProps> = ({
             </div>
             <div className="grid grid-cols-2 gap-2 text-[10px]">
               <div className="p-2 bg-carbon-950 border border-line space-y-1">
-                <span className="text-phosphor font-bold">AIM RAY & PULL TRIGGER</span>
-                <div className="text-text-dim">Designate or select track under laser pointer</div>
+                <span className="text-phosphor font-bold">PULL TRIGGER</span>
+                <div className="text-text-dim">Cycle / select track for engagement</div>
               </div>
               <div className="p-2 bg-carbon-950 border border-line space-y-1">
                 <span className="text-phosphor font-bold">GRIP / SQUEEZE</span>
                 <div className="text-text-dim">Cycle through 5 available effector systems</div>
               </div>
               <div className="p-2 bg-carbon-950 border border-line space-y-1">
-                <span className="text-phosphor font-bold">BUTTON A (PRIMARY)</span>
+                <span className="text-phosphor font-bold">RIGHT BUTTON A (PRIMARY)</span>
                 <div className="text-text-dim">FIRE currently armed effector at designated track</div>
               </div>
               <div className="p-2 bg-carbon-950 border border-line space-y-1">
-                <span className="text-phosphor font-bold">BUTTON B (SECONDARY)</span>
+                <span className="text-phosphor font-bold">RIGHT BUTTON B (SECONDARY)</span>
                 <div className="text-text-dim">ASSESS engagement outcome (KILL assessment)</div>
               </div>
               <div className="p-2 bg-carbon-950 border border-line space-y-1">
                 <span className="text-phosphor font-bold">THUMBSTICK FLICK</span>
-                <div className="text-text-dim">Cycle previous/next track; Click to recenter table</div>
+                <div className="text-text-dim">Cycle previous/next track</div>
               </div>
               <div className="p-2 bg-carbon-950 border border-line space-y-1">
-                <span className="text-threat font-bold">KEYBOARD ESC / EXIT</span>
-                <div className="text-text-dim">Instantly exits VR and restores desktop console</div>
+                <span className="text-threat font-bold">SYSTEM MENU / EXIT</span>
+                <div className="text-text-dim">Use headset system gesture or browser UI to exit VR</div>
               </div>
             </div>
           </div>

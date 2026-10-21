@@ -276,6 +276,10 @@ export class Renderer3D {
     return this.renderer;
   }
 
+  public getCamera(): THREE.PerspectiveCamera {
+    return this.camera;
+  }
+
   /**
    * Complete renderer and scene teardown.
    */

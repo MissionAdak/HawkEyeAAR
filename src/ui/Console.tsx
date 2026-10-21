@@ -83,6 +83,127 @@ function findNearestTrackNo(
   return nearestTrackNo;
 }
 
+interface ThreeDViewportControlsProps {
+  cameraPreset: CameraPreset;
+  showEnvelopes: boolean;
+  showLos: boolean;
+  showClusters: boolean;
+  showTrainingAid: boolean;
+  showCrossSection: boolean;
+  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  onCameraPreset: (p: CameraPreset) => void;
+  onToggleEnvelopes: () => void;
+  onToggleLos: () => void;
+  onToggleClusters: () => void;
+  onToggleTrainingAid: () => void;
+  onToggleCrossSection: () => void;
+}
+
+const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
+  cameraPreset,
+  showEnvelopes,
+  showLos,
+  showClusters,
+  showTrainingAid,
+  showCrossSection,
+  mode,
+  onCameraPreset,
+  onToggleEnvelopes,
+  onToggleLos,
+  onToggleClusters,
+  onToggleTrainingAid,
+  onToggleCrossSection,
+}) => {
+  return (
+    <>
+      {(['OBLIQUE', 'TOP', 'POST'] as const).map((preset) => (
+        <button
+          key={preset}
+          onClick={() => onCameraPreset(preset)}
+          className={`px-2 py-0.5 border transition-colors ${
+            cameraPreset === preset
+              ? 'border-friend text-friend bg-friend/20 font-bold'
+              : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+          }`}
+        >
+          {preset === 'POST' ? 'POST' : `[${preset[0]}] ${preset}`}
+        </button>
+      ))}
+
+      <button
+        onClick={onToggleEnvelopes}
+        title="Toggle 3D Effector Envelopes [E]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          showEnvelopes
+            ? 'border-amber text-amber bg-amber/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [E] {showEnvelopes ? 'WEAPONS ON' : 'WEAPONS OFF'}
+      </button>
+
+      <button
+        onClick={onToggleLos}
+        title="Toggle Modelled Line-of-Sight / Masking [K]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          showLos
+            ? 'border-friend text-friend bg-friend/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [K] {showLos ? 'LOS ON' : 'LOS OFF'}
+      </button>
+
+      <button
+        onClick={onToggleClusters}
+        title="Toggle Operator-Visible 3D Clusters [U]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          showClusters
+            ? 'border-phosphor text-phosphor bg-phosphor/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [U] {showClusters ? 'CLUSTERS ON' : 'CLUSTERS OFF'}
+      </button>
+
+      {mode === 'EVAL' ? (
+        <button
+          disabled
+          title="Training Aid locked and unavailable in EVALUATION mode (Rule F5)"
+          className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+        >
+          [X] AID (LOCKED IN EVAL)
+        </button>
+      ) : (
+        <>
+          <button
+            onClick={onToggleTrainingAid}
+            title="Toggle 3D Training Aid (Modelled Shadows & Ref-RCS Shells) [X]"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showTrainingAid
+                ? 'border-amber text-amber bg-amber/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [X] {showTrainingAid ? 'AID ON' : 'AID OFF'}
+          </button>
+          <button
+            onClick={onToggleCrossSection}
+            title="Open 2D Elevation Cross-Section Along Bearing"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showCrossSection
+                ? 'border-amber text-amber bg-amber/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            X-SECTION
+          </button>
+        </>
+      )}
+    </>
+  );
+};
+
 interface TacticalViewportTabsProps {
   viewMode: '2D' | '3D';
   activeSensor: SensorMode;
@@ -145,92 +266,21 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
       ))}
 
       {viewMode === '3D' && (
-        <>
-          {(['OBLIQUE', 'TOP', 'POST'] as const).map((preset) => (
-            <button
-              key={preset}
-              onClick={() => onCameraPreset(preset)}
-              className={`px-2 py-0.5 border transition-colors ${
-                cameraPreset === preset
-                  ? 'border-friend text-friend bg-friend/20 font-bold'
-                  : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-              }`}
-            >
-              {preset === 'POST' ? 'POST' : `[${preset[0]}] ${preset}`}
-            </button>
-          ))}
-
-          <button
-            onClick={onToggleEnvelopes}
-            title="Toggle 3D Effector Envelopes [E]"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
-              showEnvelopes
-                ? 'border-amber text-amber bg-amber/20'
-                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-            }`}
-          >
-            [E] {showEnvelopes ? 'WEAPONS ON' : 'WEAPONS OFF'}
-          </button>
-
-          <button
-            onClick={onToggleLos}
-            title="Toggle Modelled Line-of-Sight / Masking [K]"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
-              showLos
-                ? 'border-friend text-friend bg-friend/20'
-                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-            }`}
-          >
-            [K] {showLos ? 'LOS ON' : 'LOS OFF'}
-          </button>
-
-          <button
-            onClick={onToggleClusters}
-            title="Toggle Operator-Visible 3D Clusters [U]"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
-              showClusters
-                ? 'border-phosphor text-phosphor bg-phosphor/20'
-                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-            }`}
-          >
-            [U] {showClusters ? 'CLUSTERS ON' : 'CLUSTERS OFF'}
-          </button>
-
-          {mode === 'EVAL' ? (
-            <button
-              disabled
-              title="Training Aid locked and unavailable in EVALUATION mode (Rule F5)"
-              className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
-            >
-              [X] AID (LOCKED IN EVAL)
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={onToggleTrainingAid}
-                title="Toggle 3D Training Aid (Modelled Shadows & Ref-RCS Shells) [X]"
-                className={`px-2 py-0.5 border font-bold transition-colors ${
-                  showTrainingAid
-                    ? 'border-amber text-amber bg-amber/20'
-                    : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                }`}
-              >
-                [X] {showTrainingAid ? 'AID ON' : 'AID OFF'}
-              </button>
-              <button
-                onClick={onToggleCrossSection}
-                title="Open 2D Elevation Cross-Section Along Bearing"
-                className={`px-2 py-0.5 border font-bold transition-colors ${
-                  showCrossSection
-                    ? 'border-amber text-amber bg-amber/20'
-                    : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                }`}
-              >
-                X-SECTION
-              </button>
-            </>
-          )}
-        </>
+        <ThreeDViewportControls
+          cameraPreset={cameraPreset}
+          showEnvelopes={showEnvelopes}
+          showLos={showLos}
+          showClusters={showClusters}
+          showTrainingAid={showTrainingAid}
+          showCrossSection={showCrossSection}
+          mode={mode}
+          onCameraPreset={onCameraPreset}
+          onToggleEnvelopes={onToggleEnvelopes}
+          onToggleLos={onToggleLos}
+          onToggleClusters={onToggleClusters}
+          onToggleTrainingAid={onToggleTrainingAid}
+          onToggleCrossSection={onToggleCrossSection}
+        />
       )}
 
       <button
@@ -604,14 +654,16 @@ export const Console: React.FC = () => {
           renderer3dRef.current.getScene3D().scene,
           rendererRef.current,
           () => {
+            xrMgr.dispose();
             xrManagerRef.current = null;
-          }
+          },
+          renderer3dRef.current.getCamera()
         );
         xrManagerRef.current = xrMgr;
         const res = await xrMgr.enterVR();
         if (!res.success) {
           setWebGlError(res.error || 'Failed to enter WebXR VR session');
-          xrMgr.exitVR();
+          xrMgr.dispose();
           xrManagerRef.current = null;
         } else {
           setWebGlError(null);

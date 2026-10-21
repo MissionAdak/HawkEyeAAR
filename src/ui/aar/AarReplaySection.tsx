@@ -194,31 +194,38 @@ export const AarReplaySection: React.FC<AarReplaySectionProps> = ({
             <span>{replayState.tracks.length} TARGETS</span>
           </div>
 
-          {!replayState.hasSnapshotHistory ? (
+          {!replayState.hasSnapshotHistory && (
             <div className="flex-1 flex items-center justify-center text-center p-4 text-[10px] text-amber italic border border-amber/30 bg-amber/5">
               ⚠ Historical snapshot keyframes not present in this event stream.
               Positions are not fabricated to maintain empirical fidelity.
             </div>
-          ) : replayState.tracks.length === 0 ? (
+          )}
+
+          {replayState.hasSnapshotHistory && replayState.tracks.length === 0 && (
             <div className="flex-1 flex items-center justify-center text-center p-4 text-[11px] text-text-dim italic">
               NO DETECTED THREATS IN SENSOR RANGE AT THIS TIME.
             </div>
-          ) : (
+          )}
+
+          {replayState.hasSnapshotHistory && replayState.tracks.length > 0 && (
             <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar pr-1">
               {replayState.tracks.map((trk) => {
                 const isSelected = trk.trackNo === selectedTrackNo;
-                const isThreat =
-                  trk.trueClass === 'HOSTILE_ATTACK' ||
-                  trk.trueClass === 'HOSTILE_ISR' ||
-                  trk.trueClass === 'SWARM_ELEMENT';
-                const isCivil = trk.trueClass === 'CIVIL_UAS';
-                const isFriend = trk.trueClass === 'FRIENDLY';
+                let trackClassColor = 'text-text-dim';
+                if (trk.trueClass === 'HOSTILE_ATTACK' || trk.trueClass === 'HOSTILE_ISR' || trk.trueClass === 'SWARM_ELEMENT') {
+                  trackClassColor = 'text-threat';
+                } else if (trk.trueClass === 'CIVIL_UAS') {
+                  trackClassColor = 'text-amber';
+                } else if (trk.trueClass === 'FRIENDLY') {
+                  trackClassColor = 'text-friend';
+                }
 
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={trk.id}
                     onClick={() => setSelectedTrackNo(trk.trackNo)}
-                    className={`p-2 border cursor-pointer text-[10px] transition-colors ${
+                    className={`w-full text-left p-2 border cursor-pointer text-[10px] transition-colors ${
                       isSelected
                         ? 'border-friend bg-friend/15'
                         : 'border-line bg-carbon-950 hover:border-text-dim'
@@ -226,17 +233,7 @@ export const AarReplaySection: React.FC<AarReplaySectionProps> = ({
                   >
                     <div className="flex justify-between items-center font-bold">
                       <span className="text-text-main">{trk.trackNo ?? 'UNKNOWN'}</span>
-                      <span
-                        className={
-                          isThreat
-                            ? 'text-threat'
-                            : isCivil
-                            ? 'text-amber'
-                            : isFriend
-                            ? 'text-friend'
-                            : 'text-text-dim'
-                        }
-                      >
+                      <span className={trackClassColor}>
                         {trk.trueClass}
                       </span>
                     </div>
@@ -254,7 +251,7 @@ export const AarReplaySection: React.FC<AarReplaySectionProps> = ({
                         </span>
                       </span>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>

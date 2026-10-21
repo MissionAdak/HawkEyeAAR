@@ -110,17 +110,17 @@ export class ClusterOverlay3D {
       const j = (i + 1) % n;
       const p1Bottom = toThree(hull2D[i].x, hull2D[i].y, zMinM);
       const p2Bottom = toThree(hull2D[j].x, hull2D[j].y, zMinM);
-      edgePoints.push(new THREE.Vector3(p1Bottom.x, p1Bottom.y, p1Bottom.z));
-      edgePoints.push(new THREE.Vector3(p2Bottom.x, p2Bottom.y, p2Bottom.z));
-
       const p1Top = toThree(hull2D[i].x, hull2D[i].y, zMaxM);
       const p2Top = toThree(hull2D[j].x, hull2D[j].y, zMaxM);
-      edgePoints.push(new THREE.Vector3(p1Top.x, p1Top.y, p1Top.z));
-      edgePoints.push(new THREE.Vector3(p2Top.x, p2Top.y, p2Top.z));
 
-      // Vertical corner pillar
-      edgePoints.push(new THREE.Vector3(p1Bottom.x, p1Bottom.y, p1Bottom.z));
-      edgePoints.push(new THREE.Vector3(p1Top.x, p1Top.y, p1Top.z));
+      edgePoints.push(
+        new THREE.Vector3(p1Bottom.x, p1Bottom.y, p1Bottom.z),
+        new THREE.Vector3(p2Bottom.x, p2Bottom.y, p2Bottom.z),
+        new THREE.Vector3(p1Top.x, p1Top.y, p1Top.z),
+        new THREE.Vector3(p2Top.x, p2Top.y, p2Top.z),
+        new THREE.Vector3(p1Bottom.x, p1Bottom.y, p1Bottom.z),
+        new THREE.Vector3(p1Top.x, p1Top.y, p1Top.z)
+      );
     }
 
     const edgeGeo = new THREE.BufferGeometry().setFromPoints(edgePoints);

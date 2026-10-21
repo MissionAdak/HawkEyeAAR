@@ -35,6 +35,36 @@ function toDeg(rad: number): string {
   return `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}`;
 }
 
+function findPolygonRayIntersectionDist(
+  posX: number,
+  posY: number,
+  zone?: ZoneSpec
+): number {
+  if (!zone) return Infinity;
+  let dNearM = Infinity;
+  for (let i = 0; i < zone.polygon.length; i++) {
+    const p1 = zone.polygon[i];
+    const p2 = zone.polygon[(i + 1) % zone.polygon.length];
+    const dist = raySegmentIntersection(posX, posY, p1, p2);
+    if (dist !== null && dist < dNearM) {
+      dNearM = dist;
+    }
+  }
+  return dNearM;
+}
+
+function computeBlockingRayPoint(
+  t: number,
+  pos: { x: number; y: number; z: number },
+  antennaHeightM: number
+): LosRayPoint {
+  return {
+    x: t * pos.x,
+    y: t * pos.y,
+    z: antennaHeightM + t * (pos.z - antennaHeightM),
+  };
+}
+
 /**
  * Computes authoritative model-faithful line-of-sight analysis for a selected track.
  * Strictly adheres to the simulation's canonical evaluateMasking logic (Rule R10.3 & D-37).
@@ -95,24 +125,9 @@ export function calculateModelledLos(
 
   if (maskResult.dNearM === 0) {
     // Condition 1: Target inside zone polygon below roofline
-    let dNearM = Infinity;
-    if (blockingZone) {
-      for (let i = 0; i < blockingZone.polygon.length; i++) {
-        const p1 = blockingZone.polygon[i];
-        const p2 = blockingZone.polygon[(i + 1) % blockingZone.polygon.length];
-        const dist = raySegmentIntersection(pos.x, pos.y, p1, p2);
-        if (dist !== null && dist < dNearM) {
-          dNearM = dist;
-        }
-      }
-    }
-
+    const dNearM = findPolygonRayIntersectionDist(pos.x, pos.y, blockingZone);
     const t = (dNearM < Infinity && R > 0) ? Math.min(1, Math.max(0, dNearM / R)) : 0.5;
-    const blockingPoint: LosRayPoint = {
-      x: t * pos.x,
-      y: t * pos.y,
-      z: antennaHeightM + t * (pos.z - antennaHeightM),
-    };
+    const blockingPoint = computeBlockingRayPoint(t, pos, antennaHeightM);
 
     return {
       trackNo: target.trackNo,
@@ -134,11 +149,7 @@ export function calculateModelledLos(
 
   // Condition 2: Target in radar shadow behind zone
   const t = R > 0 ? Math.min(1, Math.max(0, maskResult.dNearM / R)) : 0.5;
-  const blockingPoint: LosRayPoint = {
-    x: t * pos.x,
-    y: t * pos.y,
-    z: antennaHeightM + t * (pos.z - antennaHeightM),
-  };
+  const blockingPoint = computeBlockingRayPoint(t, pos, antennaHeightM);
 
   return {
     trackNo: target.trackNo,
@@ -165,20 +176,20 @@ export function calculateModelledLos(
 export class LosVisualizer3D {
   public readonly group: THREE.Group;
 
-  private clearLine: THREE.Line;
-  private clearGeom: THREE.BufferGeometry;
-  private clearPositions: Float32Array;
+  private readonly clearLine: THREE.Line;
+  private readonly clearGeom: THREE.BufferGeometry;
+  private readonly clearPositions: Float32Array;
 
-  private blockedLine: THREE.Line;
-  private blockedGeom: THREE.BufferGeometry;
-  private blockedPositions: Float32Array;
+  private readonly blockedLine: THREE.Line;
+  private readonly blockedGeom: THREE.BufferGeometry;
+  private readonly blockedPositions: Float32Array;
 
-  private blockMarker: THREE.Mesh;
-  private labelSprite: THREE.Sprite;
+  private readonly blockMarker: THREE.Mesh;
+  private readonly labelSprite: THREE.Sprite;
 
-  private spriteCanvas?: HTMLCanvasElement;
-  private spriteCtx?: CanvasRenderingContext2D | null;
-  private spriteTexture?: THREE.CanvasTexture;
+  private readonly spriteCanvas?: HTMLCanvasElement;
+  private readonly spriteCtx?: CanvasRenderingContext2D | null;
+  private readonly spriteTexture?: THREE.CanvasTexture;
   private lastLabelText: string = '';
 
   constructor() {
@@ -284,7 +295,7 @@ export class LosVisualizer3D {
     antennaHeightM: number = CONFIG.thresholds.antennaHeightM || 15,
     showLos: boolean = true
   ): void {
-    if (!showLos || !target || !target.pos) {
+    if (!showLos || !target?.pos) {
       this.group.visible = false;
       return;
     }

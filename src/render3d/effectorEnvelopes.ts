@@ -9,6 +9,8 @@ import {
 import type { EffectorId, ChaosSpec } from '@/sim/types';
 import { isChaosActive } from './coverage';
 
+export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
+
 export interface EffectorEnvelopeState {
   id: EffectorId;
   name: string;
@@ -44,9 +46,9 @@ export interface EffectorVisualOptions {
     q: number;
   } | null;
   sensorHealth?: {
-    RADAR: 'OK' | 'DEG' | 'OUT';
-    EOIR: 'OK' | 'DEG' | 'OUT';
-    RF: 'OK' | 'DEG' | 'OUT';
+    RADAR: SensorHealthStatus;
+    EOIR: SensorHealthStatus;
+    RF: SensorHealthStatus;
   };
   chaosList?: ChaosSpec[];
   tMs?: number;
@@ -58,7 +60,7 @@ export interface EffectorVisualOptions {
  */
 export function calculateEffectorEnvelopes(
   activeEffector: EffectorId,
-  sensorHealth?: { RF?: 'OK' | 'DEG' | 'OUT'; EOIR?: 'OK' | 'DEG' | 'OUT' },
+  sensorHealth?: { RF?: SensorHealthStatus; EOIR?: SensorHealthStatus },
   chaosList?: ChaosSpec[],
   tMs?: number
 ): EffectorEnvelopeState[] {
@@ -108,13 +110,35 @@ export function calculateEffectorEnvelopes(
   });
 }
 
+function getTargetBlockReason(
+  isTrackQualityBlocked: boolean,
+  isOutOfEnvelope: boolean,
+  isRfJamBlocked: boolean,
+  rangeM: number,
+  envelopeMinM: number,
+  envelopeMaxM: number
+): string | null {
+  if (isTrackQualityBlocked) {
+    return `Q < ${CONFIG.thresholds.qMin}`;
+  }
+  if (isOutOfEnvelope) {
+    return rangeM < envelopeMinM
+      ? `BELOW MIN (${Math.round(rangeM)}m < ${envelopeMinM}m)`
+      : `BEYOND MAX (${Math.round(rangeM)}m > ${envelopeMaxM}m)`;
+  }
+  if (isRfJamBlocked) {
+    return 'RF JAMMED';
+  }
+  return null;
+}
+
 /**
  * Calculates model-faithful track engagement cue for the operator.
  */
 export function calculateTrackEngagementCue(
   effectorId: EffectorId,
   target: { trackNo: string; pos: { x: number; y: number; z: number }; q: number },
-  sensorHealth?: { RF?: 'OK' | 'DEG' | 'OUT'; EOIR?: 'OK' | 'DEG' | 'OUT' },
+  sensorHealth?: { RF?: SensorHealthStatus; EOIR?: SensorHealthStatus },
   chaosList?: ChaosSpec[],
   tMs?: number
 ): TrackEngagementCue {
@@ -135,15 +159,14 @@ export function calculateTrackEngagementCue(
   const isRfJamBlocked = effectorId === 'RF_SOFTKILL' && isJamming;
 
   const isHardBlocked = isTrackQualityBlocked || isOutOfEnvelope || isRfJamBlocked;
-  const hardBlockReason = isTrackQualityBlocked
-    ? `Q < ${CONFIG.thresholds.qMin}`
-    : isOutOfEnvelope
-    ? rangeM < envelopeMinM
-      ? `BELOW MIN (${Math.round(rangeM)}m < ${envelopeMinM}m)`
-      : `BEYOND MAX (${Math.round(rangeM)}m > ${envelopeMaxM}m)`
-    : isRfJamBlocked
-    ? 'RF JAMMED'
-    : null;
+  const hardBlockReason = getTargetBlockReason(
+    isTrackQualityBlocked,
+    isOutOfEnvelope,
+    isRfJamBlocked,
+    rangeM,
+    envelopeMinM,
+    envelopeMaxM
+  );
 
   const isInPlateau = rangeM >= plateauMinM && rangeM <= plateauMaxM;
   const attenuationG = computeRangeAttenuation(rangeM, effectorId);
@@ -239,10 +262,27 @@ function createTextSprite(initialText: string, initialColorHex: string): THREE.S
   return sprite;
 }
 
+function getTierColorHex(tier: string): string {
+  if (tier === 'T3_HEAVY') return '#FF3333';
+  if (tier === 'T2_KINETIC') return '#FF9900';
+  return '#00E5FF';
+}
+
+function getEffectorRecordHex(isFunctional: boolean, tier: string): string {
+  if (!isFunctional || tier === 'T3_HEAVY') return '#FF3333';
+  return '#FF9900';
+}
+
+function getTargetCueColor(isHardBlocked: boolean, isInPlateau: boolean): string {
+  if (isHardBlocked) return '#FF3333';
+  if (isInPlateau) return '#00FF66';
+  return '#FF9900';
+}
+
 function updateSpriteCanvas(sprite: THREE.Sprite, text: string, colorHex: string): void {
   if (typeof document === 'undefined') return;
   const texture = sprite.material.map;
-  if (!texture || !texture.image) return;
+  if (!texture?.image) return;
 
   const canvas = texture.image as HTMLCanvasElement;
   const ctx = canvas.getContext('2d');
@@ -384,19 +424,8 @@ export class EffectorEnvelopes3D {
       const plateau = getEnvelopePlateau(id);
       const effGroup = new THREE.Group();
 
-      const wireMat =
-        eff.tier === 'T3_HEAVY'
-          ? this.matT3Wire
-          : eff.tier === 'T2_KINETIC'
-          ? this.matT2Wire
-          : this.matT1Wire;
-
-      const surfaceMat =
-        eff.tier === 'T3_HEAVY'
-          ? this.matT3Surface
-          : eff.tier === 'T2_KINETIC'
-          ? this.matT2Surface
-          : this.matT1Surface;
+      const wireMat = this.getTierWireMat(eff.tier);
+      const surfaceMat = this.getTierSurfaceMat(eff.tier);
 
       // Annular optimal plateau band
       const plateauGeom = createAnnularPlateauGeometry(plateau.plateauMinM, plateau.plateauMaxM, 64);
@@ -437,12 +466,7 @@ export class EffectorEnvelopes3D {
       effGroup.add(struts);
 
       // Label sprite
-      const hex =
-        eff.tier === 'T3_HEAVY'
-          ? '#FF3333'
-          : eff.tier === 'T2_KINETIC'
-          ? '#FF9900'
-          : '#00E5FF';
+      const hex = getTierColorHex(eff.tier);
       const labelText = `[${id}] ${(eff.envelopeMinM / 1000).toFixed(1)}-${(eff.envelopeMaxM / 1000).toFixed(1)}km | ${eff.tier}`;
       const sprite = createTextSprite(labelText, hex);
       sprite.position.set(0, strutHeight + 25, -plateau.rOptM);
@@ -535,7 +559,7 @@ export class EffectorEnvelopes3D {
         const labelText = `[${env.id}] ${(env.envelopeMinM / 1000).toFixed(1)}-${(env.envelopeMaxM / 1000).toFixed(1)}km | ${env.tier} | ${env.statusLabel}`;
         if (labelText !== record.lastLabel) {
           record.lastLabel = labelText;
-          const hex = !env.isFunctional ? '#FF3333' : env.tier === 'T3_HEAVY' ? '#FF3333' : '#FF9900';
+          const hex = getEffectorRecordHex(env.isFunctional, env.tier);
           updateSpriteCanvas(record.labelSprite, labelText, hex);
         }
       }
@@ -561,16 +585,24 @@ export class EffectorEnvelopes3D {
 
       if (cue.label !== this.lastTargetCueLabel) {
         this.lastTargetCueLabel = cue.label;
-        const color = cue.isHardBlocked
-          ? '#FF3333'
-          : cue.isInPlateau
-          ? '#00FF66'
-          : '#FF9900';
+        const color = getTargetCueColor(cue.isHardBlocked, cue.isInPlateau);
         updateSpriteCanvas(this.targetCueSprite, cue.label, color);
       }
     } else {
       this.targetCueSprite.visible = false;
     }
+  }
+
+  private getTierWireMat(tier: string): THREE.LineBasicMaterial {
+    if (tier === 'T3_HEAVY') return this.matT3Wire;
+    if (tier === 'T2_KINETIC') return this.matT2Wire;
+    return this.matT1Wire;
+  }
+
+  private getTierSurfaceMat(tier: string): THREE.MeshBasicMaterial {
+    if (tier === 'T3_HEAVY') return this.matT3Surface;
+    if (tier === 'T2_KINETIC') return this.matT2Surface;
+    return this.matT1Surface;
   }
 
   /**

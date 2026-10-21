@@ -82,6 +82,134 @@ export function extractKeyReplayEvents(events: SimEvent[]): AarKeyEvent[] {
   return result.sort((a, b) => a.tMs - b.tMs);
 }
 
+function findPrecedingSnapshot(snapshots: SimEvent[], tMs: number): SimEvent {
+  let selected = snapshots[0];
+  for (const s of snapshots) {
+    if (s.tMs <= tMs) {
+      selected = s;
+    } else {
+      break;
+    }
+  }
+  return selected;
+}
+
+function getEntityMaskingStatus(
+  events: SimEvent[],
+  raw: RawSnapshotEntity,
+  tMs: number
+): { isMasked: boolean; coastingSinceMs: number | null } {
+  let isMasked = false;
+  let coastingSinceMs: number | null = null;
+
+  for (const ev of events) {
+    if (ev.tMs > tMs) break;
+    if (ev.trackNo === raw.tNo || ev.entityId === raw.id) {
+      if (ev.type === 'MASKED') {
+        isMasked = true;
+        coastingSinceMs = ev.tMs;
+      } else if (ev.type === 'REACQUIRE') {
+        isMasked = false;
+        coastingSinceMs = null;
+      }
+    }
+  }
+
+  return { isMasked, coastingSinceMs };
+}
+
+function collectEntityTrail(
+  snapshots: SimEvent[],
+  raw: RawSnapshotEntity,
+  tMs: number,
+  trailDurationMs: number
+): Array<{ x: number; y: number; z: number; tMs: number }> {
+  const trail: Array<{ x: number; y: number; z: number; tMs: number }> = [];
+  const minTrailTMs = Math.max(0, tMs - trailDurationMs);
+
+  for (const s of snapshots) {
+    if (s.tMs < minTrailTMs) continue;
+    if (s.tMs > tMs) break;
+    const entitiesInSnap = (s.payload as { entities: RawSnapshotEntity[] }).entities || [];
+    const match = entitiesInSnap.find((e) => e.id === raw.id || (raw.tNo && e.tNo === raw.tNo));
+    if (match) {
+      trail.push({ x: match.x, y: match.y, z: match.z, tMs: s.tMs });
+    }
+  }
+
+  return trail;
+}
+
+function collectMaskingMarkers(
+  events: SimEvent[],
+  tMs: number
+): { maskingEvents: AarMaskingEventMarker[]; activeMaskingMarker?: AarMaskingEventMarker } {
+  const maskingEvents: AarMaskingEventMarker[] = [];
+  let activeMaskingMarker: AarMaskingEventMarker | undefined;
+
+  for (const ev of events) {
+    if (ev.type === 'MASKED' || ev.type === 'REACQUIRE') {
+      const p = ev.payload as { zoneId?: string };
+      const marker: AarMaskingEventMarker = {
+        type: ev.type,
+        tMs: ev.tMs,
+        trackNo: ev.trackNo,
+        entityId: ev.entityId,
+        zoneId: p.zoneId,
+        label: `${ev.type === 'MASKED' ? 'LOS SEVERED' : 'LOS RESTORED'} · ${p.zoneId ?? 'ZONE'}`,
+      };
+      maskingEvents.push(marker);
+
+      // Active indicator window: within 2500ms
+      const dt = tMs - ev.tMs;
+      if (dt >= 0 && dt <= 2500) {
+        activeMaskingMarker = marker;
+      }
+    }
+  }
+
+  return { maskingEvents, activeMaskingMarker };
+}
+
+function collectEngagementMarkers(
+  events: SimEvent[],
+  tMs: number
+): { engagements: AarEngagementEventMarker[]; activeEngagement?: AarEngagementEventMarker } {
+  const engagements: AarEngagementEventMarker[] = [];
+  let activeEngagement: AarEngagementEventMarker | undefined;
+
+  for (const ev of events) {
+    if (ev.type === 'ENGAGE') {
+      const p = ev.payload as {
+        effector?: EffectorId;
+        killed?: boolean;
+        pk?: number;
+        u?: number;
+        targetPos?: { x: number; y: number; z: number };
+      };
+
+      const marker: AarEngagementEventMarker = {
+        tMs: ev.tMs,
+        trackNo: ev.trackNo,
+        entityId: ev.entityId,
+        effector: p.effector ?? 'RF_SOFTKILL',
+        killed: p.killed ?? false,
+        pk: p.pk ?? 0,
+        u: p.u,
+        pos: p.targetPos,
+      };
+      engagements.push(marker);
+
+      const dt = tMs - ev.tMs;
+      if (dt >= 0 && dt <= 3000) {
+        activeEngagement = marker;
+      }
+    }
+  }
+
+  return { engagements, activeEngagement };
+}
+
 /**
  * Pure function to reconstruct complete AAR ground truth and playback state
  * for any scrubbed timestamp from the recorded simulation event stream.
@@ -123,60 +251,18 @@ export function reconstructAarReplayState(
   }
 
   // Find the snapshot at or immediately preceding tMs
-  let selectedSnapshot = snapshots[0];
-  for (const s of snapshots) {
-    if (s.tMs <= tMs) {
-      selectedSnapshot = s;
-    } else {
-      break;
-    }
-  }
-
+  const selectedSnapshot = findPrecedingSnapshot(snapshots, tMs);
   const rawEntities = (selectedSnapshot.payload as { entities: RawSnapshotEntity[] }).entities || [];
 
-  // Determine masking status for each track at this tMs
-  const tracks: AarReplayTruthTrack[] = [];
-
-  for (const raw of rawEntities) {
-    // Check latest masking event for this entity/track before or at tMs
-    let isMasked = false;
-    let coastingSinceMs: number | null = null;
-
-    for (const ev of events) {
-      if (ev.tMs > tMs) break;
-      if (ev.trackNo === raw.tNo || ev.entityId === raw.id) {
-        if (ev.type === 'MASKED') {
-          isMasked = true;
-          coastingSinceMs = ev.tMs;
-        } else if (ev.type === 'REACQUIRE') {
-          isMasked = false;
-          coastingSinceMs = null;
-        }
-      }
-    }
-
-    // Collect historical truth positions for trail up to trailDurationMs before tMs
-    const trail: Array<{ x: number; y: number; z: number; tMs: number }> = [];
-    const minTrailTMs = Math.max(0, tMs - trailDurationMs);
-
-    for (const s of snapshots) {
-      if (s.tMs < minTrailTMs) continue;
-      if (s.tMs > tMs) break;
-      const entitiesInSnap = (s.payload as { entities: RawSnapshotEntity[] }).entities || [];
-      const match = entitiesInSnap.find((e) => e.id === raw.id || (raw.tNo && e.tNo === raw.tNo));
-      if (match) {
-        trail.push({ x: match.x, y: match.y, z: match.z, tMs: s.tMs });
-      }
-    }
-
-    const traineeLabel =
-      raw.lbl && raw.lbl !== 'NONE' ? (raw.lbl as TrackClass) : null;
-
+  const tracks: AarReplayTruthTrack[] = rawEntities.map((raw) => {
+    const { isMasked, coastingSinceMs } = getEntityMaskingStatus(events, raw, tMs);
+    const trail = collectEntityTrail(snapshots, raw, tMs, trailDurationMs);
+    const traineeLabel = raw.lbl && raw.lbl !== 'NONE' ? (raw.lbl as TrackClass) : null;
     const matchingSpawn =
       spec?.threats.find((th) => th.id === raw.id) ??
       spec?.decoys?.find((d) => d.id === raw.id);
 
-    tracks.push({
+    return {
       id: raw.id,
       trackNo: raw.tNo,
       truthPos: { x: raw.x, y: raw.y, z: raw.z },
@@ -188,66 +274,11 @@ export function reconstructAarReplayState(
       isMasked,
       coastingSinceMs,
       formation: matchingSpawn?.formation,
-    });
-  }
+    };
+  });
 
-  // Collect all masking events up to tMs
-  const maskingEvents: AarMaskingEventMarker[] = [];
-  let activeMaskingMarker: AarMaskingEventMarker | undefined;
-
-  for (const ev of events) {
-    if (ev.type === 'MASKED' || ev.type === 'REACQUIRE') {
-      const p = ev.payload as { zoneId?: string };
-      const marker: AarMaskingEventMarker = {
-        type: ev.type,
-        tMs: ev.tMs,
-        trackNo: ev.trackNo,
-        entityId: ev.entityId,
-        zoneId: p.zoneId,
-        label: `${ev.type === 'MASKED' ? 'LOS SEVERED' : 'LOS RESTORED'} · ${p.zoneId ?? 'ZONE'}`,
-      };
-      maskingEvents.push(marker);
-
-      // Active indicator window: within 2500ms
-      const dt = tMs - ev.tMs;
-      if (dt >= 0 && dt <= 2500) {
-        activeMaskingMarker = marker;
-      }
-    }
-  }
-
-  // Collect engagements up to tMs
-  const engagements: AarEngagementEventMarker[] = [];
-  let activeEngagement: AarEngagementEventMarker | undefined;
-
-  for (const ev of events) {
-    if (ev.type === 'ENGAGE') {
-      const p = ev.payload as {
-        effector?: EffectorId;
-        killed?: boolean;
-        pk?: number;
-        u?: number;
-        targetPos?: { x: number; y: number; z: number };
-      };
-
-      const marker: AarEngagementEventMarker = {
-        tMs: ev.tMs,
-        trackNo: ev.trackNo,
-        entityId: ev.entityId,
-        effector: p.effector ?? 'RF_SOFTKILL',
-        killed: p.killed ?? false,
-        pk: p.pk ?? 0,
-        u: p.u,
-        pos: p.targetPos,
-      };
-      engagements.push(marker);
-
-      const dt = tMs - ev.tMs;
-      if (dt >= 0 && dt <= 3000) {
-        activeEngagement = marker;
-      }
-    }
-  }
+  const { maskingEvents, activeMaskingMarker } = collectMaskingMarkers(events, tMs);
+  const { engagements, activeEngagement } = collectEngagementMarkers(events, tMs);
 
   return {
     tMs,

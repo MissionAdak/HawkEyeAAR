@@ -52,8 +52,8 @@ export class ConsoleRenderer {
     const wasRunning = this.frameDriver.isRunning();
     this.frameDriver.stop();
     this.frameDriver = nextDriver;
-    // Resuming clock synchronizes lastFrameTs with current wall-time, preventing fast-forward
-    clockInstance.resume();
+    // Resyncing clock synchronizes lastFrameTs with current wall-time, preventing fast-forward without unpausing an operator-paused clock
+    clockInstance.resync();
     if (wasRunning) {
       this.frameDriver.start((frameTs: number) => {
         this.tickAndRender(frameTs);

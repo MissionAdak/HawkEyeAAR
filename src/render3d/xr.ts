@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { engineInstance, clockInstance, useSessionStore } from '@/store/sessionStore';
 import { applyTickFor } from '@/sim/inputQueue';
-import { xrDriver, windowDriver } from '@/sim/frameDriver';
+import { xrDriver, windowDriver, type FrameDriver } from '@/sim/frameDriver';
 import type { UserAction, EffectorId } from '@/sim/types';
 import type { ConsoleRenderer } from '@/render/renderer';
 
@@ -268,8 +268,8 @@ export class WebXRPanel {
     ctx.fillRect(4, h - 90, w - 8, 86);
     ctx.fillStyle = '#C9D1D9';
     ctx.font = '18px "JetBrains Mono", monospace';
-    ctx.fillText('RIGHT TRIGGER: SELECT | GRIP: CYCLE EFFECTOR | A: FIRE | B: ASSESS KILL', 24, h - 54);
-    ctx.fillText('X BUTTON: CYCLE SENSOR | Y BUTTON: CLASSIFY | RECENTER: THUMBSTICK | ESC: EXIT VR', 24, h - 22);
+    ctx.fillText('TRIGGER: CYCLE / SELECT TRACK | GRIP: CYCLE EFFECTOR', 24, h - 54);
+    ctx.fillText('THUMBSTICK: CYCLE TRACK | RIGHT A: FIRE | RIGHT B: ASSESS KILL', 24, h - 22);
   }
 
   public dispose(): void {
@@ -493,7 +493,9 @@ export class WebXRControllerHandler {
 
       this.handleTriggerEdge(pad, state, frameTimestamp);
       this.handleGripEdge(pad, state, frameTimestamp);
-      this.handleActionButtons(pad, state, frameTimestamp);
+      if (source.handedness === 'right') {
+        this.handleActionButtons(pad, state, frameTimestamp);
+      }
       this.handleThumbstick(pad, state, frameTimestamp);
     }
   }
@@ -519,12 +521,14 @@ export class WebXRManager {
   public readonly tableTop: WebXRTableTop;
   public readonly controllerHandler: WebXRControllerHandler;
   private isVrActive: boolean = false;
+  private isDisposed: boolean = false;
 
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
     private readonly scene: THREE.Scene,
     private readonly consoleRenderer: ConsoleRenderer,
-    private readonly onExitCallback: () => void
+    private readonly onExitCallback: () => void,
+    private readonly camera: THREE.Camera = new THREE.PerspectiveCamera()
   ) {
     this.tableTop = new WebXRTableTop();
     this.controllerHandler = new WebXRControllerHandler(this.scene);
@@ -560,7 +564,22 @@ export class WebXRManager {
       this.scene.add(this.tableTop.tableGroup);
 
       // WebXR FrameDriver handoff (ARCHITECTURE.md §1.3 & §8.9)
-      const vrDriver = xrDriver(this.renderer);
+      const baseDriver = xrDriver(this.renderer);
+      const vrDriver: FrameDriver = {
+        name: baseDriver.name,
+        start: (simCb) => {
+          baseDriver.start((time, frame) => {
+            // 1. Advance simulation accumulator & physics
+            simCb(time, frame);
+            // 2. Poll controllers and update in-VR table HUD
+            this.update(time);
+            // 3. Render 3D scene with camera through XR renderer
+            this.renderer.render(this.scene, this.camera);
+          });
+        },
+        stop: () => baseDriver.stop(),
+        isRunning: () => baseDriver.isRunning(),
+      };
       this.consoleRenderer.setFrameDriver(vrDriver);
 
       // Clean session teardown listener
@@ -620,6 +639,8 @@ export class WebXRManager {
   }
 
   public dispose(): void {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
     this.exitVR();
     this.tableTop.dispose();
     this.controllerHandler.dispose();

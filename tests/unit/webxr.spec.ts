@@ -192,6 +192,31 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
       renderer.stop();
     });
 
+    it('preserves paused clock state during FrameDriver handoff', () => {
+      const canvas = createMockCanvas();
+      const driver1 = mockDriver();
+      const driver2 = mockDriver();
+      const renderer = new ConsoleRenderer(canvas, driver1);
+      renderer.start();
+
+      clockInstance.pause();
+      expect(clockInstance.getPaused()).toBe(true);
+
+      // Swap frame driver
+      renderer.setFrameDriver(driver2);
+
+      // Verify clock remains paused
+      expect(clockInstance.getPaused()).toBe(true);
+
+      // Stepping frame while paused must not advance ticks
+      const tickBefore = engineInstance.tickIndex;
+      driver2.stepFrame(2000);
+      expect(engineInstance.tickIndex).toBe(tickBefore);
+
+      clockInstance.resume();
+      renderer.stop();
+    });
+
     it('wraps renderer.setAnimationLoop cleanly in xrDriver', () => {
       let registeredLoop: ((time: number, frame?: unknown) => void) | null = null;
       const mockRenderer = {
@@ -283,6 +308,45 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
       // Frame 4: button released
       fakeGamepad.buttons[0].pressed = false;
       handler.pollControllers(fakeSession, 1150);
+      expect(engineInstance.inputQueue.getPendingCount()).toBe(initialQueueLen + 1);
+
+      handler.dispose();
+    });
+
+    it('dispatches FIRE and ASSESS KILL only when source.handedness is right', () => {
+      const scene = new THREE.Scene();
+      const handler = new WebXRControllerHandler(scene);
+      engineInstance.selectedTrackNo = 'T-01';
+
+      const leftGamepad = {
+        buttons: [{ pressed: false }, { pressed: false }, { pressed: false }, { pressed: false }, { pressed: true }, { pressed: true }],
+        axes: [0, 0, 0, 0],
+      };
+      const rightGamepad = {
+        buttons: [{ pressed: false }, { pressed: false }, { pressed: false }, { pressed: false }, { pressed: false }, { pressed: false }],
+        axes: [0, 0, 0, 0],
+      };
+
+      const fakeSession = {
+        inputSources: [
+          { handedness: 'left', gamepad: leftGamepad },
+          { handedness: 'right', gamepad: rightGamepad },
+        ],
+      } as unknown as XRSession;
+
+      const initialQueueLen = engineInstance.inputQueue.getPendingCount();
+
+      // Poll controllers with left buttons 4 & 5 pressed (X / Y buttons)
+      handler.pollControllers(fakeSession, 1000);
+
+      // Left controller buttons 4 & 5 must NOT queue FIRE or ASSESS
+      expect(engineInstance.inputQueue.getPendingCount()).toBe(initialQueueLen);
+
+      // Now press button 4 (A) on right controller
+      rightGamepad.buttons[4].pressed = true;
+      handler.pollControllers(fakeSession, 1050);
+
+      // Right controller button 4 dispatches FIRE
       expect(engineInstance.inputQueue.getPendingCount()).toBe(initialQueueLen + 1);
 
       handler.dispose();
@@ -413,6 +477,30 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
 
       manager.dispose();
       renderer.stop();
+    });
+
+    it('disposes WebXRManager idempotently and cleans up tableTop and controllers', () => {
+      const canvas = createMockCanvas();
+      const renderer = new ConsoleRenderer(canvas);
+      const mockThreeRenderer = {
+        xr: { enabled: true, setSession: vi.fn() },
+        setAnimationLoop: vi.fn(),
+      } as unknown as THREE.WebGLRenderer;
+      const scene = new THREE.Scene();
+      const onExit = vi.fn();
+
+      const manager = new WebXRManager(mockThreeRenderer, scene, renderer, onExit);
+      const tableDisposeSpy = vi.spyOn(manager.tableTop, 'dispose');
+      const ctrlDisposeSpy = vi.spyOn(manager.controllerHandler, 'dispose');
+
+      manager.dispose();
+      expect(tableDisposeSpy).toHaveBeenCalledTimes(1);
+      expect(ctrlDisposeSpy).toHaveBeenCalledTimes(1);
+
+      // Second dispose call is a no-op (idempotent)
+      manager.dispose();
+      expect(tableDisposeSpy).toHaveBeenCalledTimes(1);
+      expect(ctrlDisposeSpy).toHaveBeenCalledTimes(1);
     });
   });
 });
