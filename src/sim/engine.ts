@@ -442,7 +442,10 @@ export class SimEngine {
       const peakZ = CONFIG.terrain?.popUp?.peakZM ?? 150;
       const terminalTargetZ = CONFIG.terrain?.popUp?.terminalTargetZM ?? 20;
 
-      const speedMps = Math.hypot(entity.vel.x, entity.vel.y) || 30;
+      const specSpeed =
+        this.spec?.threats?.find((t) => t.id === entity.id)?.speedMps ??
+        this.spec?.decoys?.find((d) => d.id === entity.id)?.speedMps;
+      const speedMps = specSpeed ?? (Math.hypot(entity.vel.x, entity.vel.y) || 30);
 
       if (distToAsset > popupDistM) {
         // Phase 1: Approach at low altitude (20m)
@@ -478,9 +481,16 @@ export class SimEngine {
         const dist3D = Math.hypot(dX, dY, dZ);
 
         if (dist3D > 0.1) {
-          entity.vel.x = (dX / dist3D) * speedMps;
-          entity.vel.y = (dY / dist3D) * speedMps;
-          entity.vel.z = (dZ / dist3D) * speedMps;
+          const stepDist = speedMps * 0.05;
+          if (dist3D <= stepDist) {
+            entity.vel.x = dX / 0.05;
+            entity.vel.y = dY / 0.05;
+            entity.vel.z = dZ / 0.05;
+          } else {
+            entity.vel.x = (dX / dist3D) * speedMps;
+            entity.vel.y = (dY / dist3D) * speedMps;
+            entity.vel.z = (dZ / dist3D) * speedMps;
+          }
         } else {
           entity.vel.x = 0;
           entity.vel.y = 0;

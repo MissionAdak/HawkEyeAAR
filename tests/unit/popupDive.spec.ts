@@ -131,6 +131,99 @@ describe('OPTIONAL TASK 13 — Notional POP_UP_DIVE Trajectory Profile', () => {
       expect(threat.vel.z).toBeLessThan(0);
     });
 
+    it('progresses through approach, climb, and dive, reaching terminal position within expected time', () => {
+      const speedMps = 30;
+      const startX = 3000;
+      const startZ = 20;
+      const testSpec: ScenarioSpec = {
+        id: 'POPUP-TIMING-TEST',
+        schemaVersion: 1,
+        simVersion: '1.1.0',
+        configHash: 'sha256:inlined',
+        mode: 'TRAIN',
+        seed: 777,
+        difficulty: 0.3,
+        dayNight: 'DAY',
+        durationMs: 120000,
+        asset: { x: 0, y: 0, rMinM: 0.01 },
+        zones: [],
+        threats: [
+          {
+            id: 'H-POPUP-TIMING',
+            droneType: 'FPV_ATTACK',
+            trueClass: 'HOSTILE_ATTACK',
+            spawnTMs: 0,
+            waypoints: [
+              { x: startX, y: 0, z: startZ },
+              { x: 0, y: 0, z: 20 },
+            ],
+            speedMps,
+            profile: 'POP_UP_DIVE',
+            rcsM2: 0.01,
+            valueInr: 100000,
+            emitsRf: true,
+            remoteId: false,
+            iff: false,
+          },
+        ],
+        decoys: [],
+        chaos: [],
+        triggers: [],
+        roeText: 'TEST',
+        levers: [],
+        features: new Array(33).fill(0),
+      };
+
+      const engine = new SimEngine();
+      engine.load(testSpec);
+
+      const entity = engine.curr[0];
+
+      // Phase 1 (Approach):
+      // Distance from 3000m to 900m = 2100m. At 30 m/s = 70.0s (1400 ticks).
+      // Step to tick 1000 (50s)
+      for (let t = 0; t < 1000; t++) engine.step();
+      expect(entity.pos.x).toBeGreaterThan(900);
+      expect(entity.pos.z).toBeCloseTo(20, 1);
+      expect(entity.vel.z).toBe(0);
+
+      // Advance to tick 1400 (70s) where range reaches 900m
+      for (let t = 1000; t < 1400; t++) engine.step();
+      expect(entity.pos.x).toBeCloseTo(900, 0);
+
+      // Phase 2 (Climb):
+      // Climbs from 20m to 150m (130m gain) at 15 m/s = 8.67s (174 ticks).
+      // Step into mid-climb at tick 1480 (74s, 4s into climb)
+      for (let t = 1400; t < 1480; t++) engine.step();
+      expect(entity.pos.x).toBeLessThan(900);
+      expect(entity.pos.z).toBeGreaterThan(60);
+      expect(entity.vel.z).toBe(15);
+
+      // Advance to peak of climb at tick 1574 (78.7s)
+      for (let t = 1480; t < 1574; t++) engine.step();
+      expect(entity.pos.z).toBeGreaterThanOrEqual(149);
+      expect(entity.pos.z).toBeLessThanOrEqual(151);
+
+      // Phase 3 (Terminal Dive):
+      // Terminal dive from ~ (639, 0, 150) to (0, 0, 20) is 652m 3D at 30 m/s ~ 21.7s (435 ticks).
+      // Total travel time to arrival: ~ 70s + 8.7s + 21.7s ~ 100.4s (2009 ticks).
+      // Step during active terminal dive at tick 1800 (90s):
+      for (let t = 1574; t < 1800; t++) engine.step();
+      expect(entity.vel.z).toBeLessThan(0);
+      // Verify constant cruise speed: 3D magnitude remains speedMps
+      const speed3D = Math.hypot(entity.vel.x, entity.vel.y, entity.vel.z);
+      expect(speed3D).toBeCloseTo(speedMps, 1);
+
+      // Step until expected arrival window (2020 ticks = 101s)
+      for (let t = 1800; t < 2020; t++) engine.step();
+
+      // Entity has reached terminal target (0, 0, 20) within expected time (100.4s - 101s)
+      expect(entity.pos.x).toBeCloseTo(0, 0);
+      expect(entity.pos.y).toBeCloseTo(0, 0);
+      expect(entity.pos.z).toBeCloseTo(20, 0);
+      expect(entity.lifecycle).toBe('LEAKED');
+    });
+
     it('guarantees bitwise deterministic simulation replay for same seed', () => {
       const spec = generatePopUpDiveScenario({ seed: 9999, difficulty: 0.3 });
 

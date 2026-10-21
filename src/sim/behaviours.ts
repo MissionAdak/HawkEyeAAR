@@ -1,5 +1,6 @@
 import type { Vec3, Profile, ZoneSpec } from './types';
 import { mulberry32, streamSeed } from './rng';
+import { CONFIG } from '@/config';
 
 export interface BehaviourContext {
   tick: number;
@@ -131,10 +132,10 @@ export class BehaviourController {
 
       case 'POP_UP_DIVE': {
         const distToAsset = Math.hypot(pos.x, pos.y);
-        const popupDistM = 900;
-        const climbRateMps = 15;
-        const peakZ = 150;
-        const terminalTargetZ = 20;
+        const popupDistM = CONFIG.terrain?.popUp?.popupDistM ?? 900;
+        const climbRateMps = CONFIG.terrain?.popUp?.climbRateMps ?? 15;
+        const peakZ = CONFIG.terrain?.popUp?.peakZM ?? 150;
+        const terminalTargetZ = CONFIG.terrain?.popUp?.terminalTargetZM ?? 20;
 
         if (!this.reachedPeak) {
           if (distToAsset > popupDistM) {
