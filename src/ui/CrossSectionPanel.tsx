@@ -14,6 +14,13 @@ interface CrossSectionPanelProps {
   } | null;
 }
 
+const CARDINAL_NAMES: Record<number, string> = {
+  0: '000° N',
+  90: '090° E',
+  180: '180° S',
+  270: '270° W',
+};
+
 export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
   onClose,
   zones = [],
@@ -22,8 +29,9 @@ export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
   // If track is selected, calculate its bearing
   const trackBearing = useMemo(() => {
     if (!selectedTrack?.pos) return null;
-    const { x, y } = selectedTrack.pos;
-    const rad = Math.atan2(x, y); // 0 = North (+Y), 90 = East (+X)
+    const posE = selectedTrack.pos.x;
+    const posN = selectedTrack.pos.y;
+    const rad = Math.atan2(posE, posN); // 0 = North (+Y), 90 = East (+X)
     let deg = (rad * 180) / Math.PI;
     if (deg < 0) deg += 360;
     return Math.round(deg);
@@ -129,7 +137,7 @@ export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
                     : 'border-line text-text-dim hover:text-text-main'
                 }`}
               >
-                {b === 0 ? '000° N' : b === 90 ? '090° E' : b === 180 ? '180° S' : '270° W'}
+                {CARDINAL_NAMES[b] ?? `${b}°`}
               </button>
             ))}
           </div>
@@ -137,7 +145,13 @@ export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
 
         {/* SVG Side Elevation Chart */}
         <div className="p-3 bg-carbon-950 flex flex-col items-center">
-          <svg width="620" height="250" className="border border-line/60 bg-carbon-950 select-none">
+          <svg
+            width="620"
+            height="250"
+            className="border border-line/60 bg-carbon-950 select-none"
+            role="img"
+            aria-label="Elevation Cross-Section Chart"
+          >
             <defs>
               <pattern id="shadowHatch" width="8" height="8" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
                 <line x1="0" y1="0" x2="0" y2="8" stroke="#f59e0b" strokeWidth="1.5" strokeOpacity="0.4" />

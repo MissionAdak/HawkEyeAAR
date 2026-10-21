@@ -60,6 +60,15 @@ selectionBracketsPath.moveTo(b - l, b);
 selectionBracketsPath.lineTo(b, b);
 selectionBracketsPath.lineTo(b, b - l);
 
+export interface TrackSymbolOptions {
+  label: TrackClass | null;
+  isSelected: boolean;
+  isCoasting: boolean;
+  ghostSigmaPx: number;
+  trackNo: string | null;
+  step: string;
+}
+
 /**
  * High-performance NATO symbology renderer.
  * Operates without heap allocations during 60 fps animation frames.
@@ -68,13 +77,9 @@ export function drawTrackSymbol(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
-  label: TrackClass | null,
-  isSelected: boolean,
-  isCoasting: boolean,
-  ghostSigmaPx: number,
-  trackNo: string | null,
-  step: string
+  opts: TrackSymbolOptions
 ): void {
+  const { label, isSelected, isCoasting, ghostSigmaPx, trackNo, step } = opts;
   ctx.save();
   ctx.translate(cx, cy);
   ctx.lineWidth = 1.5;

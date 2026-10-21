@@ -29,7 +29,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          const normalizedId = id.replace(/\\/g, '/');
+          const normalizedId = id.replaceAll('\\', '/');
           if (normalizedId.includes('node_modules/three') || normalizedId.includes('/src/render3d/')) {
             return 'render3d';
           }

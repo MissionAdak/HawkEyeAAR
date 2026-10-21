@@ -60,6 +60,58 @@ export function raySegmentIntersection(
   return null;
 }
 
+function findZoneNearEdgeDistance(targetX: number, targetY: number, polygon: [number, number][]): number {
+  let dNearM = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % polygon.length];
+    const dist = raySegmentIntersection(targetX, targetY, p1, p2);
+    if (dist !== null && dist < dNearM) {
+      dNearM = dist;
+    }
+  }
+  return dNearM;
+}
+
+function evaluateZoneMasking(
+  pos: Vec3,
+  zone: ZoneSpec,
+  R: number,
+  h_r: number,
+  thetaT: number
+): MaskResult | null {
+  if (zone.polygon.length < 3) return null;
+
+  if (isPointInPolygon(pos.x, pos.y, zone.polygon) && pos.z <= zone.heightM) {
+    return {
+      isMasked: true,
+      zoneId: zone.id,
+      thetaT,
+      thetaMask: Math.PI / 2,
+      dNearM: 0,
+      shadowRemainingM: zone.shadowM,
+    };
+  }
+
+  const dNearM = findZoneNearEdgeDistance(pos.x, pos.y, zone.polygon);
+  if (dNearM <= R) {
+    const thetaMask = Math.atan2(zone.heightM - h_r, dNearM);
+    const distPastNearEdge = R - dNearM;
+    if (thetaT < thetaMask && distPastNearEdge <= zone.shadowM) {
+      return {
+        isMasked: true,
+        zoneId: zone.id,
+        thetaT,
+        thetaMask,
+        dNearM,
+        shadowRemainingM: zone.shadowM - distPastNearEdge,
+      };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Evaluates line-of-sight terrain masking from radar at (0, 0, h_r) to target at pos (x, y, z).
  * Complies strictly with PRD 5.3 and ARCHITECTURE.md 5.1.
@@ -81,52 +133,8 @@ export function evaluateMasking(pos: Vec3, zones: ZoneSpec[]): MaskResult {
   const thetaT = Math.atan2(pos.z - h_r, R);
 
   for (const zone of zones) {
-    if (zone.polygon.length < 3) continue;
-
-    // Check if target is directly inside the zone polygon
-    const isInside = isPointInPolygon(pos.x, pos.y, zone.polygon);
-    if (isInside) {
-      if (pos.z <= zone.heightM) {
-        // Target is below roofline inside the urban/ridge zone -> MASKED
-        return {
-          isMasked: true,
-          zoneId: zone.id,
-          thetaT,
-          thetaMask: Math.PI / 2,
-          dNearM: 0,
-          shadowRemainingM: zone.shadowM,
-        };
-      }
-    }
-
-    // Cast ray from radar (0, 0) to target (pos.x, pos.y)
-    let dNearM = Infinity;
-
-    for (let i = 0; i < zone.polygon.length; i++) {
-      const p1 = zone.polygon[i];
-      const p2 = zone.polygon[(i + 1) % zone.polygon.length];
-      const dist = raySegmentIntersection(pos.x, pos.y, p1, p2);
-      if (dist !== null && dist < dNearM) {
-        dNearM = dist;
-      }
-    }
-
-    // If ray intersects zone near-edge before or at target
-    if (dNearM < Infinity && dNearM <= R) {
-      const thetaMask = Math.atan2(zone.heightM - h_r, dNearM);
-      const distPastNearEdge = R - dNearM;
-
-      if (thetaT < thetaMask && distPastNearEdge <= zone.shadowM) {
-        return {
-          isMasked: true,
-          zoneId: zone.id,
-          thetaT,
-          thetaMask,
-          dNearM,
-          shadowRemainingM: zone.shadowM - distPastNearEdge,
-        };
-      }
-    }
+    const res = evaluateZoneMasking(pos, zone, R, h_r, thetaT);
+    if (res) return res;
   }
 
   return {

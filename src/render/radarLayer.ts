@@ -2,40 +2,31 @@ import { PALETTE } from './palette';
 import { drawTrackSymbol } from './symbols';
 import type { TrackEntity, ZoneSpec } from '@/sim/types';
 
+export interface RadarDynamicOptions {
+  sweepAngleRad: number;
+  currEntities: TrackEntity[];
+  prevEntities: TrackEntity[];
+  alpha: number;
+  selectedTrackNo: string | null;
+  zones?: ZoneSpec[];
+}
+
+function getAzimuthTickLength(deg: number): number {
+  if (deg % 90 === 0) return 10;
+  if (deg % 30 === 0) return 6;
+  return 3;
+}
+
 export class RadarLayer {
   private staticCanvas: HTMLCanvasElement | null = null;
-  private maxRangeM: number = 5000;
-  private prevMap: Map<string, TrackEntity> = new Map();
+  private readonly maxRangeM: number;
+  private readonly prevMap: Map<string, TrackEntity> = new Map();
 
   constructor(maxRangeM: number = 5000) {
     this.maxRangeM = maxRangeM;
   }
 
-  /**
-   * Pre-renders the static PPI layer (concentric rings, bearing ticks, cardinal labels,
-   * asset crosshair, and terrain zones) onto an off-screen canvas.
-   * This executes only once or upon window resize, eliminating static draw cost at 60 fps.
-   */
-  public prepareStaticLayer(width: number, height: number, zones: ZoneSpec[] = []): void {
-    if (!this.staticCanvas) {
-      this.staticCanvas = document.createElement('canvas');
-    }
-    this.staticCanvas.width = width;
-    this.staticCanvas.height = height;
-
-    const ctx = this.staticCanvas.getContext('2d');
-    if (!ctx) return;
-
-    const cx = width / 2;
-    const cy = height / 2;
-    const radius = Math.min(cx, cy) - 15;
-    const scale = radius / this.maxRangeM;
-
-    // 1. Clear background
-    ctx.fillStyle = PALETTE.carbon950;
-    ctx.fillRect(0, 0, width, height);
-
-    // 2. Concentric range rings (every 1 km)
+  private drawRangeRings(ctx: CanvasRenderingContext2D, cx: number, cy: number, scale: number): void {
     ctx.lineWidth = 1;
     ctx.strokeStyle = PALETTE.phosphorDim;
     ctx.fillStyle = PALETTE.phosphorDim;
@@ -54,25 +45,20 @@ export class RadarLayer {
       const ly = cy - ringRadius * 0.707 - 3;
       ctx.fillText(`${r / 1000}k`, lx, ly);
     }
+  }
 
-    // 3. Azimuth ticks & Cardinal headings
+  private drawAzimuthTicks(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number): void {
     for (let deg = 0; deg < 360; deg += 10) {
       const rad = ((deg - 90) * Math.PI) / 180;
       const isCardinal = deg % 90 === 0;
-      const isMajor = deg % 30 === 0;
-      const tickLen = isCardinal ? 10 : isMajor ? 6 : 3;
+      const tickLen = getAzimuthTickLength(deg);
 
       const cos = Math.cos(rad);
       const sin = Math.sin(rad);
 
-      const x1 = cx + (radius - tickLen) * cos;
-      const y1 = cy + (radius - tickLen) * sin;
-      const x2 = cx + radius * cos;
-      const y2 = cy + radius * sin;
-
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      ctx.moveTo(cx + (radius - tickLen) * cos, cy + (radius - tickLen) * sin);
+      ctx.lineTo(cx + radius * cos, cy + radius * sin);
       ctx.stroke();
 
       if (isCardinal) {
@@ -81,25 +67,13 @@ export class RadarLayer {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const labelRadius = radius + 10;
-        const lx = cx + labelRadius * cos;
-        const ly = cy + labelRadius * sin;
-        const text = deg === 0 ? '000' : deg === 90 ? '090' : deg === 180 ? '180' : '270';
-        ctx.fillText(text, lx, ly);
+        ctx.fillText(String(deg).padStart(3, '0'), cx + labelRadius * cos, cy + labelRadius * sin);
         ctx.fillStyle = PALETTE.phosphorDim;
       }
     }
+  }
 
-    // 4. Center asset crosshair at (0, 0)
-    ctx.strokeStyle = PALETTE.phosphor;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(cx - 8, cy);
-    ctx.lineTo(cx + 8, cy);
-    ctx.moveTo(cx, cy - 8);
-    ctx.lineTo(cx, cy + 8);
-    ctx.stroke();
-
-    // 5. Draw Terrain Zones
+  private drawZones(ctx: CanvasRenderingContext2D, cx: number, cy: number, scale: number, zones: ZoneSpec[]): void {
     for (const zone of zones) {
       if (zone.polygon.length < 3) continue;
       ctx.save();
@@ -134,6 +108,43 @@ export class RadarLayer {
   }
 
   /**
+   * Pre-renders the static PPI layer (concentric rings, bearing ticks, cardinal labels,
+   * asset crosshair, and terrain zones) onto an off-screen canvas.
+   * This executes only once or upon window resize, eliminating static draw cost at 60 fps.
+   */
+  public prepareStaticLayer(width: number, height: number, zones: ZoneSpec[] = []): void {
+    this.staticCanvas ??= document.createElement('canvas');
+    this.staticCanvas.width = width;
+    this.staticCanvas.height = height;
+
+    const ctx = this.staticCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.min(cx, cy) - 15;
+    const scale = radius / this.maxRangeM;
+
+    ctx.fillStyle = PALETTE.carbon950;
+    ctx.fillRect(0, 0, width, height);
+
+    this.drawRangeRings(ctx, cx, cy, scale);
+    this.drawAzimuthTicks(ctx, cx, cy, radius);
+
+    // Center asset crosshair at (0, 0)
+    ctx.strokeStyle = PALETTE.phosphor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - 8, cy);
+    ctx.lineTo(cx + 8, cy);
+    ctx.moveTo(cx, cy - 8);
+    ctx.lineTo(cx, cy + 8);
+    ctx.stroke();
+
+    this.drawZones(ctx, cx, cy, scale, zones);
+  }
+
+  /**
    * Dynamic frame rendering at 60 fps.
    * Performs zero object allocations during the loop to maintain 60 fps on Intel i3 GPUs.
    */
@@ -141,20 +152,24 @@ export class RadarLayer {
     ctx: CanvasRenderingContext2D,
     width: number,
     height: number,
-    sweepAngleRad: number,
-    currEntities: TrackEntity[],
-    prevEntities: TrackEntity[],
-    alpha: number,
-    selectedTrackNo: string | null,
-    zones: ZoneSpec[] = []
+    opts: RadarDynamicOptions
   ): void {
+    const {
+      sweepAngleRad,
+      currEntities,
+      prevEntities,
+      alpha,
+      selectedTrackNo,
+      zones = [],
+    } = opts;
+
     const cx = width / 2;
     const cy = height / 2;
     const radius = Math.min(cx, cy) - 15;
     const scale = radius / this.maxRangeM;
 
     // 1. Ensure static background layer is ready
-    if (!this.staticCanvas || this.staticCanvas.width !== width || this.staticCanvas.height !== height) {
+    if (this.staticCanvas?.width !== width || this.staticCanvas?.height !== height) {
       this.prepareStaticLayer(width, height, zones);
     }
 
@@ -197,13 +212,12 @@ export class RadarLayer {
 
     // 4. Update lookup map for prev entities (zero per-entity closure allocations)
     this.prevMap.clear();
-    for (let i = 0; i < prevEntities.length; i++) {
-      this.prevMap.set(prevEntities[i].id, prevEntities[i]);
+    for (const prev of prevEntities) {
+      this.prevMap.set(prev.id, prev);
     }
 
     // 5. Render Tracks and Entities with 60 fps lerp
-    for (let i = 0; i < currEntities.length; i++) {
-      const curr = currEntities[i];
+    for (const curr of currEntities) {
       if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED' && curr.lifecycle !== 'NEUTRALISED') {
         continue;
       }
@@ -227,17 +241,14 @@ export class RadarLayer {
       const ghostSigmaPx = curr.ghostSigmaM * scale;
 
       // Draw NATO track symbol (using pooled Path2D templates)
-      drawTrackSymbol(
-        ctx,
-        sx,
-        sy,
-        curr.traineeLabel,
+      drawTrackSymbol(ctx, sx, sy, {
+        label: curr.traineeLabel,
         isSelected,
-        curr.masked,
+        isCoasting: curr.masked,
         ghostSigmaPx,
-        curr.trackNo,
-        curr.step
-      );
+        trackNo: curr.trackNo,
+        step: curr.step,
+      });
 
       // Velocity projection vector (10s travel prediction line)
       const speedSq = curr.vel.x * curr.vel.x + curr.vel.y * curr.vel.y;

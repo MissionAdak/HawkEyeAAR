@@ -115,7 +115,7 @@ export function generateScenario(
 
   // Fallback to verified bundled scenario if all procedural attempts fail
   const fallbackSeed = hash32(`${traineeId}|${sessionIdx}|fallback`);
-  const fallback = JSON.parse(JSON.stringify(demo1Json)) as ScenarioSpec;
+  const fallback = structuredClone(demo1Json) as unknown as ScenarioSpec;
   fallback.id = `FALLBACK-${fallbackSeed}`;
   fallback.seed = fallbackSeed;
   fallback.difficulty = d;

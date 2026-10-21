@@ -48,12 +48,19 @@ interface TrackAggregate {
 /**
  * Pure function to aggregate complete AARMetrics from the recorded SimEvent stream (Rules.md DT-8, TASK-P3-03).
  */
-export function aggregateAARMetrics(
+interface SessionMetadata {
+  sessionMode: 'TRAIN' | 'EVAL' | 'DEMO';
+  scenarioId: string;
+  aidTicks: number;
+  trainingAidDurationSec: number;
+  trainingAidUsed: boolean;
+}
+
+function extractSessionMetadata(
   events: SimEvent[],
   scenarioSpec?: ScenarioSpec,
   trainingAidTicks?: number
-): AARMetrics {
-  // 1. Session Mode and Metadata
+): SessionMetadata {
   let sessionMode: 'TRAIN' | 'EVAL' | 'DEMO' = scenarioSpec?.mode ?? 'TRAIN';
   let scenarioId = scenarioSpec?.id ?? 'sim';
   const startEv = events.find((e) => e.type === 'SIM_START');
@@ -70,48 +77,139 @@ export function aggregateAARMetrics(
       scenarioId = startEv.payload.scenarioId;
     }
   }
+  return { sessionMode, scenarioId, aidTicks, trainingAidDurationSec, trainingAidUsed };
+}
 
-  // 2. Track entity tracking dictionary
-  const tracksMap = new Map<string, TrackAggregate>();
+function getOrCreateTrack(tracksMap: Map<string, TrackAggregate>, trackNo?: string, entityId?: string): TrackAggregate {
+  const key = trackNo ?? entityId ?? 'unknown';
+  let track = tracksMap.get(key);
+  if (!track) {
+    track = {
+      id: entityId ?? key,
+      trackNo: trackNo ?? null,
+      trueClass: 'HOSTILE_ATTACK',
+      droneType: 'FPV_ATTACK',
+      valueInr: 100000,
+      traineeLabel: null,
+      tVis: null,
+      tTrk: null,
+      tDesig: null,
+      tCls: null,
+      tEng: null,
+      tPnr: null,
+      engaged: false,
+      neutralised: false,
+      leaked: false,
+      weaponUsed: null,
+      rangeAtEngageM: null,
+      isKineticOverDenseZone: false,
+      unclassifiedFired: false,
+    };
+    tracksMap.set(key, track);
+  }
+  return track;
+}
 
-  // Helper to get or create track entry
-  const getOrCreateTrack = (trackNo?: string, entityId?: string): TrackAggregate => {
-    const key = trackNo ?? entityId ?? 'unknown';
-    let track = tracksMap.get(key);
-    if (!track) {
-      track = {
-        id: entityId ?? key,
-        trackNo: trackNo ?? null,
-        trueClass: 'HOSTILE_ATTACK',
-        droneType: 'FPV_ATTACK',
-        valueInr: 100000,
-        traineeLabel: null,
-        tVis: null,
-        tTrk: null,
-        tDesig: null,
-        tCls: null,
-        tEng: null,
-        tPnr: null,
-        engaged: false,
-        neutralised: false,
-        leaked: false,
-        weaponUsed: null,
-        rangeAtEngageM: null,
-        isKineticOverDenseZone: false,
-        unclassifiedFired: false,
-      };
-      tracksMap.set(key, track);
-    }
-    return track;
+interface EventProcessingState {
+  tracksMap: Map<string, TrackAggregate>;
+  roeViolationCount: number;
+  unfavourableCount: number;
+  totalEffectorCost: number;
+  totalEngagedThreatValue: number;
+}
+
+function handleEngagePayload(
+  target: TrackAggregate,
+  payload: Record<string, unknown>,
+  tMs: number,
+  state: EventProcessingState
+): void {
+  const p = payload as {
+    effector?: EffectorId;
+    rangeM?: number;
+    cer?: number;
+    roeGate?: { classifiedOk?: boolean; zoneOk?: boolean };
   };
+  target.engaged = true;
+  target.tEng ??= tMs;
+  if (p.effector) target.weaponUsed = p.effector;
+  if (typeof p.rangeM === 'number') target.rangeAtEngageM = p.rangeM;
 
-  // Pre-seed from ScenarioSpec if provided
+  if (p.roeGate) {
+    if (p.roeGate.classifiedOk === false) target.unclassifiedFired = true;
+    if (p.roeGate.zoneOk === false) target.isKineticOverDenseZone = true;
+  }
+
+  if (p.effector) {
+    const cost = CONFIG.effectors[p.effector]?.costInr ?? 0;
+    state.totalEffectorCost += cost;
+    const val = target.valueInr ?? (CONFIG.droneClasses.RECON_QUAD.valueInr ?? 40000);
+    state.totalEngagedThreatValue += val;
+  }
+
+  if (typeof p.cer === 'number' && p.cer > CONFIG.thresholds.cerUnfavourableThreshold) {
+    state.unfavourableCount += 1;
+  }
+}
+
+function processEvent(ev: SimEvent, target: TrackAggregate | null, state: EventProcessingState): void {
+  switch (ev.type) {
+    case 'SPAWN':
+      if (target) {
+        const p = ev.payload as { trueClass?: TrueClass; droneType?: string; valueInr?: number | null };
+        if (p.trueClass) target.trueClass = p.trueClass;
+        if (p.droneType) target.droneType = p.droneType;
+        if (p.valueInr !== undefined) target.valueInr = p.valueInr;
+        target.tVis = ev.tMs;
+      }
+      break;
+    case 'DETECT':
+      if (target?.tVis === null) target.tVis = ev.tMs;
+      break;
+    case 'TRACK_INIT':
+      if (target) {
+        target.tTrk = ev.tMs;
+        if (ev.trackNo) target.trackNo = ev.trackNo;
+      }
+      break;
+    case 'DESIGNATE':
+      if (target?.tDesig === null) target.tDesig = ev.tMs;
+      break;
+    case 'CLASSIFY':
+      if (target) {
+        const p = ev.payload as { label?: TrackClass };
+        if (p.label) target.traineeLabel = p.label;
+        target.tCls ??= ev.tMs;
+      }
+      break;
+    case 'ENGAGE':
+      if (target) handleEngagePayload(target, ev.payload ?? {}, ev.tMs, state);
+      break;
+    case 'ENGAGE_RESULT':
+      if (target && (ev.payload as { killed?: boolean })?.killed) target.neutralised = true;
+      break;
+    case 'LEAK':
+      if (target) {
+        target.leaked = true;
+        target.tPnr ??= ev.tMs;
+      }
+      break;
+    case 'ROE_VIOLATION':
+      state.roeViolationCount += 1;
+      break;
+    default:
+      break;
+  }
+}
+
+function processEventStream(events: SimEvent[], scenarioSpec?: ScenarioSpec): EventProcessingState {
+  const tracksMap = new Map<string, TrackAggregate>();
   if (scenarioSpec) {
     const allSpawns = [...(scenarioSpec.threats || []), ...(scenarioSpec.decoys || [])];
     for (let i = 0; i < allSpawns.length; i++) {
       const sp = allSpawns[i];
       const trackNo = `T-${String(i + 1).padStart(2, '0')}`;
-      const t = getOrCreateTrack(trackNo, sp.id);
+      const t = getOrCreateTrack(tracksMap, trackNo, sp.id);
       t.id = sp.id;
       t.trackNo = trackNo;
       t.trueClass = sp.trueClass;
@@ -122,186 +220,65 @@ export function aggregateAARMetrics(
     }
   }
 
-  let roeViolationCount = 0;
-  let unfavourableCount = 0;
-  let totalEffectorCost = 0;
-  let totalEngagedThreatValue = 0;
+  const state: EventProcessingState = {
+    tracksMap,
+    roeViolationCount: 0,
+    unfavourableCount: 0,
+    totalEffectorCost: 0,
+    totalEngagedThreatValue: 0,
+  };
 
-  // Process all events in temporal sequence
   for (const ev of events) {
-    const target = ev.trackNo || ev.entityId ? getOrCreateTrack(ev.trackNo, ev.entityId) : null;
-
-    switch (ev.type) {
-      case 'SPAWN': {
-        if (target) {
-          const p = ev.payload as {
-            trueClass?: TrueClass;
-            droneType?: string;
-            valueInr?: number | null;
-          };
-          if (p.trueClass) target.trueClass = p.trueClass;
-          if (p.droneType) target.droneType = p.droneType;
-          if (p.valueInr !== undefined) target.valueInr = p.valueInr;
-          target.tVis = ev.tMs;
-        }
-        break;
-      }
-
-      case 'DETECT': {
-        if (target && target.tVis === null) {
-          target.tVis = ev.tMs;
-        }
-        break;
-      }
-
-      case 'TRACK_INIT': {
-        if (target) {
-          target.tTrk = ev.tMs;
-          if (ev.trackNo) target.trackNo = ev.trackNo;
-        }
-        break;
-      }
-
-      case 'DESIGNATE': {
-        if (target && target.tDesig === null) {
-          target.tDesig = ev.tMs;
-        }
-        break;
-      }
-
-      case 'CLASSIFY': {
-        if (target) {
-          const p = ev.payload as { label?: TrackClass };
-          if (p.label) {
-            target.traineeLabel = p.label;
-          }
-          if (target.tCls === null) {
-            target.tCls = ev.tMs;
-          }
-        }
-        break;
-      }
-
-      case 'ENGAGE': {
-        if (target) {
-          const p = ev.payload as {
-            effector?: EffectorId;
-            rangeM?: number;
-            cer?: number;
-            roeGate?: { classifiedOk?: boolean; zoneOk?: boolean };
-          };
-          target.engaged = true;
-          if (target.tEng === null) target.tEng = ev.tMs;
-          if (p.effector) target.weaponUsed = p.effector;
-          if (typeof p.rangeM === 'number') target.rangeAtEngageM = p.rangeM;
-
-          if (p.roeGate) {
-            if (p.roeGate.classifiedOk === false) {
-              target.unclassifiedFired = true;
-            }
-            if (p.roeGate.zoneOk === false) {
-              target.isKineticOverDenseZone = true;
-            }
-          }
-
-          if (p.effector) {
-            const cost = CONFIG.effectors[p.effector]?.costInr ?? 0;
-            totalEffectorCost += cost;
-            const val = target.valueInr ?? (CONFIG.droneClasses.RECON_QUAD.valueInr ?? 40000);
-            totalEngagedThreatValue += val;
-          }
-
-          if (typeof p.cer === 'number' && p.cer > CONFIG.thresholds.cerUnfavourableThreshold) {
-            unfavourableCount += 1;
-          }
-        }
-        break;
-      }
-
-      case 'ENGAGE_RESULT': {
-        if (target) {
-          const p = ev.payload as { killed?: boolean };
-          if (p.killed) {
-            target.neutralised = true;
-          }
-        }
-        break;
-      }
-
-      case 'LEAK': {
-        if (target) {
-          target.leaked = true;
-          if (target.tPnr === null) target.tPnr = ev.tMs;
-        }
-        break;
-      }
-
-      case 'ROE_VIOLATION': {
-        roeViolationCount += 1;
-        break;
-      }
-
-      case 'FLAG': {
-        const p = ev.payload as { type?: string };
-        if (p.type === 'UNFAVOURABLE_EXCHANGE') {
-          // Tracked already or increment if not counted from ENGAGE
-        }
-        break;
-      }
-    }
+    const target = ev.trackNo || ev.entityId ? getOrCreateTrack(tracksMap, ev.trackNo, ev.entityId) : null;
+    processEvent(ev, target, state);
   }
 
-  const allTracks = Array.from(tracksMap.values());
-  const hostileTracks = allTracks.filter((t) => isHostile(t.trueClass));
-  const engagedHostileTracks = hostileTracks.filter((t) => t.engaged && t.tEng !== null && t.tTrk !== null);
+  return state;
+}
 
-  // 3. Compute Latencies
-  const metMs =
-    engagedHostileTracks.length > 0
-      ? Math.round(
-          engagedHostileTracks.reduce((acc, t) => acc + (t.tEng! - t.tTrk!), 0) /
-            engagedHostileTracks.length
-        )
-      : null;
+function computeAverageDiff(
+  tracks: TrackAggregate[],
+  getT1: (t: TrackAggregate) => number | null,
+  getT0: (t: TrackAggregate) => number | null
+): number | null {
+  const eligible = tracks.filter((t) => getT1(t) !== null && getT0(t) !== null);
+  if (eligible.length === 0) return null;
+  const sum = eligible.reduce((acc, t) => acc + (getT1(t)! - getT0(t)!), 0);
+  return Math.round(sum / eligible.length);
+}
 
-  const designatedTracks = allTracks.filter((t) => t.tDesig !== null && t.tTrk !== null);
-  const mdtMs =
-    designatedTracks.length > 0
-      ? Math.round(
-          designatedTracks.reduce((acc, t) => acc + (t.tDesig! - t.tTrk!), 0) /
-            designatedTracks.length
-        )
-      : null;
+interface LatencyMetrics {
+  metMs: number | null;
+  mdtMs: number | null;
+  mctMs: number | null;
+  s2sMs: number | null;
+  detToTrackMs: number | null;
+}
 
-  const classifiedTracks = allTracks.filter((t) => t.tCls !== null && t.tDesig !== null);
-  const mctMs =
-    classifiedTracks.length > 0
-      ? Math.round(
-          classifiedTracks.reduce((acc, t) => acc + (t.tCls! - t.tDesig!), 0) /
-            classifiedTracks.length
-        )
-      : null;
+function computeTrackLatencies(allTracks: TrackAggregate[], hostileTracks: TrackAggregate[]): LatencyMetrics {
+  const engagedHostile = hostileTracks.filter((t) => t.engaged && t.tEng !== null && t.tTrk !== null);
+  return {
+    metMs: computeAverageDiff(engagedHostile, (t) => t.tEng, (t) => t.tTrk),
+    mdtMs: computeAverageDiff(allTracks, (t) => t.tDesig, (t) => t.tTrk),
+    mctMs: computeAverageDiff(allTracks, (t) => t.tCls, (t) => t.tDesig),
+    s2sMs: computeAverageDiff(allTracks, (t) => t.tEng, (t) => t.tDesig),
+    detToTrackMs: computeAverageDiff(allTracks, (t) => t.tTrk, (t) => t.tVis),
+  };
+}
 
-  const s2sTracks = allTracks.filter((t) => t.tEng !== null && t.tDesig !== null);
-  const s2sMs =
-    s2sTracks.length > 0
-      ? Math.round(
-          s2sTracks.reduce((acc, t) => acc + (t.tEng! - t.tDesig!), 0) / s2sTracks.length
-        )
-      : null;
+interface ConfusionMetrics {
+  confusion: number[][];
+  clsAccuracy: number;
+  clsCoverage: number;
+  hostileRecall: number;
+  hostilePrecision: number;
+}
 
-  const detToTrackTracks = allTracks.filter((t) => t.tTrk !== null && t.tVis !== null);
-  const detToTrackMs =
-    detToTrackTracks.length > 0
-      ? Math.round(
-          detToTrackTracks.reduce((acc, t) => acc + (t.tTrk! - t.tVis!), 0) /
-            detToTrackTracks.length
-        )
-      : null;
-
-  // 4. 6x8 Confusion Matrix & Classification Metrics (ARCHITECTURE.md 6.4)
-  // Rows: 6 TRUE_CLASSES, Columns: 8 PRED_COLUMNS (7 CLASSES + NONE)
-  const confusion: number[][] = Array.from({ length: 6 }, () => Array(8).fill(0));
+function computeClassificationConfusion(
+  allTracks: TrackAggregate[],
+  hostileTracks: TrackAggregate[]
+): ConfusionMetrics {
+  const confusion: number[][] = Array.from({ length: 6 }, () => new Array(8).fill(0));
   let correctClsCount = 0;
   let coveredCount = 0;
   let hostilePredictedCount = 0;
@@ -309,11 +286,8 @@ export function aggregateAARMetrics(
 
   for (const t of allTracks) {
     const trueRow = TRUE_CLASSES.indexOf(t.trueClass);
-    let predCol: number;
-
-    if (!t.traineeLabel) {
-      predCol = 7; // 'NONE'
-    } else {
+    let predCol = 7;
+    if (t.traineeLabel) {
       const idx = (CLASSES as readonly string[]).indexOf(t.traineeLabel);
       predCol = idx >= 0 ? idx : 7;
     }
@@ -325,14 +299,12 @@ export function aggregateAARMetrics(
     if (t.traineeLabel === t.trueClass) {
       correctClsCount += 1;
     }
-
     if (t.traineeLabel && t.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT') {
       coveredCount += 1;
     }
 
     const isTrueHostile = isHostile(t.trueClass);
     const isPredHostile = t.traineeLabel ? isHostile(t.traineeLabel) : false;
-
     if (isPredHostile) {
       hostilePredictedCount += 1;
       if (isTrueHostile) {
@@ -344,37 +316,22 @@ export function aggregateAARMetrics(
   const totalTracksCount = Math.max(1, allTracks.length);
   const clsAccuracy = Number((correctClsCount / totalTracksCount).toFixed(3));
   const clsCoverage = Number((coveredCount / totalTracksCount).toFixed(3));
-
   const hostileRecall =
     hostileTracks.length > 0
       ? Number((hostileTrueAndPredictedCount / hostileTracks.length).toFixed(3))
       : 1.0;
-
   const hostilePrecision =
     hostilePredictedCount > 0
       ? Number((hostileTrueAndPredictedCount / hostilePredictedCount).toFixed(3))
       : 1.0;
 
-  // 5. Economic & Leaker Metrics
-  const aggregateCer =
-    totalEngagedThreatValue > 0
-      ? Number((totalEffectorCost / totalEngagedThreatValue).toFixed(3))
-      : null;
+  return { confusion, clsAccuracy, clsCoverage, hostileRecall, hostilePrecision };
+}
 
-  const leakers = hostileTracks.filter((t) => t.leaked && !t.neutralised).length;
-  const leakRate =
-    hostileTracks.length > 0 ? Number((leakers / hostileTracks.length).toFixed(3)) : 0;
-
-  const collateralIncidents = allTracks.filter(
-    (t) =>
-      (t.trueClass === 'CIVIL_UAS' || t.trueClass === 'FRIENDLY') && t.engaged
-  ).length;
-
-  // 6. Sensor Adaptation Latency (SAL) (Rules.md SC-13, PRD 4.8)
+function computeSalMetrics(events: SimEvent[]): { salMs: number | null; salScore: number | null } {
   let totalSalMs = 0;
   let salEventsCount = 0;
 
-  // Track active sensor timeline
   const sensorSwitches = events
     .filter((e) => e.type === 'SENSOR_SWITCH')
     .map((e) => ({
@@ -395,59 +352,58 @@ export function aggregateAARMetrics(
   for (const cOn of chaosOnEvents) {
     const cType = cOn.payload?.type as string;
     const tStart = cOn.tMs;
-    // Find matching CHAOS_OFF
     const cOff = events.find(
-      (e) => e.type === 'CHAOS_OFF' && (e.payload?.type === cType) && e.tMs >= tStart
+      (e) => e.type === 'CHAOS_OFF' && e.payload?.type === cType && e.tMs >= tStart
     );
     const tEnd = cOff ? cOff.tMs : tStart + 15000;
     const eventDuration = tEnd - tStart;
 
     const sensorAtOnset = getSensorAt(tStart);
-    let degraded = false;
-    if (cType === 'FOG' && sensorAtOnset === 'EOIR') degraded = true;
-    if (cType === 'JAMMING' && sensorAtOnset === 'RF') degraded = true;
-    if (cType === 'RADAR_DROPOUT' && sensorAtOnset === 'RADAR') degraded = true;
+    const degraded =
+      (cType === 'FOG' && sensorAtOnset === 'EOIR') ||
+      (cType === 'JAMMING' && sensorAtOnset === 'RF') ||
+      (cType === 'RADAR_DROPOUT' && sensorAtOnset === 'RADAR');
 
     if (degraded) {
       salEventsCount += 1;
       const nextSwitch = sensorSwitches.find((s) => s.tMs > tStart && s.tMs <= tEnd);
-      if (nextSwitch) {
-        totalSalMs += nextSwitch.tMs - tStart;
-      } else {
-        totalSalMs += eventDuration; // Fallback: never switched
-      }
+      totalSalMs += nextSwitch ? nextSwitch.tMs - tStart : eventDuration;
     }
   }
 
   const salMs = salEventsCount > 0 ? Math.round(totalSalMs / salEventsCount) : null;
   const salScore = salMs !== null ? clamp(100 * (1 - salMs / 6000)) : null;
+  return { salMs, salScore };
+}
 
-  // 7. Swarm Saturation (SAT)
-  const swarmElements = allTracks.filter((t) => t.droneType === 'SWARM_ELEMENT');
-  const engagedSwarmElements = swarmElements.filter((t) => t.engaged);
-  const swarmSat =
-    swarmElements.length > 0
-      ? Number((engagedSwarmElements.length / swarmElements.length).toFixed(3))
-      : null;
+interface SessionScoreResults {
+  dScore: number;
+  cScore: number;
+  econScore: number;
+  rScore: number;
+  sessionScore: number;
+  grade: Grade;
+}
 
-  // 8. Individual Track Scores & Session Aggregation
+function computeAggregatedScores(
+  allTracks: TrackAggregate[],
+  leakers: number,
+  collateralIncidents: number
+): SessionScoreResults {
   let totalD = 0;
   let totalC = 0;
   let totalEcon = 0;
   let totalR = 0;
+  const totalTracksCount = Math.max(1, allTracks.length);
 
   const trackScoresList = allTracks.map((t) => {
     const isHost = isHostile(t.trueClass);
-
-    // Compute D
     const d = computeDScore(t.tTrk, t.tDesig, t.tPnr ?? 120000);
     totalD += d;
 
-    // Compute C
     const c = computeCScore(t.trueClass, t.traineeLabel);
     totalC += c;
 
-    // Compute Econ & Time
     let econ = 100;
     let time = 100;
     if (t.engaged && t.weaponUsed) {
@@ -459,7 +415,6 @@ export function aggregateAARMetrics(
     }
     totalEcon += econ;
 
-    // Compute G
     const g = computeGScore({
       isHostile: isHost,
       neutralisedBeforePnr: t.neutralised,
@@ -470,7 +425,6 @@ export function aggregateAARMetrics(
       unclassifiedFired: t.unclassifiedFired,
     });
 
-    // Compute R
     const r = computeRScore({
       effectorId: t.weaponUsed,
       rhoZone: t.isKineticOverDenseZone ? 0.8 : 0,
@@ -481,21 +435,9 @@ export function aggregateAARMetrics(
     });
     totalR += r;
 
-    const trackScore = computeTrackScore({
-      isHostile: isHost,
-      d,
-      c,
-      g,
-      r,
-    });
-
+    const trackScore = computeTrackScore({ isHostile: isHost, d, c, g, r });
     return { trackScore, trueClass: t.trueClass };
   });
-
-  const dScore = Math.round(totalD / totalTracksCount);
-  const cScore = Math.round(totalC / totalTracksCount);
-  const econScore = Math.round(totalEcon / totalTracksCount);
-  const rScore = Math.round(totalR / totalTracksCount);
 
   const sessionScore = computeSessionScore({
     trackScores: trackScoresList,
@@ -503,38 +445,76 @@ export function aggregateAARMetrics(
     criticalEventsCount: collateralIncidents,
   });
 
-  const grade: Grade = getGrade(sessionScore);
+  return {
+    dScore: Math.round(totalD / totalTracksCount),
+    cScore: Math.round(totalC / totalTracksCount),
+    econScore: Math.round(totalEcon / totalTracksCount),
+    rScore: Math.round(totalR / totalTracksCount),
+    sessionScore,
+    grade: getGrade(sessionScore),
+  };
+}
+
+/**
+ * Pure function to aggregate complete AARMetrics from the recorded SimEvent stream (Rules.md DT-8, TASK-P3-03).
+ */
+export function aggregateAARMetrics(
+  events: SimEvent[],
+  scenarioSpec?: ScenarioSpec,
+  trainingAidTicks?: number
+): AARMetrics {
+  const meta = extractSessionMetadata(events, scenarioSpec, trainingAidTicks);
+  const streamState = processEventStream(events, scenarioSpec);
+
+  const allTracks = Array.from(streamState.tracksMap.values());
+  const hostileTracks = allTracks.filter((t) => isHostile(t.trueClass));
+
+  const latencies = computeTrackLatencies(allTracks, hostileTracks);
+  const confusionMetrics = computeClassificationConfusion(allTracks, hostileTracks);
+
+  const aggregateCer =
+    streamState.totalEngagedThreatValue > 0
+      ? Number((streamState.totalEffectorCost / streamState.totalEngagedThreatValue).toFixed(3))
+      : null;
+
+  const leakers = hostileTracks.filter((t) => t.leaked && !t.neutralised).length;
+  const leakRate = hostileTracks.length > 0 ? Number((leakers / hostileTracks.length).toFixed(3)) : 0;
+  const collateralIncidents = allTracks.filter(
+    (t) => (t.trueClass === 'CIVIL_UAS' || t.trueClass === 'FRIENDLY') && t.engaged
+  ).length;
+
+  const salMetrics = computeSalMetrics(events);
+
+  const swarmElements = allTracks.filter((t) => t.droneType === 'SWARM_ELEMENT');
+  const engagedSwarm = swarmElements.filter((t) => t.engaged);
+  const swarmSat =
+    swarmElements.length > 0
+      ? Number((engagedSwarm.length / swarmElements.length).toFixed(3))
+      : null;
+
+  const scoreResults = computeAggregatedScores(allTracks, leakers, collateralIncidents);
 
   return {
-    sessionUid: `session-${scenarioId}-${events[0]?.tMs ?? 0}`,
-    mode: sessionMode,
-    score: sessionScore,
-    grade,
-    metMs,
-    mdtMs,
-    mctMs,
-    s2sMs,
-    detToTrackMs,
-    clsAccuracy,
-    clsCoverage,
-    hostileRecall,
-    hostilePrecision,
+    sessionUid: `session-${meta.scenarioId}-${events[0]?.tMs ?? 0}`,
+    mode: meta.sessionMode,
+    score: scoreResults.sessionScore,
+    grade: scoreResults.grade,
+    ...latencies,
+    ...confusionMetrics,
     aggregateCer,
-    unfavourableExchanges: unfavourableCount,
+    unfavourableExchanges: streamState.unfavourableCount,
     collateralIncidents,
-    roeViolations: roeViolationCount,
+    roeViolations: streamState.roeViolationCount,
     leakers,
     leakRate,
-    salMs,
-    salScore,
+    ...salMetrics,
     swarmSat,
-    dScore,
-    cScore,
-    econScore,
-    rScore,
-    confusion,
-    trainingAidTicks: aidTicks,
-    trainingAidDurationSec,
-    trainingAidUsed,
+    dScore: scoreResults.dScore,
+    cScore: scoreResults.cScore,
+    econScore: scoreResults.econScore,
+    rScore: scoreResults.rScore,
+    trainingAidTicks: meta.aidTicks,
+    trainingAidDurationSec: meta.trainingAidDurationSec,
+    trainingAidUsed: meta.trainingAidUsed,
   };
 }

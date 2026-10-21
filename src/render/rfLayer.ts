@@ -102,9 +102,7 @@ export class RfLayer {
 
   public prepareStaticLayer(width: number, height: number): void {
     if (typeof document === 'undefined') return;
-    if (!this.staticCanvas) {
-      this.staticCanvas = document.createElement('canvas');
-    }
+    this.staticCanvas ??= document.createElement('canvas');
     this.staticCanvas.width = width;
     this.staticCanvas.height = height;
 
@@ -132,8 +130,12 @@ export class RfLayer {
     for (let deg = 0; deg < 360; deg += 10) {
       const rad = ((deg - 90) * Math.PI) / 180;
       const isCardinal = deg % 90 === 0;
-      const isMajor = deg % 30 === 0;
-      const tickLen = isCardinal ? 10 : isMajor ? 6 : 3;
+      let tickLen = 3;
+      if (isCardinal) {
+        tickLen = 10;
+      } else if (deg % 30 === 0) {
+        tickLen = 6;
+      }
 
       const cos = Math.cos(rad);
       const sin = Math.sin(rad);
@@ -261,6 +263,40 @@ export class RfLayer {
     return { bin: Math.max(5, Math.min(195, 125 + offset)), tag: 'LINK' };
   }
 
+  private fillJammingRow(wfU32: Uint32Array, seedTimeMs: number): void {
+    for (let b = 0; b < 200; b++) {
+      const noise = hash32(seedTimeMs, b) % 100;
+      let col = 0xff0066cc;
+      if (noise < 50) {
+        col = 0xff0099ff;
+      } else if (noise < 85) {
+        col = 0xff3333ff;
+      }
+      wfU32[b] = col;
+    }
+  }
+
+  private fillSignalRow(wfU32: Uint32Array, seedTimeMs: number, currEntities: TrackEntity[]): void {
+    for (let b = 0; b < 200; b++) {
+      const speckle = hash32(seedTimeMs, b) % 25;
+      const green = 0x15 + (speckle >> 1);
+      const red = 0x0b + (speckle >> 2);
+      wfU32[b] = 0xff000000 | (0x10 << 16) | (green << 8) | red;
+    }
+
+    for (const e of currEntities) {
+      if (e.lifecycle !== 'ACTIVE' && e.lifecycle !== 'LEAKED') continue;
+      if (!e.emitsRf) continue;
+
+      const { bin, tag } = this.getEmitterChannel(e);
+      const color = tag === 'RID' ? 0xffffcc00 : 0xff66ff00;
+
+      wfU32[bin] = color;
+      if (bin > 0) wfU32[bin - 1] = tag === 'RID' ? 0xccbb9900 : 0xcc44aa00;
+      if (bin < 199) wfU32[bin + 1] = tag === 'RID' ? 0xccbb9900 : 0xcc44aa00;
+    }
+  }
+
   private updateWaterfall(currEntities: TrackEntity[], simTimeMs: number, isJamming: boolean): void {
     if (!this.wfU32 || !this.wfImageData || !this.wfCtx) return;
 
@@ -272,31 +308,10 @@ export class RfLayer {
 
     for (let r = 0; r < rowsToScroll; r++) {
       this.wfU32.copyWithin(200, 0, 200 * 79);
-
       if (isJamming) {
-        for (let b = 0; b < 200; b++) {
-          const noise = hash32(simTimeMs + r * 100, b) % 100;
-          this.wfU32[b] = noise < 50 ? 0xff0099ff : noise < 85 ? 0xff3333ff : 0xff0066cc;
-        }
+        this.fillJammingRow(this.wfU32, simTimeMs + r * 100);
       } else {
-        for (let b = 0; b < 200; b++) {
-          const speckle = hash32(simTimeMs + r * 100, b) % 25;
-          const green = 0x15 + (speckle >> 1);
-          const red = 0x0b + (speckle >> 2);
-          this.wfU32[b] = 0xff000000 | (0x10 << 16) | (green << 8) | red;
-        }
-
-        for (const e of currEntities) {
-          if (e.lifecycle !== 'ACTIVE' && e.lifecycle !== 'LEAKED') continue;
-          if (!e.emitsRf) continue;
-
-          const { bin, tag } = this.getEmitterChannel(e);
-          const color = tag === 'RID' ? 0xffffcc00 : 0xff66ff00;
-
-          this.wfU32[bin] = color;
-          if (bin > 0) this.wfU32[bin - 1] = tag === 'RID' ? 0xccbb9900 : 0xcc44aa00;
-          if (bin < 199) this.wfU32[bin + 1] = tag === 'RID' ? 0xccbb9900 : 0xcc44aa00;
-        }
+        this.fillSignalRow(this.wfU32, simTimeMs + r * 100, currEntities);
       }
     }
 

@@ -276,17 +276,14 @@ function drawHistoricalEntities(
     const ghostSigmaPx = (entity.ghostSigmaM ?? 0) * scale;
 
     if (!isGroundTruthActive) {
-      drawTrackSymbol(
-        ctx,
-        sx,
-        sy,
-        entity.traineeLabel,
+      drawTrackSymbol(ctx, sx, sy, {
+        label: entity.traineeLabel,
         isSelected,
         isCoasting,
         ghostSigmaPx,
-        entity.trackNo,
-        entity.step ?? ''
-      );
+        trackNo: entity.trackNo,
+        step: entity.step ?? '',
+      });
     } else {
       drawGroundTruthOverlay(ctx, sx, sy, entity, isSelected);
     }

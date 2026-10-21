@@ -90,95 +90,7 @@ export class TrainingAid3D {
       for (let i = 0; i < zone.polygon.length; i++) {
         const p1 = zone.polygon[i];
         const p2 = zone.polygon[(i + 1) % zone.polygon.length];
-
-        const r1 = Math.hypot(p1[0], p1[1]);
-        const r2 = Math.hypot(p2[0], p2[1]);
-        if (r1 < 1 || r2 < 1) continue;
-
-        // Normal check: check if edge faces radar origin (0, 0)
-        // Edge vector: (dx, dy)
-        const edx = p2[0] - p1[0];
-        const edy = p2[1] - p1[1];
-        // Midpoint
-        const mx = (p1[0] + p2[0]) / 2;
-        const my = (p1[1] + p2[1]) / 2;
-        // Inward or outward normal dot with ray from origin
-        // Outward normal: (edy, -edx)
-        const dot = mx * edy - my * edx;
-        if (dot < 0) {
-          // Faces away from origin -> skip backface to avoid double shadow extrusion
-          continue;
-        }
-
-        // Project near edge vertices outward along rays from origin by shadowM
-        const scale1 = (r1 + zone.shadowM) / r1;
-        const scale2 = (r2 + zone.shadowM) / r2;
-
-        const p1Far = [p1[0] * scale1, p1[1] * scale1];
-        const p2Far = [p2[0] * scale2, p2[1] * scale2];
-
-        // Top ceiling altitudes at near and far edges
-        // z_top(R) = h_r + (R / dNear) * (H - h_r)
-        const zNear = zone.heightM;
-        const zFar1 = Math.min(180, this.antennaHeightM + scale1 * (zone.heightM - this.antennaHeightM));
-        const zFar2 = Math.min(180, this.antennaHeightM + scale2 * (zone.heightM - this.antennaHeightM));
-
-        // Create 8 vertices for the extruded shadow prism:
-        // 0: p1 near bottom (0)
-        // 1: p2 near bottom (0)
-        // 2: p2 near top (zNear)
-        // 3: p1 near top (zNear)
-        // 4: p1 far bottom (0)
-        // 5: p2 far bottom (0)
-        // 6: p2 far top (zFar2)
-        // 7: p1 far top (zFar1)
-
-        const v0 = toThree(p1[0], p1[1], 0);
-        const v1 = toThree(p2[0], p2[1], 0);
-        const v2 = toThree(p2[0], p2[1], zNear);
-        const v3 = toThree(p1[0], p1[1], zNear);
-        const v4 = toThree(p1Far[0], p1Far[1], 0);
-        const v5 = toThree(p2Far[0], p2Far[1], 0);
-        const v6 = toThree(p2Far[0], p2Far[1], zFar2);
-        const v7 = toThree(p1Far[0], p1Far[1], zFar1);
-
-        const positions: number[] = [
-          // Near face (3, 2, 1, 0)
-          v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z,
-          v0.x, v0.y, v0.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z,
-          // Far face (4, 5, 6, 7)
-          v4.x, v4.y, v4.z, v6.x, v6.y, v6.z, v5.x, v5.y, v5.z,
-          v4.x, v4.y, v4.z, v7.x, v7.y, v7.z, v6.x, v6.y, v6.z,
-          // Top slope face (3, 2, 6, 7)
-          v3.x, v3.y, v3.z, v2.x, v2.y, v2.z, v6.x, v6.y, v6.z,
-          v3.x, v3.y, v3.z, v6.x, v6.y, v6.z, v7.x, v7.y, v7.z,
-          // Bottom face (0, 1, 5, 4)
-          v0.x, v0.y, v0.z, v5.x, v5.y, v5.z, v1.x, v1.y, v1.z,
-          v0.x, v0.y, v0.z, v4.x, v4.y, v4.z, v5.x, v5.y, v5.z,
-          // Side 1 (0, 3, 7, 4)
-          v0.x, v0.y, v0.z, v3.x, v3.y, v3.z, v7.x, v7.y, v7.z,
-          v0.x, v0.y, v0.z, v7.x, v7.y, v7.z, v4.x, v4.y, v4.z,
-          // Side 2 (1, 2, 6, 5)
-          v1.x, v1.y, v1.z, v6.x, v6.y, v6.z, v2.x, v2.y, v2.z,
-          v1.x, v1.y, v1.z, v5.x, v5.y, v5.z, v6.x, v6.y, v6.z,
-        ];
-
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geom.computeVertexNormals();
-        this.geometriesToDispose.push(geom);
-
-        const mesh = new THREE.Mesh(geom, shadowMaterial);
-        mesh.renderOrder = 2; // Subordinate to individual tracks
-        this.shadowMeshes.push(mesh);
-        this.group.add(mesh);
-
-        const edgesGeom = new THREE.EdgesGeometry(geom);
-        this.geometriesToDispose.push(edgesGeom);
-        const lines = new THREE.LineSegments(edgesGeom, edgeMaterial);
-        lines.renderOrder = 3;
-        this.shadowLineSegments.push(lines);
-        this.group.add(lines);
+        this.buildEdgeShadowPrism(p1, p2, zone, shadowMaterial, edgeMaterial);
       }
 
       // Add tactical label at zone shadow midpoint
@@ -192,6 +104,86 @@ export class TrainingAid3D {
         this.group.add(sprite);
       }
     }
+  }
+
+  private buildEdgeShadowPrism(
+    p1: [number, number],
+    p2: [number, number],
+    zone: ZoneSpec,
+    shadowMaterial: THREE.Material,
+    edgeMaterial: THREE.Material
+  ): void {
+    const r1 = Math.hypot(p1[0], p1[1]);
+    const r2 = Math.hypot(p2[0], p2[1]);
+    if (r1 < 1 || r2 < 1) return;
+
+    // Normal check: check if edge faces radar origin (0, 0)
+    const edx = p2[0] - p1[0];
+    const edy = p2[1] - p1[1];
+    const mx = (p1[0] + p2[0]) / 2;
+    const my = (p1[1] + p2[1]) / 2;
+    const dot = mx * edy - my * edx;
+    if (dot < 0) {
+      // Faces away from origin -> skip backface
+      return;
+    }
+
+    const scale1 = (r1 + zone.shadowM) / r1;
+    const scale2 = (r2 + zone.shadowM) / r2;
+
+    const p1Far = [p1[0] * scale1, p1[1] * scale1];
+    const p2Far = [p2[0] * scale2, p2[1] * scale2];
+
+    const zNear = zone.heightM;
+    const zFar1 = Math.min(180, this.antennaHeightM + scale1 * (zone.heightM - this.antennaHeightM));
+    const zFar2 = Math.min(180, this.antennaHeightM + scale2 * (zone.heightM - this.antennaHeightM));
+
+    const v0 = toThree(p1[0], p1[1], 0);
+    const v1 = toThree(p2[0], p2[1], 0);
+    const v2 = toThree(p2[0], p2[1], zNear);
+    const v3 = toThree(p1[0], p1[1], zNear);
+    const v4 = toThree(p1Far[0], p1Far[1], 0);
+    const v5 = toThree(p2Far[0], p2Far[1], 0);
+    const v6 = toThree(p2Far[0], p2Far[1], zFar2);
+    const v7 = toThree(p1Far[0], p1Far[1], zFar1);
+
+    const positions: number[] = [
+      // Near face
+      v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z,
+      v0.x, v0.y, v0.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z,
+      // Far face
+      v4.x, v4.y, v4.z, v6.x, v6.y, v6.z, v5.x, v5.y, v5.z,
+      v4.x, v4.y, v4.z, v7.x, v7.y, v7.z, v6.x, v6.y, v6.z,
+      // Top slope face
+      v3.x, v3.y, v3.z, v2.x, v2.y, v2.z, v6.x, v6.y, v6.z,
+      v3.x, v3.y, v3.z, v6.x, v6.y, v6.z, v7.x, v7.y, v7.z,
+      // Bottom face
+      v0.x, v0.y, v0.z, v5.x, v5.y, v5.z, v1.x, v1.y, v1.z,
+      v0.x, v0.y, v0.z, v4.x, v4.y, v4.z, v5.x, v5.y, v5.z,
+      // Side 1
+      v0.x, v0.y, v0.z, v3.x, v3.y, v3.z, v7.x, v7.y, v7.z,
+      v0.x, v0.y, v0.z, v7.x, v7.y, v7.z, v4.x, v4.y, v4.z,
+      // Side 2
+      v1.x, v1.y, v1.z, v6.x, v6.y, v6.z, v2.x, v2.y, v2.z,
+      v1.x, v1.y, v1.z, v5.x, v5.y, v5.z, v6.x, v6.y, v6.z,
+    ];
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geom.computeVertexNormals();
+    this.geometriesToDispose.push(geom);
+
+    const mesh = new THREE.Mesh(geom, shadowMaterial);
+    mesh.renderOrder = 2;
+    this.shadowMeshes.push(mesh);
+    this.group.add(mesh);
+
+    const edgesGeom = new THREE.EdgesGeometry(geom);
+    this.geometriesToDispose.push(edgesGeom);
+    const lines = new THREE.LineSegments(edgesGeom, edgeMaterial);
+    lines.renderOrder = 3;
+    this.shadowLineSegments.push(lines);
+    this.group.add(lines);
   }
 
   /**

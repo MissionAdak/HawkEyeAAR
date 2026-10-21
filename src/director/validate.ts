@@ -45,7 +45,7 @@ export function getThreatPositionAt(threat: ThreatSpawn, tMs: number): Vec3 {
     distRemaining -= segDist;
   }
 
-  return threat.waypoints[threat.waypoints.length - 1];
+  return threat.waypoints.at(-1)!;
 }
 
 /**

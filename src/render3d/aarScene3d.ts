@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { toThree } from './coords';
-import type { ZoneSpec } from '@/sim/types';
-import type { AarReplayState } from '@/ui/aar/aarReplayTypes';
+import type { ZoneSpec, TrueClass } from '@/sim/types';
+import type { AarReplayState, AarReplayTruthTrack } from '@/ui/aar/aarReplayTypes';
 
 // Tactical colors matching tokens in DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -222,14 +222,157 @@ export class AarScene3D {
       ctx.fillText(`TRUE: ${trueClass}`, 8, 38);
 
       // Trainee Operator Classification Comparison
-      const isMismatch = traineeLabel && traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT' && traineeLabel !== trueClass;
-      ctx.fillStyle = isMismatch ? '#FF3333' : traineeLabel ? '#00FF66' : '#8B949E';
+      const isMismatch = Boolean(traineeLabel && traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT' && traineeLabel !== trueClass);
+      ctx.fillStyle = this.getOperatorLabelColor(isMismatch, Boolean(traineeLabel));
       ctx.fillText(`OP: ${traineeLabel ?? 'NONE'} (q=${q.toFixed(2)})`, 8, 56);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.needsUpdate = true;
     return tex;
+  }
+
+  private getOperatorLabelColor(isMismatch: boolean, hasTraineeLabel: boolean): string {
+    if (isMismatch) return '#FF3333';
+    if (hasTraineeLabel) return '#00FF66';
+    return '#8B949E';
+  }
+
+  private getTrailMaterial(trueClass: TrueClass): THREE.LineBasicMaterial {
+    switch (trueClass) {
+      case 'CIVIL_UAS':
+        return this.materials.trailCivil;
+      case 'FRIENDLY':
+        return this.materials.trailFriend;
+      case 'BIRD':
+        return this.materials.trailBird;
+      default:
+        return this.materials.trailThreat;
+    }
+  }
+
+  private getStemMaterial(isSelected: boolean, isMasked: boolean): THREE.LineBasicMaterial {
+    if (isSelected) return this.materials.stemSelected;
+    if (isMasked) return this.materials.stemMasked;
+    return this.materials.stemClear;
+  }
+
+  private createTrackRecord(track: AarReplayTruthTrack): AarTrackMeshRecord {
+    const group = new THREE.Group();
+
+    // Geometry & Material by truth class
+    let droneGeo = this.geometries.octahedron;
+    let droneMat = this.materials.threat;
+
+    if (track.trueClass === 'CIVIL_UAS') {
+      droneGeo = this.geometries.box;
+      droneMat = this.materials.civil;
+    } else if (track.trueClass === 'FRIENDLY') {
+      droneGeo = this.geometries.cylinder;
+      droneMat = this.materials.friend;
+    } else if (track.trueClass === 'BIRD') {
+      droneGeo = this.geometries.octahedron;
+      droneMat = this.materials.bird;
+    }
+
+    const droneMesh = new THREE.Mesh(droneGeo, droneMat);
+
+    // Altitude ground drop stem
+    const stemGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, -track.truthPos.z, 0),
+    ]);
+    const altitudeStem = new THREE.Line(stemGeo, this.materials.stemClear);
+
+    // 10s Trajectory trail line
+    const trailGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0)]);
+    const trailMat = this.getTrailMaterial(track.trueClass);
+    const trailLine = new THREE.Line(trailGeo, trailMat);
+
+    // Operator estimate & truth label sprite
+    const spriteMat = new THREE.SpriteMaterial({
+      map: this.createLabelTexture(
+        track.trackNo ?? 'TRK',
+        track.trueClass,
+        track.traineeLabel,
+        track.q,
+        track.isMasked
+      ),
+      transparent: true,
+    });
+    const labelSprite = new THREE.Sprite(spriteMat);
+    labelSprite.scale.set(120, 36, 1);
+    labelSprite.position.set(0, 35, 0);
+
+    group.add(droneMesh);
+    group.add(altitudeStem);
+    group.add(trailLine);
+    group.add(labelSprite);
+
+    this.tracksGroup.add(group);
+
+    const record: AarTrackMeshRecord = {
+      group,
+      droneMesh,
+      altitudeStem,
+      trailLine,
+      labelSprite,
+      selectionBox: null,
+    };
+    this.trackMeshMap.set(track.id, record);
+    return record;
+  }
+
+  private updateTrackRecord(
+    record: AarTrackMeshRecord,
+    track: AarReplayTruthTrack,
+    isSelected: boolean,
+    tPos: THREE.Vector3
+  ): void {
+    // Update positions
+    record.group.position.copy(tPos);
+
+    // Update drop stem from drone to ground
+    record.altitudeStem.geometry.dispose();
+    record.altitudeStem.geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, -tPos.y, 0),
+    ]);
+    record.altitudeStem.material = this.getStemMaterial(isSelected, track.isMasked);
+
+    // Update historical trail (relative to current position)
+    if (track.trail.length > 1) {
+      const trailPoints = track.trail.map((p: { x: number; y: number; z: number }) => {
+        const pt = toThree(p.x, p.y, p.z);
+        return new THREE.Vector3(pt.x - tPos.x, pt.y - tPos.y, pt.z - tPos.z);
+      });
+      record.trailLine.geometry.dispose();
+      record.trailLine.geometry = new THREE.BufferGeometry().setFromPoints(trailPoints);
+      record.trailLine.visible = true;
+    } else {
+      record.trailLine.visible = false;
+    }
+
+    // Selection bracket
+    if (isSelected && !record.selectionBox) {
+      record.selectionBox = new THREE.LineSegments(this.geometries.selection, this.materials.selectionBox);
+      record.group.add(record.selectionBox);
+    } else if (!isSelected && record.selectionBox) {
+      record.group.remove(record.selectionBox);
+      record.selectionBox = null;
+    }
+  }
+
+  private pruneAbsentTracks(presentTrackIds: Set<string>): void {
+    for (const [id, record] of this.trackMeshMap) {
+      if (!presentTrackIds.has(id)) {
+        record.altitudeStem.geometry.dispose();
+        record.trailLine.geometry.dispose();
+        record.labelSprite.material.dispose();
+        this.tracksGroup.remove(record.group);
+        this.trackMeshMap.delete(id);
+      }
+    }
   }
 
   /**
@@ -240,134 +383,16 @@ export class AarScene3D {
 
     // 1. Render Truth Tracks & Historic Trails
     for (const track of state.tracks) {
-      const trackKey = track.id;
-      presentTrackIds.add(trackKey);
-
+      presentTrackIds.add(track.id);
       const isSelected = track.trackNo === selectedTrackNo;
       const tPos = toThree(track.truthPos.x, track.truthPos.y, track.truthPos.z);
 
-      let record = this.trackMeshMap.get(trackKey);
-
-      if (!record) {
-        const group = new THREE.Group();
-
-        // Geometry & Material by truth class
-        let droneGeo = this.geometries.octahedron;
-        let droneMat = this.materials.threat;
-
-        if (track.trueClass === 'CIVIL_UAS') {
-          droneGeo = this.geometries.box;
-          droneMat = this.materials.civil;
-        } else if (track.trueClass === 'FRIENDLY') {
-          droneGeo = this.geometries.cylinder;
-          droneMat = this.materials.friend;
-        } else if (track.trueClass === 'BIRD') {
-          droneGeo = this.geometries.octahedron;
-          droneMat = this.materials.bird;
-        }
-
-        const droneMesh = new THREE.Mesh(droneGeo, droneMat);
-
-        // Altitude ground drop stem
-        const stemGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(0, 0, 0),
-          new THREE.Vector3(0, -track.truthPos.z, 0),
-        ]);
-        const altitudeStem = new THREE.Line(stemGeo, this.materials.stemClear);
-
-        // 10s Trajectory trail line
-        const trailGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0)]);
-        const trailMat =
-          track.trueClass === 'CIVIL_UAS'
-            ? this.materials.trailCivil
-            : track.trueClass === 'FRIENDLY'
-            ? this.materials.trailFriend
-            : track.trueClass === 'BIRD'
-            ? this.materials.trailBird
-            : this.materials.trailThreat;
-        const trailLine = new THREE.Line(trailGeo, trailMat);
-
-        // Operator estimate & truth label sprite
-        const spriteMat = new THREE.SpriteMaterial({
-          map: this.createLabelTexture(
-            track.trackNo ?? 'TRK',
-            track.trueClass,
-            track.traineeLabel,
-            track.q,
-            track.isMasked
-          ),
-          transparent: true,
-        });
-        const labelSprite = new THREE.Sprite(spriteMat);
-        labelSprite.scale.set(120, 36, 1);
-        labelSprite.position.set(0, 35, 0);
-
-        group.add(droneMesh);
-        group.add(altitudeStem);
-        group.add(trailLine);
-        group.add(labelSprite);
-
-        this.tracksGroup.add(group);
-
-        record = {
-          group,
-          droneMesh,
-          altitudeStem,
-          trailLine,
-          labelSprite,
-          selectionBox: null,
-        };
-        this.trackMeshMap.set(trackKey, record);
-      }
-
-      // Update positions
-      record.group.position.copy(tPos);
-
-      // Update drop stem from drone to ground
-      record.altitudeStem.geometry.dispose();
-      record.altitudeStem.geometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, -tPos.y, 0),
-      ]);
-      record.altitudeStem.material = isSelected
-        ? this.materials.stemSelected
-        : track.isMasked
-        ? this.materials.stemMasked
-        : this.materials.stemClear;
-
-      // Update historical trail (relative to current position)
-      if (track.trail.length > 1) {
-        const trailPoints = track.trail.map((p) => {
-          const pt = toThree(p.x, p.y, p.z);
-          return new THREE.Vector3(pt.x - tPos.x, pt.y - tPos.y, pt.z - tPos.z);
-        });
-        record.trailLine.geometry.dispose();
-        record.trailLine.geometry = new THREE.BufferGeometry().setFromPoints(trailPoints);
-        record.trailLine.visible = true;
-      } else {
-        record.trailLine.visible = false;
-      }
-
-      // Selection bracket
-      if (isSelected && !record.selectionBox) {
-        record.selectionBox = new THREE.LineSegments(this.geometries.selection, this.materials.selectionBox);
-        record.group.add(record.selectionBox);
-      } else if (!isSelected && record.selectionBox) {
-        record.group.remove(record.selectionBox);
-        record.selectionBox = null;
-      }
+      const record = this.trackMeshMap.get(track.id) ?? this.createTrackRecord(track);
+      this.updateTrackRecord(record, track, isSelected, tPos);
     }
 
     // Remove absent tracks
-    for (const [id, record] of this.trackMeshMap) {
-      if (!presentTrackIds.has(id)) {
-        record.altitudeStem.geometry.dispose();
-        record.trailLine.geometry.dispose();
-        record.labelSprite.material.dispose();
-        this.tracksGroup.remove(record.group);
-        this.trackMeshMap.delete(id);
-      }
-    }
+    this.pruneAbsentTracks(presentTrackIds);
 
     // 2. Render Active Masking Marker & Engagement Reticle
     this.updateEventMarkers(state);
@@ -384,7 +409,7 @@ export class AarScene3D {
     }
 
     // Active Engagement Marker
-    if (state.activeEngagement && state.activeEngagement.pos) {
+    if (state.activeEngagement?.pos) {
       const pos = toThree(state.activeEngagement.pos.x, state.activeEngagement.pos.y, state.activeEngagement.pos.z);
       const reticleMesh = new THREE.LineSegments(this.geometries.reticle, this.materials.engagementReticle);
       reticleMesh.position.copy(pos);

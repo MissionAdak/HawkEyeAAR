@@ -43,6 +43,40 @@ export interface ReleaseGatingResult {
  * Checks if a transition between two F2T2EA steps is valid under military doctrine rules.
  * Enforces transition guards (Rules.md DT-1, SC-10, ARCHITECTURE.md 3.3).
  */
+function canProgressForward(
+  fromStep: F2T2EAStep,
+  toStep: F2T2EAStep,
+  context: TransitionContext,
+  qMin: number
+): boolean {
+  switch (fromStep) {
+    case 'UNDETECTED':
+      return toStep === 'FIND';
+    case 'FIND':
+      return toStep === 'FIX' && context.isDesignated;
+    case 'FIX':
+      if (toStep === 'TRACK') return context.q >= qMin;
+      if (toStep === 'TARGET') return context.q >= qMin && context.hasNonUnknownLabel;
+      return false;
+    case 'TRACK':
+      return toStep === 'TARGET' && context.hasNonUnknownLabel;
+    case 'TARGET':
+      return toStep === 'ENGAGE' && context.q >= qMin;
+    case 'ENGAGE':
+      return toStep === 'ASSESS';
+    case 'ASSESS':
+      if (toStep === 'TARGET') return context.assessResult === 'NO_KILL' && !context.isNeutralised;
+      return false;
+    case 'CLOSED':
+    default:
+      return false;
+  }
+}
+
+/**
+ * Checks if a transition between two F2T2EA steps is valid under military doctrine rules.
+ * Enforces transition guards (Rules.md DT-1, SC-10, ARCHITECTURE.md 3.3).
+ */
 export function canTransition(
   fromStep: F2T2EAStep,
   toStep: F2T2EAStep,
@@ -52,11 +86,7 @@ export function canTransition(
 
   // 1. Terminal / Closed state handling
   if (toStep === 'CLOSED') {
-    return (
-      context.isLeaked ||
-      context.isNeutralised ||
-      context.assessResult === 'KILL'
-    );
+    return context.isLeaked || context.isNeutralised || context.assessResult === 'KILL';
   }
 
   // 2. Demotion Guard: If track quality drops below Q_min, tracked entities MUST return to FIX (Rules.md R-14, SC-10)
@@ -71,56 +101,7 @@ export function canTransition(
   }
 
   // 3. Forward progression rules
-  switch (fromStep) {
-    case 'UNDETECTED':
-      return toStep === 'FIND';
-
-    case 'FIND':
-      // Progresses to FIX once designated by trainee
-      return toStep === 'FIX' && context.isDesignated;
-
-    case 'FIX':
-      // Progresses to TRACK once track quality is firm (q >= Q_min)
-      if (toStep === 'TRACK') {
-        return context.q >= qMin;
-      }
-      // Trainee may also directly classify while in FIX if q >= Q_min
-      if (toStep === 'TARGET') {
-        return context.q >= qMin && context.hasNonUnknownLabel;
-      }
-      return false;
-
-    case 'TRACK':
-      // Progresses to TARGET once trainee classifies target with a non-unknown label
-      if (toStep === 'TARGET') {
-        return context.hasNonUnknownLabel;
-      }
-      return false;
-
-    case 'TARGET':
-      // Can engage with chosen effector (soft violations don't block transition to ENGAGE)
-      if (toStep === 'ENGAGE') {
-        return context.q >= qMin;
-      }
-      return false;
-
-    case 'ENGAGE':
-      // Moves to ASSESS post-engagement
-      return toStep === 'ASSESS';
-
-    case 'ASSESS':
-      // If assessed NO_KILL and alive, returns to TARGET for re-engagement
-      if (toStep === 'TARGET') {
-        return context.assessResult === 'NO_KILL' && !context.isNeutralised;
-      }
-      return false;
-
-    case 'CLOSED':
-      return false;
-
-    default:
-      return false;
-  }
+  return canProgressForward(fromStep, toStep, context, qMin);
 }
 
 /**
@@ -185,6 +166,49 @@ export function isPointInsideZoneExpanded(
   return false;
 }
 
+function checkHardBlocks(
+  target: TrackEntity,
+  eff: (typeof CONFIG.effectors)[EffectorId] | undefined,
+  effectorId: EffectorId,
+  rangeM: number,
+  isJammingActive: boolean,
+  qMin: number,
+  rMin: number
+): { isHardBlocked: boolean; hardBlockReason?: string } {
+  if (target.q < qMin) {
+    return { isHardBlocked: true, hardBlockReason: 'Q_MIN_VIOLATION' };
+  }
+  if (rangeM <= rMin || target.lifecycle !== 'ACTIVE') {
+    return { isHardBlocked: true, hardBlockReason: 'PNR_OR_INACTIVE' };
+  }
+  if (!eff || rangeM < eff.envelopeMinM || rangeM > eff.envelopeMaxM) {
+    return { isHardBlocked: true, hardBlockReason: 'OUT_OF_ENVELOPE' };
+  }
+  if (effectorId === 'RF_SOFTKILL') {
+    if (isJammingActive) {
+      return { isHardBlocked: true, hardBlockReason: 'RF_JAMMING_ACTIVE' };
+    }
+    if (!target.emitsRf) {
+      return { isHardBlocked: true, hardBlockReason: 'RF_SILENT_TARGET' };
+    }
+  }
+  return { isHardBlocked: false };
+}
+
+function findOverlappingDenseZone(
+  targetPos: { x: number; y: number },
+  zones: ZoneSpec[],
+  debrisRadiusM: number
+): ZoneSpec | undefined {
+  for (const zone of zones) {
+    if (zone.rho > 0.5) {
+      const overlap = isPointInsideZoneExpanded(targetPos.x, targetPos.y, zone, debrisRadiusM);
+      if (overlap) return zone;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Evaluates weapon release gating against military Rules of Engagement (Rules.md SC-8, SC-9, SC-10).
  * Distinguishes Hard Blocks (physically impossible) from Soft Gates (violations).
@@ -202,81 +226,44 @@ export function evaluateReleaseGating(params: {
   const qMin = CONFIG.thresholds.qMin;
   const rMin = CONFIG.thresholds.rMinM;
 
-  // ----------------------------------------------------
-  // 1. HARD BLOCKS (Weapons release hard-blocked in engine & UI)
-  // ----------------------------------------------------
+  // 1. HARD BLOCKS
   const qOk = target.q >= qMin;
   const pnrOk = rangeM > rMin && target.lifecycle === 'ACTIVE';
-  const envelopeOk = eff ? rangeM >= eff.envelopeMinM && rangeM <= eff.envelopeMaxM : false;
+  const { isHardBlocked, hardBlockReason } = checkHardBlocks(
+    target,
+    eff,
+    effectorId,
+    rangeM,
+    isJammingActive,
+    qMin,
+    rMin
+  );
 
-  // RF soft-kill physical constraints
-  let rfPhysicsOk = true;
-  let rfBlockReason: string | undefined;
-  if (effectorId === 'RF_SOFTKILL') {
-    if (isJammingActive) {
-      rfPhysicsOk = false;
-      rfBlockReason = 'RF_JAMMING_ACTIVE';
-    } else if (!target.emitsRf) {
-      rfPhysicsOk = false;
-      rfBlockReason = 'RF_SILENT_TARGET';
-    }
-  }
-
-  let isHardBlocked = false;
-  let hardBlockReason: string | undefined;
-
-  if (!qOk) {
-    isHardBlocked = true;
-    hardBlockReason = 'Q_MIN_VIOLATION';
-  } else if (!pnrOk) {
-    isHardBlocked = true;
-    hardBlockReason = 'PNR_OR_INACTIVE';
-  } else if (!envelopeOk) {
-    isHardBlocked = true;
-    hardBlockReason = 'OUT_OF_ENVELOPE';
-  } else if (!rfPhysicsOk) {
-    isHardBlocked = true;
-    hardBlockReason = rfBlockReason;
-  }
-
-  // ----------------------------------------------------
-  // 2. SOFT GATES (Permitted to fire, but triggers ROE Violations & scoring penalties)
-  // ----------------------------------------------------
+  // 2. SOFT GATES
   const violations: RoeViolationReason[] = [];
 
-  // Soft Gate 1: Unclassified release (ARCHITECTURE.md 3.1, Rules.md SC-9, SC-10)
+  // Soft Gate 1: Unclassified release
   const classifiedOk = target.traineeLabel !== null && target.traineeLabel !== 'UNKNOWN_EVIDENCE_INSUFFICIENT';
   if (!classifiedOk) {
     violations.push('UNCLASSIFIED_RELEASE');
   }
 
-  // Soft Gate 2: Kinetic effector over dense urban zone (Rules.md SC-8)
+  // Soft Gate 2: Kinetic effector over dense urban zone
   let isKineticOverDenseZone = false;
   let zoneOk = true;
   let overlappingZone: ZoneSpec | undefined;
 
   const isKinetic = eff ? eff.we >= 0.3 : false;
   if (isKinetic) {
-    for (const zone of zones) {
-      if (zone.rho > 0.5) {
-        const overlap = isPointInsideZoneExpanded(
-          target.pos.x,
-          target.pos.y,
-          zone,
-          eff?.debrisRadiusM ?? 0
-        );
-        if (overlap) {
-          isKineticOverDenseZone = true;
-          zoneOk = false;
-          overlappingZone = zone;
-          violations.push('KINETIC_OVER_DENSE_ZONE');
-          break;
-        }
-      }
+    overlappingZone = findOverlappingDenseZone(target.pos, zones, eff?.debrisRadiusM ?? 0);
+    if (overlappingZone) {
+      isKineticOverDenseZone = true;
+      zoneOk = false;
+      violations.push('KINETIC_OVER_DENSE_ZONE');
     }
   }
 
-  // Soft Gate 3: Civil or Friendly targets (Rules.md SC-8, SC-3)
+  // Soft Gate 3: Civil or Friendly targets
   if (target.trueClass === 'CIVIL_UAS') {
     violations.push('CIVILIAN_ENGAGED');
   } else if (target.trueClass === 'FRIENDLY') {

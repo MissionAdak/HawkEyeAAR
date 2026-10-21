@@ -3,9 +3,8 @@ import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
-import type { EffectorId } from '@/sim/types';
+import type { EffectorId, ScenarioSpec, ZoneSpec } from '@/sim/types';
 import demo1Spec from '@/director/bundled/demo1.json';
-import type { ScenarioSpec, ZoneSpec } from '@/sim/types';
 import { AarEngagementInspector } from './aar/AarEngagementInspector';
 import {
   extractEngagementInspectionData,
@@ -276,12 +275,12 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                         {PRED_COLUMNS.map((predCls, colIdx) => {
                           const val = rowData[colIdx] || 0;
                           const isMatch = trueCls === predCls;
-                          const cellBg =
-                            val > 0
-                              ? isMatch
-                                ? 'bg-phosphor/20 text-phosphor font-bold'
-                                : 'bg-threat/20 text-threat font-bold'
-                              : 'text-text-dim';
+                          let cellBg = 'text-text-dim';
+                          if (val > 0) {
+                            cellBg = isMatch
+                              ? 'bg-phosphor/20 text-phosphor font-bold'
+                              : 'bg-threat/20 text-threat font-bold';
+                          }
 
                           return (
                             <td key={predCls} className={`p-1 border-l border-line/40 ${cellBg}`}>
