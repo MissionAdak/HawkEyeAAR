@@ -3,6 +3,7 @@ import { EoirLayer } from './eoirLayer';
 import { RfLayer } from './rfLayer';
 import { engineInstance, clockInstance, useSessionStore } from '@/store/sessionStore';
 import { CONFIG } from '@/config';
+import { type FrameDriver, windowDriver } from '@/sim/frameDriver';
 
 export class ConsoleRenderer {
   private readonly canvas: HTMLCanvasElement;
@@ -10,10 +11,10 @@ export class ConsoleRenderer {
   private readonly radarLayer: RadarLayer;
   private readonly eoirLayer: EoirLayer;
   private readonly rfLayer: RfLayer;
-  private animationFrameId: number | null = null;
+  private frameDriver: FrameDriver;
   public isLowFidelity: boolean = false;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, initialDriver?: FrameDriver) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Could not get 2D context from canvas');
@@ -22,6 +23,7 @@ export class ConsoleRenderer {
     this.radarLayer = new RadarLayer(CONFIG.thresholds.radarMaxRangeM);
     this.eoirLayer = new EoirLayer();
     this.rfLayer = new RfLayer();
+    this.frameDriver = initialDriver ?? windowDriver();
   }
 
   public setLowFidelity(lowFi: boolean): void {
@@ -29,21 +31,38 @@ export class ConsoleRenderer {
   }
 
   public start(): void {
-    if (this.animationFrameId !== null) return;
+    if (this.frameDriver.isRunning()) return;
 
-    const loop = (frameTs: number) => {
+    this.frameDriver.start((frameTs: number) => {
       this.tickAndRender(frameTs);
-      this.animationFrameId = requestAnimationFrame(loop);
-    };
-
-    this.animationFrameId = requestAnimationFrame(loop);
+    });
   }
 
   public stop(): void {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
+    this.frameDriver.stop();
+  }
+
+  /**
+   * Pluggable FrameDriver handoff (ARCHITECTURE.md §1.3 & Optional Task 14).
+   * Seamlessly swaps frame driver (e.g. windowDriver <-> xrDriver) while
+   * strictly preserving sim accumulator, tick, input queue, and session state.
+   */
+  public setFrameDriver(nextDriver: FrameDriver): void {
+    if (this.frameDriver === nextDriver) return;
+    const wasRunning = this.frameDriver.isRunning();
+    this.frameDriver.stop();
+    this.frameDriver = nextDriver;
+    // Resuming clock synchronizes lastFrameTs with current wall-time, preventing fast-forward
+    clockInstance.resume();
+    if (wasRunning) {
+      this.frameDriver.start((frameTs: number) => {
+        this.tickAndRender(frameTs);
+      });
     }
+  }
+
+  public getFrameDriver(): FrameDriver {
+    return this.frameDriver;
   }
 
   private tickAndRender(frameTs: number): void {

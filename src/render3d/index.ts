@@ -78,5 +78,15 @@ export type {
   RadarRcsShell,
 } from './trainingAidMath';
 
+export {
+  checkWebXRSupport,
+  queueVrAction,
+  WebXRPanel,
+  WebXRTableTop,
+  WebXRControllerHandler,
+  WebXRManager,
+} from './xr';
+export type { WebXRCapabilityResult } from './xr';
+
 
 

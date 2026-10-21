@@ -272,6 +272,10 @@ export class Renderer3D {
     this.renderer.setPixelRatio(lowFi ? 1 : Math.min(window.devicePixelRatio || 1, 2));
   }
 
+  public getThreeRenderer(): THREE.WebGLRenderer {
+    return this.renderer;
+  }
+
   /**
    * Complete renderer and scene teardown.
    */

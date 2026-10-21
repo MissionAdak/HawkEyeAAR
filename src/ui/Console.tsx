@@ -6,12 +6,13 @@ import { EventLog } from './EventLog';
 const HotWash = React.lazy(() => import('./HotWash').then((m) => ({ default: m.HotWash })));
 import { QuickGuide } from './QuickGuide';
 import { ScenarioModal } from './ScenarioModal';
+import { WebXrComfortModal } from './WebXrComfortModal';
 const CrossSectionPanel = React.lazy(() => import('./CrossSectionPanel').then((m) => ({ default: m.CrossSectionPanel })));
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
 import type { SafeTrackView, CameraPreset } from '@/render3d/types';
-import type { Renderer3D } from '@/render3d';
+import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
 
@@ -102,6 +103,7 @@ interface TacticalViewportTabsProps {
   onToggleTrainingAid: () => void;
   onToggleCrossSection: () => void;
   onToggleViewMode: () => void;
+  onEnterVr: () => void;
 }
 
 const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
@@ -124,6 +126,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   onToggleTrainingAid,
   onToggleCrossSection,
   onToggleViewMode,
+  onEnterVr,
 }) => {
   return (
     <div className="absolute top-2 left-2 z-20 flex flex-wrap gap-1 font-display text-[10px] max-w-[420px]">
@@ -243,6 +246,14 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
       </button>
 
       <button
+        onClick={onEnterVr}
+        title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
+        className="px-2 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
+      >
+        [VR] EXPERIMENTAL
+      </button>
+
+      <button
         onClick={onOpenScenarioModal}
         disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
         title="Open Mission / Exercise Scenario Selector [S]"
@@ -263,7 +274,9 @@ export const Console: React.FC = () => {
   const canvas3dRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ConsoleRenderer | null>(null);
   const renderer3dRef = useRef<Renderer3D | null>(null);
+  const xrManagerRef = useRef<WebXRManager | null>(null);
 
+  const [isVrModalOpen, setIsVrModalOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
   const [webGlError, setWebGlError] = useState<string | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('OBLIQUE');
@@ -356,9 +369,11 @@ export const Console: React.FC = () => {
     };
   }, []);
 
-  // Cleanup 3D Renderer on unmount
+  // Cleanup 3D Renderer and WebXR on unmount
   useEffect(() => {
     return () => {
+      xrManagerRef.current?.dispose();
+      xrManagerRef.current = null;
       renderer3dRef.current?.dispose();
       renderer3dRef.current = null;
     };
@@ -367,6 +382,7 @@ export const Console: React.FC = () => {
   // Toggle 2D / 3D Tactical View with WebGL2 probe and graceful fallback
   const toggleViewMode = async () => {
     if (viewMode === '3D') {
+      xrManagerRef.current?.exitVR();
       renderer3dRef.current?.stop();
       setViewMode('2D');
       return;
@@ -397,6 +413,7 @@ export const Console: React.FC = () => {
           mode: engineInstance.mode,
           showTrainingAid: showTrainingAidRef.current,
           onContextLost: () => {
+            xrManagerRef.current?.exitVR();
             renderer3dRef.current?.stop();
             setViewMode('2D');
             setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
@@ -468,6 +485,141 @@ export const Console: React.FC = () => {
       console.error('[Console] Failed to load 3D view:', err);
       setWebGlError('Failed to load 3D renderer. Restoring 2D mode.');
       setViewMode('2D');
+    }
+  };
+
+  const handleOpenVr = () => {
+    setIsVrModalOpen(true);
+  };
+
+  const handleConfirmVr = async () => {
+    setIsVrModalOpen(false);
+
+    try {
+      const {
+        checkWebXRSupport,
+        WebXRManager,
+        Renderer3D,
+        checkWebGL2Support,
+        calculateRadarCoverage,
+        calculateEoirCoverage,
+        calculateRfCoverage,
+      } = await import('@/render3d');
+
+      const cap = await checkWebXRSupport();
+      if (!cap.supported) {
+        setWebGlError(cap.reason || 'WebXR immersive-vr not supported on this device/runtime.');
+        return;
+      }
+
+      const glCap = checkWebGL2Support();
+      if (!glCap.supported) {
+        setWebGlError(glCap.reason || 'WebGL2 not supported');
+        return;
+      }
+
+      // Ensure 3D renderer is instantiated
+      if (!renderer3dRef.current && canvas3dRef.current) {
+        canvas3dRef.current.width = 520;
+        canvas3dRef.current.height = 520;
+
+        const r3d = new Renderer3D(canvas3dRef.current, {
+          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
+          rMinM: CONFIG.thresholds.rMinM,
+          zones: engineInstance.spec?.zones || [],
+          mode: engineInstance.mode,
+          showTrainingAid: showTrainingAidRef.current,
+          onContextLost: () => {
+            xrManagerRef.current?.exitVR();
+            renderer3dRef.current?.stop();
+            setViewMode('2D');
+            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
+          },
+        });
+
+        r3d.setTrackProvider(() => ({
+          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
+          selectedTrackNo: engineInstance.selectedTrackNo,
+        }));
+
+        r3d.setCoverageProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          return {
+            radar: calculateRadarCoverage({
+              sensorHealth: engineInstance.sensorHealth.RADAR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            eoir: calculateEoirCoverage({
+              azimuthDeg: engineInstance.eoirAzimuthDeg,
+              isNight: engineInstance.spec?.dayNight === 'NIGHT',
+              sensorHealth: engineInstance.sensorHealth.EOIR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            rf: calculateRfCoverage({
+              sensorHealth: engineInstance.sensorHealth.RF,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            activeSensor: useSessionStore.getState().ui.activeSensor,
+            visible: true,
+          };
+        });
+
+        r3d.setEffectorProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          const selectedEntity = engineInstance.selectedTrackNo
+            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
+            : null;
+
+          return {
+            activeEffector: useSessionStore.getState().ui.activeEffector,
+            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
+              ? {
+                  trackNo: selectedEntity.trackNo!,
+                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
+                  q: selectedEntity.q,
+                }
+              : null,
+            sensorHealth: engineInstance.sensorHealth,
+            chaosList: engineInstance.spec?.chaos,
+            tMs: currentSimMs,
+            visible: showEnvelopesRef.current,
+          };
+        });
+
+        r3d.setShowLos(showLosRef.current);
+        r3d.setShowClusters(showClustersRef.current);
+        r3d.setLowFidelity(lowFi);
+        renderer3dRef.current = r3d;
+      }
+
+      if (renderer3dRef.current && rendererRef.current) {
+        setViewMode('3D');
+        renderer3dRef.current.start();
+
+        const xrMgr = new WebXRManager(
+          renderer3dRef.current.getThreeRenderer(),
+          renderer3dRef.current.getScene3D().scene,
+          rendererRef.current,
+          () => {
+            xrManagerRef.current = null;
+          }
+        );
+        xrManagerRef.current = xrMgr;
+        const res = await xrMgr.enterVR();
+        if (!res.success) {
+          setWebGlError(res.error || 'Failed to enter WebXR VR session');
+          xrMgr.exitVR();
+          xrManagerRef.current = null;
+        } else {
+          setWebGlError(null);
+        }
+      }
+    } catch (err) {
+      console.error('[Console] Failed to enter VR mode:', err);
+      setWebGlError('WebXR VR entry failed. Restored desktop view.');
     }
   };
 
@@ -622,6 +774,7 @@ export const Console: React.FC = () => {
               onToggleTrainingAid={toggleTrainingAid}
               onToggleCrossSection={toggleCrossSection}
               onToggleViewMode={toggleViewMode}
+              onEnterVr={handleOpenVr}
             />
 
             {/* Overlaid Cursor Bearing / Range Readout (2D) or 3D Camera Readout */}
@@ -717,6 +870,13 @@ export const Console: React.FC = () => {
 
       {/* 9. Mission Scenario Selector Modal */}
       {isScenarioModalOpen && <ScenarioModal onClose={closeScenarioModal} />}
+
+      {/* 10. WebXR VR Comfort & Safety Advisory Modal */}
+      <WebXrComfortModal
+        isOpen={isVrModalOpen}
+        onConfirm={handleConfirmVr}
+        onCancel={() => setIsVrModalOpen(false)}
+      />
     </div>
   );
 };

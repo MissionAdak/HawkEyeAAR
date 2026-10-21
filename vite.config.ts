@@ -32,6 +32,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
+        chunkFileNames(chunkInfo) {
+          const id = (chunkInfo.facadeModuleId || '').replaceAll('\\', '/');
+          if (id.includes('/src/render3d/')) {
+            return 'assets/render3d-[name]-[hash].js';
+          }
+          return 'assets/[name]-[hash].js';
+        },
         manualChunks(id) {
           const normalizedId = id.replaceAll('\\', '/');
           if (normalizedId.includes('node_modules/three')) {
