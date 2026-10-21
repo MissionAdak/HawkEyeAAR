@@ -53,8 +53,8 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
   test('requires explicit confirmation before replacing an active session', async ({ page }) => {
     await page.goto('/');
 
-    // Wait for simulation to run a few seconds
-    await page.waitForTimeout(1000);
+    // Wait for simulation clock to advance
+    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible();
 
     // Open Scenario Modal
     await page.getByRole('button', { name: /\[S\] SCENARIO/i }).click();
@@ -94,6 +94,7 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     // Switch to DEMO-2 via modal
     await page.getByRole('button', { name: /\[S\] SCENARIO/i }).click();
     const modal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
+    await expect(modal).toBeVisible();
     const demo2Card = modal.locator('[data-testid="scenario-card-DEMO-2"]');
     await demo2Card.getByRole('button', { name: /LOAD SCENARIO/i }).click();
 
@@ -102,21 +103,32 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
       await confirmDialog.getByRole('button', { name: /CONFIRM & LOAD SCENARIO/i }).click();
     }
 
-    // Verify DEMO-2 is active
+    // Modal should close and active scenario should now be DEMO-2
+    await expect(modal).not.toBeVisible();
     const leftRail = page.locator('aside').first();
     await expect(leftRail.getByText('DEMO-2').first()).toBeVisible({ timeout: 5000 });
 
-    // Click RESTART in left rail (opens confirm if running)
+    // Allow the simulation to run so clock advances beyond T+00:00
+    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible();
+
+    // Click RESTART in left rail, which opens the Scenario Modal while a session is active
     const restartBtn = leftRail.getByRole('button', { name: /RESTART/i });
     await restartBtn.click();
 
-    // If modal/confirm opened, confirm restart
-    const restartConfirm = page.getByRole('alertdialog');
-    if (await restartConfirm.isVisible()) {
-      await restartConfirm.getByRole('button', { name: /CONFIRM/i }).click();
-    }
+    // Wait for scenario modal visibility
+    await expect(modal).toBeVisible();
 
-    // Must still be DEMO-2, not DEMO-1
+    // Click the DEMO-2 card's RESTART button
+    await demo2Card.getByRole('button', { name: /RESTART/i }).click();
+
+    // Wait for the alert dialog before confirming
+    const restartConfirmDialog = page.getByRole('alertdialog');
+    await expect(restartConfirmDialog).toBeVisible();
+    await restartConfirmDialog.getByRole('button', { name: /CONFIRM & RESTART/i }).click();
+
+    // Modal closes, clock resets back to T+00:00, and scenario remains DEMO-2
+    await expect(modal).not.toBeVisible();
+    await expect(page.locator('header').getByText('T+00:00')).toBeVisible();
     await expect(leftRail.getByText('DEMO-2').first()).toBeVisible();
   });
 

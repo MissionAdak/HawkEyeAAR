@@ -86,8 +86,8 @@ export interface SessionState {
   // Session lifecycle
   loadScenario: (spec: ScenarioSpec) => Promise<void>;
   loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
-  restartSession: (options?: { freshSeed?: boolean }) => Promise<void>;
-  rerunExactSeedSession: () => Promise<void>;
+  restartSession: (options?: { freshSeed?: boolean }) => Promise<boolean>;
+  rerunExactSeedSession: () => Promise<boolean>;
   setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
 
@@ -236,6 +236,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   loadScenario: async (spec: ScenarioSpec): Promise<void> => {
+    // Reentrancy guard: prevent concurrent scenario loads while finalization is active
+    if (isFinalizingSession) {
+      console.warn('[SessionStore] Scenario load already in progress.');
+      return;
+    }
+
     // Evaluation check guard: do not permit mid-EVAL scenario modifications
     if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
       console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
@@ -266,13 +272,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (activeRecorder) {
       try {
         await activeRecorder.stop();
+        activeRecorder = null;
+        engineInstance.onEvent = null;
       } catch (error) {
         console.error('[Recorder Error] Failed to persist previous session events:', error);
         isFinalizingSession = false;
         throw error;
-      } finally {
-        activeRecorder = null;
-        engineInstance.onEvent = null;
       }
     }
 
@@ -294,12 +299,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     recorderForSession.start();
 
     engineInstance.load(spec);
-    await recorderForSession.flush();
-    clockInstance.reset();
-    isFinalizingSession = false;
+    try {
+      await recorderForSession.flush();
+    } catch (flushError) {
+      console.warn('[Recorder] Initial SIM_START flush delayed; batch retained in buffer:', flushError);
+    } finally {
+      clockInstance.reset();
+      isFinalizingSession = false;
+    }
 
+    let scenarioId = spec.id;
     const catalogEntry = getScenarioCatalogEntry(spec.id);
-    const scenarioId = catalogEntry ? catalogEntry.id : (spec.id.startsWith('PROCEDURAL-') ? 'PROCEDURAL-1' : spec.id);
+    if (catalogEntry) {
+      scenarioId = catalogEntry.id;
+    } else if (spec.id.startsWith('PROCEDURAL-')) {
+      scenarioId = 'PROCEDURAL-1';
+    }
 
     set({
       currentScenarioId: scenarioId,
@@ -327,29 +342,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  restartSession: async (options?: { freshSeed?: boolean }): Promise<void> => {
+  restartSession: async (options?: { freshSeed?: boolean }): Promise<boolean> => {
     if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
       console.warn('[SessionStore] Restarting is prohibited mid-EVAL.');
-      return;
+      return false;
     }
 
     const currentId = get().currentScenarioId;
     const useFreshSeed = options?.freshSeed !== false;
     const seed = useFreshSeed ? generateLocalSeed() : engineInstance.spec?.seed;
 
-    await get().loadScenarioById(currentId, seed);
+    return await get().loadScenarioById(currentId, seed);
   },
 
-  rerunExactSeedSession: async (): Promise<void> => {
+  rerunExactSeedSession: async (): Promise<boolean> => {
     if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
       console.warn('[SessionStore] Exact-seed rerun is prohibited mid-EVAL.');
-      return;
+      return false;
     }
 
     const currentId = get().currentScenarioId;
     const exactSeed = engineInstance.spec?.seed;
 
-    await get().loadScenarioById(currentId, exactSeed);
+    return await get().loadScenarioById(currentId, exactSeed);
   },
 
   setSpeed: (speed: number) => {

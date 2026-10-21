@@ -50,7 +50,9 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
         setPendingScenario(entry);
         setIsRestartConfirm(true);
       } else {
-        void restartSession().then(() => onClose());
+        void restartSession().then((success) => {
+          if (success) onClose();
+        });
       }
       return;
     }
@@ -59,7 +61,7 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
       setPendingScenario(entry);
       setIsRestartConfirm(false);
     } else {
-      executeLoad(entry.id);
+      void executeLoad(entry.id);
     }
   };
 
@@ -81,11 +83,23 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
 
   const handleConfirmAction = async () => {
     if (!pendingScenario) return;
+    const scenario = pendingScenario;
     if (isRestartConfirm) {
-      await restartSession();
-      onClose();
+      try {
+        const success = await restartSession();
+        if (success) {
+          onClose();
+        } else {
+          setLoadError(`Failed to restart scenario "${scenario.id}". Verification failed.`);
+        }
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setPendingScenario(null);
+        setIsRestartConfirm(false);
+      }
     } else {
-      await executeLoad(pendingScenario.id);
+      await executeLoad(scenario.id);
     }
   };
 
@@ -145,6 +159,20 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
           {SCENARIO_CATALOG.map((entry) => {
             const isActive = entry.id === currentScenarioId;
 
+            let actionBtnStyle = 'border-phosphor text-phosphor hover:bg-phosphor hover:text-carbon-950';
+            if (isEvalActive) {
+              actionBtnStyle = 'opacity-40 cursor-not-allowed border-line text-text-dim bg-carbon-900';
+            } else if (isActive) {
+              actionBtnStyle = 'border-amber text-amber hover:bg-amber hover:text-carbon-950';
+            }
+
+            let actionBtnTitle = `Load ${entry.name}`;
+            if (isEvalActive) {
+              actionBtnTitle = 'Locked in EVAL mode';
+            } else if (isActive) {
+              actionBtnTitle = 'Restart current scenario session with fresh seed';
+            }
+
             return (
               <div
                 key={entry.id}
@@ -191,20 +219,8 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
                     <button
                       disabled={isEvalActive}
                       onClick={() => handleSelectScenario(entry)}
-                      className={`px-3 py-1 font-display font-bold text-[11px] border transition-colors ${
-                        isEvalActive
-                          ? 'opacity-40 cursor-not-allowed border-line text-text-dim bg-carbon-900'
-                          : isActive
-                            ? 'border-amber text-amber hover:bg-amber hover:text-carbon-950'
-                            : 'border-phosphor text-phosphor hover:bg-phosphor hover:text-carbon-950'
-                      }`}
-                      title={
-                        isEvalActive
-                          ? 'Locked in EVAL mode'
-                          : isActive
-                            ? 'Restart current scenario session with fresh seed'
-                            : `Load ${entry.name}`
-                      }
+                      className={`px-3 py-1 font-display font-bold text-[11px] border transition-colors ${actionBtnStyle}`}
+                      title={actionBtnTitle}
                     >
                       {isActive ? '[R] RESTART (NEW SEED)' : '[LOAD SCENARIO]'}
                     </button>

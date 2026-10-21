@@ -118,18 +118,20 @@ export const TrackTable: React.FC = () => {
           trackRows.map((t: UiTrackRow, idx: number) => {
             const isSelected = t.trackNo === selectedTrackNo;
             const isPriority = idx === 0 && !selectedTrackNo;
+            let rowStyle = 'hover:bg-carbon-800/60';
+            if (isSelected) {
+              rowStyle = 'bg-carbon-800 border-l-2 border-friend';
+            } else if (isPriority) {
+              rowStyle = 'bg-phosphor/10 border-l-2 border-phosphor animate-pulse';
+            }
+
             return (
-              <div
+              <button
+                type="button"
                 key={t.trackNo}
                 onClick={() => designate(t.trackNo, 'CLICK')}
                 title="Click to lock track"
-                className={`h-[24px] px-1 flex items-center text-[11px] cursor-pointer transition-colors ${
-                  isSelected
-                    ? 'bg-carbon-800 border-l-2 border-friend'
-                    : isPriority
-                      ? 'bg-phosphor/10 border-l-2 border-phosphor animate-pulse'
-                      : 'hover:bg-carbon-800/60'
-                }`}
+                className={`w-full h-[24px] px-1 flex items-center text-[11px] text-left cursor-pointer transition-colors ${rowStyle}`}
               >
                 <div className="w-[44px] font-bold text-text-main pl-1 flex items-center gap-1">
                   {isPriority && <span className="text-phosphor text-[8px]">▶</span>}
@@ -152,7 +154,7 @@ export const TrackTable: React.FC = () => {
                     {t.statusPill}
                   </span>
                 </div>
-              </div>
+              </button>
             );
           })
         )}
