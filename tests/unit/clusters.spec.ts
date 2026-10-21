@@ -17,7 +17,7 @@ describe('Track X3D — Operator-Visible Spatial Clustering (TASK-F4)', () => {
     x: number,
     y: number,
     z: number = 30,
-    label: any = null
+    label: SafeTrackView['traineeLabel'] = null
   ): SafeTrackView => ({
     trackNo,
     pos: { x, y, z },
@@ -240,14 +240,14 @@ describe('Track X3D — Operator-Visible Spatial Clustering (TASK-F4)', () => {
             masked: e.masked,
             ghostSigmaM: e.ghostSigmaM,
             isSelected: false,
-            lifecycle: e.lifecycle as any,
+            lifecycle: e.lifecycle as SafeTrackView['lifecycle'],
           }));
 
         detectTrackClusters(safeTracks);
       }
 
       expect(engineA.tickIndex).toBe(engineB.tickIndex);
-      expect(engineA.events.length).toBe(engineB.events.length);
+      expect(engineA.events).toHaveLength(engineB.events.length);
       for (let i = 0; i < engineA.events.length; i++) {
         expect(engineA.events[i].type).toBe(engineB.events[i].type);
         expect(engineA.events[i].tMs).toBe(engineB.events[i].tMs);
@@ -270,7 +270,7 @@ describe('Track X3D — Operator-Visible Spatial Clustering (TASK-F4)', () => {
       const detected = overlay.update(swarmTracks, true);
       expect(detected).toHaveLength(1);
       expect(overlay.group.visible).toBe(true);
-      expect(overlay.group.children.length).toBe(1);
+      expect(overlay.group.children).toHaveLength(1);
 
       // Update with visible=false (hides overlay)
       overlay.update(swarmTracks, false);

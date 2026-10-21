@@ -188,7 +188,7 @@ export class WebXRPanel {
     ctx.lineWidth = 2;
     ctx.strokeRect(24, 120, w - 48, 140);
 
-    if (selEntity && selEntity.trackNo) {
+    if (selEntity?.trackNo) {
       const distKm = (Math.hypot(selEntity.pos.x, selEntity.pos.y) / 1000).toFixed(2);
       let brgDeg = Math.round((Math.atan2(selEntity.pos.x, selEntity.pos.y) * 180) / Math.PI);
       if (brgDeg < 0) brgDeg += 360;
@@ -413,6 +413,60 @@ export class WebXRControllerHandler {
     this.scene.add(this.rayLine);
   }
 
+  private handleTriggerEdge(pad: Gamepad, state: ControllerEdgeState, frameTimestamp: number): void {
+    const triggerPressed = pad.buttons[0]?.pressed ?? false;
+    if (triggerPressed && !state.prevTrigger) {
+      if (this.activeRayTarget) {
+        queueVrAction({ type: 'DESIGNATE', trackNo: this.activeRayTarget, via: 'CLICK' }, frameTimestamp);
+      } else {
+        queueVrAction({ type: 'CYCLE_TRACK', direction: 'NEXT' }, frameTimestamp);
+      }
+    }
+    state.prevTrigger = triggerPressed;
+  }
+
+  private handleGripEdge(pad: Gamepad, state: ControllerEdgeState, frameTimestamp: number): void {
+    const gripPressed = pad.buttons[1]?.pressed ?? false;
+    if (gripPressed && !state.prevGrip) {
+      const curEff = useSessionStore.getState().ui.activeEffector;
+      const curIdx = EFFECTOR_LIST.indexOf(curEff);
+      const nextEff = EFFECTOR_LIST[(curIdx + 1) % EFFECTOR_LIST.length];
+      useSessionStore.getState().selectEffector(nextEff);
+      queueVrAction({ type: 'SELECT_EFFECTOR', effectorId: nextEff }, frameTimestamp);
+    }
+    state.prevGrip = gripPressed;
+  }
+
+  private handleActionButtons(pad: Gamepad, state: ControllerEdgeState, frameTimestamp: number): void {
+    const buttonAPressed = pad.buttons[4]?.pressed ?? false;
+    if (buttonAPressed && !state.prevButtonA) {
+      const selTrack = engineInstance.selectedTrackNo;
+      if (selTrack) {
+        queueVrAction({ type: 'FIRE', trackNo: selTrack }, frameTimestamp);
+      }
+    }
+    state.prevButtonA = buttonAPressed;
+
+    const buttonBPressed = pad.buttons[5]?.pressed ?? false;
+    if (buttonBPressed && !state.prevButtonB) {
+      const selTrack = engineInstance.selectedTrackNo;
+      if (selTrack) {
+        queueVrAction({ type: 'ASSESS', trackNo: selTrack, result: 'KILL' }, frameTimestamp);
+      }
+    }
+    state.prevButtonB = buttonBPressed;
+  }
+
+  private handleThumbstick(pad: Gamepad, state: ControllerEdgeState, frameTimestamp: number): void {
+    const stickX = pad.axes[2] ?? pad.axes[0] ?? 0;
+    if (stickX > 0.6 && state.prevThumbstickX <= 0.6) {
+      queueVrAction({ type: 'CYCLE_TRACK', direction: 'NEXT' }, frameTimestamp);
+    } else if (stickX < -0.6 && state.prevThumbstickX >= -0.6) {
+      queueVrAction({ type: 'CYCLE_TRACK', direction: 'PREV' }, frameTimestamp);
+    }
+    state.prevThumbstickX = stickX;
+  }
+
   /**
    * Polls WebXR gamepads on active frame time, detects edges, and queues deterministic UserActions.
    */
@@ -437,56 +491,10 @@ export class WebXRControllerHandler {
         this.edges.set(i, state);
       }
 
-      // 1. Trigger Edge (Button 0)
-      const triggerPressed = pad.buttons[0]?.pressed ?? false;
-      if (triggerPressed && !state.prevTrigger) {
-        if (this.activeRayTarget) {
-          queueVrAction({ type: 'DESIGNATE', trackNo: this.activeRayTarget, via: 'CLICK' }, frameTimestamp);
-        } else {
-          queueVrAction({ type: 'CYCLE_TRACK', direction: 'NEXT' }, frameTimestamp);
-        }
-      }
-      state.prevTrigger = triggerPressed;
-
-      // 2. Grip / Squeeze Edge (Button 1) -> Cycle Effector Selection
-      const gripPressed = pad.buttons[1]?.pressed ?? false;
-      if (gripPressed && !state.prevGrip) {
-        const curEff = useSessionStore.getState().ui.activeEffector;
-        const curIdx = EFFECTOR_LIST.indexOf(curEff);
-        const nextEff = EFFECTOR_LIST[(curIdx + 1) % EFFECTOR_LIST.length];
-        useSessionStore.getState().selectEffector(nextEff);
-        queueVrAction({ type: 'SELECT_EFFECTOR', effectorId: nextEff }, frameTimestamp);
-      }
-      state.prevGrip = gripPressed;
-
-      // 3. Button A Edge (Button 4 / Right Controller Primary) -> FIRE on selected track
-      const buttonAPressed = pad.buttons[4]?.pressed ?? false;
-      if (buttonAPressed && !state.prevButtonA) {
-        const selTrack = engineInstance.selectedTrackNo;
-        if (selTrack) {
-          queueVrAction({ type: 'FIRE', trackNo: selTrack }, frameTimestamp);
-        }
-      }
-      state.prevButtonA = buttonAPressed;
-
-      // 4. Button B Edge (Button 5 / Right Controller Secondary) -> ASSESS KILL
-      const buttonBPressed = pad.buttons[5]?.pressed ?? false;
-      if (buttonBPressed && !state.prevButtonB) {
-        const selTrack = engineInstance.selectedTrackNo;
-        if (selTrack) {
-          queueVrAction({ type: 'ASSESS', trackNo: selTrack, result: 'KILL' }, frameTimestamp);
-        }
-      }
-      state.prevButtonB = buttonBPressed;
-
-      // 5. Thumbstick Lateral Flick (Cycle Tracks)
-      const stickX = pad.axes[2] ?? pad.axes[0] ?? 0;
-      if (stickX > 0.6 && state.prevThumbstickX <= 0.6) {
-        queueVrAction({ type: 'CYCLE_TRACK', direction: 'NEXT' }, frameTimestamp);
-      } else if (stickX < -0.6 && state.prevThumbstickX >= -0.6) {
-        queueVrAction({ type: 'CYCLE_TRACK', direction: 'PREV' }, frameTimestamp);
-      }
-      state.prevThumbstickX = stickX;
+      this.handleTriggerEdge(pad, state, frameTimestamp);
+      this.handleGripEdge(pad, state, frameTimestamp);
+      this.handleActionButtons(pad, state, frameTimestamp);
+      this.handleThumbstick(pad, state, frameTimestamp);
     }
   }
 
@@ -585,12 +593,9 @@ export class WebXRManager {
     this.scene.remove(this.tableTop.tableGroup);
 
     if (this.xrSession) {
-      try {
-        this.xrSession.end();
-      } catch {
-        // Ignored if session already ended
-      }
+      const session = this.xrSession;
       this.xrSession = null;
+      void session.end().catch(() => {});
     }
 
     this.renderer.xr.enabled = false;

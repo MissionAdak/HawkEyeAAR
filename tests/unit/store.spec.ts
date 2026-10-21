@@ -74,6 +74,6 @@ describe('Zustand sessionStore & InputQueue Facade', () => {
 
     const snapshot = engineInstance.buildUiSnapshot();
     expect(snapshot.trackRows.length).toBeLessThanOrEqual(150);
-    expect(snapshot.trackRows.length).toBe(150);
+    expect(snapshot.trackRows).toHaveLength(150);
   });
 });

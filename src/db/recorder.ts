@@ -84,6 +84,7 @@ export class EventRecorder {
         if (typeof indexedDB === 'undefined') {
           inMemoryFallbackEvents.push(...batch);
         } else {
+          // eslint-disable-next-line no-await-in-loop
           await db.transaction('rw', db.events, async () => {
             await db.events.bulkAdd(batch);
           });

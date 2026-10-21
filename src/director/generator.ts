@@ -22,6 +22,97 @@ export function normalizeFeatures(vec: number[]): number[] {
   return vec.map((v) => v / norm);
 }
 
+function generateAttemptThreats(count: number, rng: () => number): ThreatSpawn[] {
+  const threats: ThreatSpawn[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (i * (2 * Math.PI / count)) + (rng() * 0.4 - 0.2);
+    const startDist = 3200 + rng() * 600;
+    const startX = Math.round(Math.cos(angle) * startDist);
+    const startY = Math.round(Math.sin(angle) * startDist);
+
+    threats.push({
+      id: `H-${i + 1}`,
+      droneType: i % 2 === 0 ? 'FPV_ATTACK' : 'SWARM_ELEMENT',
+      trueClass: i % 2 === 0 ? 'HOSTILE_ATTACK' : 'SWARM_ELEMENT',
+      spawnTMs: 2000 + i * 3000,
+      waypoints: [
+        { x: startX, y: startY, z: 120 },
+        { x: 0, y: 0, z: 20 },
+      ],
+      speedMps: Math.round(30 + rng() * 15),
+      profile: 'TERRAIN_HUG',
+      rcsM2: 0.01,
+      valueInr: 100000,
+      emitsRf: true,
+      remoteId: false,
+      iff: false,
+    });
+  }
+  return threats;
+}
+
+function buildScenarioFormations(
+  seed: number,
+  threats: ThreatSpawn[],
+  options?: GenerateScenarioOptions
+): { finalThreats: ThreatSpawn[]; formations?: FormationGroupSpec[] } {
+  if (!options?.useFormations || threats.length < 2) {
+    return { finalThreats: threats };
+  }
+
+  const kind: FormationKind = options.formationKind ?? 'V_WEDGE';
+  const formCount = Math.min(threats.length, 4);
+  const baseThreat = threats[0];
+  const expanded = expandFormation({
+    groupId: `GRP-${seed}`,
+    kind,
+    count: formCount,
+    spacingM: options.spacingM,
+    baseSpawn: baseThreat,
+  });
+
+  let defaultSpacingM = 100;
+  if (kind === 'STACK') {
+    defaultSpacingM = 60;
+  } else if (kind === 'DECOY_LEAD') {
+    defaultSpacingM = 150;
+  }
+
+  return {
+    finalThreats: expanded,
+    formations: [
+      {
+        groupId: `GRP-${seed}`,
+        kind,
+        leaderId: baseThreat.id,
+        memberIds: expanded.map((t) => t.id),
+        spacingM: options.spacingM ?? defaultSpacingM,
+      },
+    ],
+  };
+}
+
+function buildScenarioFeatures(
+  finalThreats: ThreatSpawn[],
+  formations: FormationGroupSpec[] | undefined,
+  d: number
+): number[] {
+  const rawFeatures = new Array(33).fill(0.05);
+  rawFeatures[0] = finalThreats.length / 12; // hostile count / 12
+  rawFeatures[1] = 0; // decoy ratio
+  rawFeatures[2] = 1.0; // fraction TERRAIN_HUG
+  if (formations && formations.length > 0) {
+    const k = formations[0].kind;
+    rawFeatures[3] = k === 'LINE_ABREAST' ? 1 : 0;
+    rawFeatures[4] = k === 'V_WEDGE' ? 1 : 0;
+    rawFeatures[5] = k === 'STACK' ? 1 : 0;
+    rawFeatures[6] = k === 'DECOY_LEAD' ? 1 : 0;
+    rawFeatures[7] = k === 'HELIX' ? 1 : 0;
+  }
+  rawFeatures[32] = d; // difficulty
+  return normalizeFeatures(rawFeatures);
+}
+
 /**
  * Generates an adaptive, deterministic scenario for a trainee session.
  * Complies strictly with Rules.md DT-2 (mulberry32 gen stream, no Math.random),
@@ -44,59 +135,8 @@ export function generateScenario(
     const rng = mulberry32(streamSeed(seed, 'gen'));
 
     const count = Math.max(1, Math.min(10, Math.round(2 + 6 * d)));
-    const threats: ThreatSpawn[] = [];
-
-    for (let i = 0; i < count; i++) {
-      const angle = (i * (2 * Math.PI / count)) + (rng() * 0.4 - 0.2);
-      const startDist = 3200 + rng() * 600;
-      const startX = Math.round(Math.cos(angle) * startDist);
-      const startY = Math.round(Math.sin(angle) * startDist);
-
-      threats.push({
-        id: `H-${i + 1}`,
-        droneType: i % 2 === 0 ? 'FPV_ATTACK' : 'SWARM_ELEMENT',
-        trueClass: i % 2 === 0 ? 'HOSTILE_ATTACK' : 'SWARM_ELEMENT',
-        spawnTMs: 2000 + i * 3000,
-        waypoints: [
-          { x: startX, y: startY, z: 120 },
-          { x: 0, y: 0, z: 20 },
-        ],
-        speedMps: Math.round(30 + rng() * 15),
-        profile: 'TERRAIN_HUG',
-        rcsM2: 0.01,
-        valueInr: 100000,
-        emitsRf: true,
-        remoteId: false,
-        iff: false,
-      });
-    }
-
-    let finalThreats = threats;
-    let formations: FormationGroupSpec[] | undefined;
-
-    if (options?.useFormations && threats.length >= 2) {
-      const kind: FormationKind = options.formationKind ?? 'V_WEDGE';
-      const formCount = Math.min(threats.length, 4);
-      const baseThreat = threats[0];
-      const expanded = expandFormation({
-        groupId: `GRP-${seed}`,
-        kind,
-        count: formCount,
-        spacingM: options.spacingM,
-        baseSpawn: baseThreat,
-      });
-
-      finalThreats = expanded;
-      formations = [
-        {
-          groupId: `GRP-${seed}`,
-          kind,
-          leaderId: baseThreat.id,
-          memberIds: expanded.map((t) => t.id),
-          spacingM: options.spacingM ?? (kind === 'STACK' ? 60 : kind === 'DECOY_LEAD' ? 150 : 100),
-        },
-      ];
-    }
+    const threats = generateAttemptThreats(count, rng);
+    const { finalThreats, formations } = buildScenarioFormations(seed, threats, options);
 
     const zones: ZoneSpec[] = [
       {
@@ -114,22 +154,7 @@ export function generateScenario(
       },
     ];
 
-    // Build 33-dimensional feature vector per ARCHITECTURE.md 5.2
-    const rawFeatures = new Array(33).fill(0.05);
-    rawFeatures[0] = finalThreats.length / 12; // hostile count / 12
-    rawFeatures[1] = 0; // decoy ratio
-    rawFeatures[2] = 1.0; // fraction TERRAIN_HUG
-    if (formations && formations.length > 0) {
-      const k = formations[0].kind;
-      rawFeatures[3] = k === 'LINE_ABREAST' ? 1 : 0;
-      rawFeatures[4] = k === 'V_WEDGE' ? 1 : 0;
-      rawFeatures[5] = k === 'STACK' ? 1 : 0;
-      rawFeatures[6] = k === 'DECOY_LEAD' ? 1 : 0;
-      rawFeatures[7] = k === 'HELIX' ? 1 : 0;
-    }
-    rawFeatures[32] = d; // difficulty
-
-    const features = normalizeFeatures(rawFeatures);
+    const features = buildScenarioFeatures(finalThreats, formations, d);
 
     const spec: ScenarioSpec = {
       id: `SCEN-${seed}`,
