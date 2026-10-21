@@ -12,7 +12,7 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(page.getByRole('button', { name: /\[S\] DEMO-1/i })).toBeVisible();
   });
 
-  test('opens scenario catalog modal, displays all 5 scenarios, and closes with ESC', async ({
+  test('opens scenario catalog modal, displays all 6 scenarios, and closes with ESC', async ({
     page,
   }) => {
     await page.goto('/');
@@ -27,12 +27,13 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(modal).toBeVisible();
     await expect(modal.getByText('TACTICAL EXERCISE & SCENARIO CATALOG')).toBeVisible();
 
-    // Verify all 5 scenarios are listed
+    // Verify all 6 scenarios are listed
     await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]')).toBeVisible();
     await expect(modal.getByText('DEMO-2 — Proportionality Drill')).toBeVisible();
     await expect(modal.getByText('SWARM INVASION — Saturation Scenario')).toBeVisible();
     await expect(modal.getByText('FULL SPECTRUM — Mixed-Class Scenario')).toBeVisible();
     await expect(modal.getByText('PROCEDURAL TRAIN — Difficulty-Scaled Scenario')).toBeVisible();
+    await expect(modal.getByText('RANDOM-1 — Unpredictable Assessment')).toBeVisible();
 
     // Verify duration displays 120s for every scenario
     await expect(modal.locator('[data-testid="scenario-duration-DEMO-1"]')).toHaveText(/DURATION:\s*120s/i);
@@ -40,6 +41,7 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(modal.locator('[data-testid="scenario-duration-SWARM-1"]')).toHaveText(/DURATION:\s*120s/i);
     await expect(modal.locator('[data-testid="scenario-duration-SPECTRUM-1"]')).toHaveText(/DURATION:\s*120s/i);
     await expect(modal.locator('[data-testid="scenario-duration-PROCEDURAL-1"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-RANDOM-1"]')).toHaveText(/DURATION:\s*120s/i);
 
     // Verify DEMO-1 has ACTIVE SESSION badge and restart action
     await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByText('ACTIVE SESSION')).toBeVisible();
@@ -48,6 +50,34 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     // Close modal via Escape key
     await page.keyboard.press('Escape');
     await expect(modal).not.toBeVisible();
+  });
+
+  test('loads RANDOM-1 unpredictable assessment and updates tactical console', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for simulation clock to advance
+    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible();
+
+    // Open Scenario Modal
+    await page.getByRole('button', { name: /\[S\] SCENARIO/i }).click();
+    const modal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
+    await expect(modal).toBeVisible();
+
+    // Find RANDOM-1 card and click [LOAD SCENARIO]
+    const randomCard = modal.locator('[data-testid="scenario-card-RANDOM-1"]');
+    await expect(randomCard).toBeVisible();
+    await randomCard.getByRole('button', { name: /LOAD SCENARIO/i }).click();
+
+    // Explicit confirmation dialog must appear
+    const confirmDialog = page.getByRole('alertdialog');
+    await expect(confirmDialog).toBeVisible();
+    await confirmDialog.getByRole('button', { name: /CONFIRM & LOAD SCENARIO/i }).click();
+
+    // Modal should close and active scenario should now be RANDOM-1
+    await expect(modal).not.toBeVisible();
+    const leftRail = page.locator('aside').first();
+    await expect(leftRail.getByText('RANDOM-1').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /\[S\] RANDOM-1/i })).toBeVisible();
   });
 
   test('requires explicit confirmation before replacing an active session', async ({ page }) => {

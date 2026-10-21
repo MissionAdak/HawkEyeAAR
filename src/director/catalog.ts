@@ -1,6 +1,7 @@
 import type { ScenarioSpec, TrueClass } from '@/sim/types';
 import demo1Json from './bundled/demo1.json';
 import { generateScenario } from './generator';
+import { generateRandomScenario } from './randomScenario';
 import { validate } from './validate';
 
 export interface ScenarioCatalogEntry {
@@ -447,6 +448,28 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
       return generated;
     },
   },
+  {
+    id: 'RANDOM-1',
+    name: 'RANDOM-1 — Unpredictable Assessment',
+    category: 'TRAIN',
+    description: 'Fully randomized tactical air-defense evaluation with unpredictable target composition, arrival axes, and decoy clutter.',
+    objective: 'Assess operator adaptability under genuine uncertainty: discriminate and engage randomized combinations of hostiles, swarms, civil drones, birds, and friendlies.',
+    durationSec: 120,
+    classes: [
+      'HOSTILE_ATTACK',
+      'HOSTILE_ISR',
+      'SWARM_ELEMENT',
+      'CIVIL_UAS',
+      'BIRD',
+      'FRIENDLY',
+    ],
+    tags: ['RANDOMIZED', 'UNPREDICTABLE', 'ASSESSMENT', 'MULTI-CLASS'],
+    isAdaptive: false,
+    getSpec: (seed?: number, difficulty = 0.3) => {
+      const actualSeed = typeof seed === 'number' && Number.isFinite(seed) ? seed : generateLocalSeed();
+      return generateRandomScenario(actualSeed, difficulty);
+    },
+  },
 ];
 
 export function getScenarioCatalogEntry(id: string): ScenarioCatalogEntry | undefined {
@@ -458,7 +481,12 @@ export function loadCatalogScenario(
   seed?: number,
   difficulty?: number
 ): { spec: ScenarioSpec; entry: ScenarioCatalogEntry } {
-  const entry = getScenarioCatalogEntry(id);
+  let entry = getScenarioCatalogEntry(id);
+  if (!entry && id.startsWith('RANDOM-')) {
+    entry = getScenarioCatalogEntry('RANDOM-1');
+  } else if (!entry && id.startsWith('PROCEDURAL-')) {
+    entry = getScenarioCatalogEntry('PROCEDURAL-1');
+  }
   if (!entry) {
     throw new Error(`Unknown scenario ID: "${id}". Available: ${SCENARIO_CATALOG.map((s) => s.id).join(', ')}`);
   }

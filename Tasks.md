@@ -411,3 +411,16 @@ Files: `src/store/sessionStore.ts`, `src/director/catalog.ts`, `src/db/recorder.
 - [x] Procedural Scenario Difficulty Reconciled: Procedural generator defaults verified at `d = 0.3` (`difficulty = 0.3`) across code, UI disclaimer, and test suite.
 - [x] Verification & Test Coverage: 24 unit tests in `catalog.spec.ts` (254 unit tests total across 24 files, all passing), 11 Playwright E2E tests passing, ESLint 0 errors / 0 warnings, production build clean at 1.50 MB total bundle.
 
+---
+
+## Phase 7 — Unpredictable Assessment (TASK 13)
+
+### TASK-13-01 — RANDOM-1 Dedicated Unpredictable Assessment · P0 · B/C/D · 2.5 h
+Files: `src/director/randomScenario.ts`, `src/director/catalog.ts`, `src/store/sessionStore.ts`, `tests/unit/randomScenario.spec.ts`, `tests/unit/catalog.spec.ts`, `tests/e2e/scenario.spec.ts`
+- [x] Dedicated RANDOM-1 Generator: Implemented `generateRandomScenario(seed, difficulty)` producing distinct, valid tactical air-defense encounters deterministically keyed to the seed.
+- [x] Meaningful Multi-Class Variation: Varies hostile threat count (2 to 4), class composition (FPV Attack, Recon Quad, Swarm Element), decoy and clutter count (2 to 4), civil drones, birds, and friendly transits with IFF across 360-degree approach axes.
+- [x] Fairness Validation & Bounded Retries: Generates and evaluates candidates with `validateDetailed(spec)` enforcing sensing windows, effector feasibility, and PNR bounds with bounded retries; never starts an unvalidated fallback.
+- [x] Hidden Ground Truth Protection: Operator-facing UI and track tables only reveal detected, active tracks without exposing planned compositions or future arrival schedules.
+- [x] Seed Semantics & Replay: Fresh seed generated for each restart via `crypto.getRandomValues`; exact seed replay supported via `rerunExactSeedSession()`.
+- [x] Verification & Automated Test Suite: 12 unit tests in `randomScenario.spec.ts`, 24 unit tests in `catalog.spec.ts` (266 unit tests total across 25 files), and 12 Playwright E2E tests passing.
+

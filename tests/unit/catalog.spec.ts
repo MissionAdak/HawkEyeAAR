@@ -36,11 +36,11 @@ describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
     engineInstance.abort('TEST_CLEANUP');
   });
 
-  it('contains the 5 required catalog entries with unique stable IDs', () => {
-    expect(SCENARIO_CATALOG).toHaveLength(5);
+  it('contains the 6 required catalog entries with unique stable IDs', () => {
+    expect(SCENARIO_CATALOG).toHaveLength(6);
     const ids = SCENARIO_CATALOG.map((s) => s.id);
-    expect(new Set(ids).size).toBe(5);
-    expect(ids).toEqual(['DEMO-1', 'DEMO-2', 'SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1']);
+    expect(new Set(ids).size).toBe(6);
+    expect(ids).toEqual(['DEMO-1', 'DEMO-2', 'SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1', 'RANDOM-1']);
   });
 
   it('sets DEMO-1 as the startup default scenario ID', () => {

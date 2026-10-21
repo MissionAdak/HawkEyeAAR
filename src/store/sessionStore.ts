@@ -314,6 +314,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       scenarioId = catalogEntry.id;
     } else if (spec.id.startsWith('PROCEDURAL-')) {
       scenarioId = 'PROCEDURAL-1';
+    } else if (spec.id.startsWith('RANDOM-')) {
+      scenarioId = 'RANDOM-1';
     }
 
     set({
