@@ -90,7 +90,8 @@ export function generateRandomScenario(
       if (hostileRoll < 0.35) {
         droneType = 'FPV_ATTACK';
         trueClass = 'HOSTILE_ATTACK';
-        profile = rng() < 0.5 ? 'TERRAIN_HUG' : 'DIRECT';
+        const pRoll = rng();
+        profile = pRoll < 0.33 ? 'POP_UP_DIVE' : pRoll < 0.66 ? 'TERRAIN_HUG' : 'DIRECT';
         speedMps = 32 + Math.round(rng() * 6);
         rcsM2 = 0.01;
         valueInr = 100000;

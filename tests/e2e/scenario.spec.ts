@@ -12,7 +12,7 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(page.getByRole('button', { name: /\[S\] DEMO-1/i })).toBeVisible();
   });
 
-  test('opens scenario catalog modal, displays all 6 scenarios, and closes with ESC', async ({
+  test('opens scenario catalog modal, displays all 8 scenarios, and closes with ESC', async ({
     page,
   }) => {
     await page.goto('/');
@@ -27,13 +27,15 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(modal).toBeVisible();
     await expect(modal.getByText('TACTICAL EXERCISE & SCENARIO CATALOG')).toBeVisible();
 
-    // Verify all 6 scenarios are listed
+    // Verify all 8 scenarios are listed
     await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]')).toBeVisible();
     await expect(modal.getByText('DEMO-2 — Proportionality Drill')).toBeVisible();
     await expect(modal.getByText('SWARM INVASION — Saturation Scenario')).toBeVisible();
     await expect(modal.getByText('FULL SPECTRUM — Mixed-Class Scenario')).toBeVisible();
     await expect(modal.getByText('PROCEDURAL TRAIN — Difficulty-Scaled Scenario')).toBeVisible();
     await expect(modal.getByText('RANDOM-1 — Unpredictable Assessment')).toBeVisible();
+    await expect(modal.getByText('FORMATION TRAIN — Cohesive Threat Drill')).toBeVisible();
+    await expect(modal.getByText('POP-UP DIVE — Notional Ingress Drill')).toBeVisible();
 
     // Verify duration displays 120s for every scenario
     await expect(modal.locator('[data-testid="scenario-duration-DEMO-1"]')).toHaveText(/DURATION:\s*120s/i);
@@ -42,6 +44,8 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(modal.locator('[data-testid="scenario-duration-SPECTRUM-1"]')).toHaveText(/DURATION:\s*120s/i);
     await expect(modal.locator('[data-testid="scenario-duration-PROCEDURAL-1"]')).toHaveText(/DURATION:\s*120s/i);
     await expect(modal.locator('[data-testid="scenario-duration-RANDOM-1"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-FORMATION-1"]')).toHaveText(/DURATION:\s*120s/i);
+    await expect(modal.locator('[data-testid="scenario-duration-POPUP-1"]')).toHaveText(/DURATION:\s*120s/i);
 
     // Verify DEMO-1 has ACTIVE SESSION badge and restart action
     await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByText('ACTIVE SESSION')).toBeVisible();

@@ -36,11 +36,11 @@ describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
     engineInstance.abort('TEST_CLEANUP');
   });
 
-  it('contains the 6 required catalog entries with unique stable IDs', () => {
-    expect(SCENARIO_CATALOG).toHaveLength(6);
+  it('contains the 8 required catalog entries with unique stable IDs', () => {
+    expect(SCENARIO_CATALOG).toHaveLength(8);
     const ids = SCENARIO_CATALOG.map((s) => s.id);
-    expect(new Set(ids).size).toBe(6);
-    expect(ids).toEqual(['DEMO-1', 'DEMO-2', 'SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1', 'RANDOM-1']);
+    expect(new Set(ids).size).toBe(8);
+    expect(ids).toEqual(['DEMO-1', 'DEMO-2', 'SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1', 'RANDOM-1', 'FORMATION-1', 'POPUP-1']);
   });
 
   it('sets DEMO-1 as the startup default scenario ID', () => {
@@ -139,6 +139,31 @@ describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
     expect(entry?.adaptiveNote).toBeDefined();
     expect(entry?.adaptiveNote).toContain('unlinked');
     expect(entry?.adaptiveNote).toContain('0.3');
+  });
+
+  it('validates FORMATION-1 against the fairness validator and contains cohesive formations', () => {
+    const entry = getScenarioCatalogEntry('FORMATION-1');
+    expect(entry).toBeDefined();
+    const spec = entry!.getSpec(1234, 0.35);
+    expect(spec.formations).toBeDefined();
+    expect(spec.formations!.length).toBeGreaterThan(0);
+    expect(spec.durationMs).toBe(120_000);
+    const res = validateDetailed(spec);
+    expect(res.valid).toBe(true);
+    expect(res.reasons).toEqual([]);
+    expect(validate(spec)).toBe(true);
+  });
+
+  it('validates POPUP-1 against the fairness validator and contains POP_UP_DIVE threats', () => {
+    const entry = getScenarioCatalogEntry('POPUP-1');
+    expect(entry).toBeDefined();
+    const spec = entry!.getSpec(5678, 0.3);
+    expect(spec.threats.some((t) => t.profile === 'POP_UP_DIVE')).toBe(true);
+    expect(spec.durationMs).toBe(120_000);
+    const res = validateDetailed(spec);
+    expect(res.valid).toBe(true);
+    expect(res.reasons).toEqual([]);
+    expect(validate(spec)).toBe(true);
   });
 
   it('throws an error when loading an unknown scenario ID via loadCatalogScenario', () => {

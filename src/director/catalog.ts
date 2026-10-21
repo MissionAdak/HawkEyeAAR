@@ -2,6 +2,8 @@ import type { ScenarioSpec, TrueClass } from '@/sim/types';
 import demo1Json from './bundled/demo1.json';
 import { generateScenario } from './generator';
 import { generateRandomScenario } from './randomScenario';
+import { generateFormationScenario } from './formations';
+import { generatePopUpDiveScenario } from './popupDive';
 import { validate } from './validate';
 
 export interface ScenarioCatalogEntry {
@@ -470,6 +472,36 @@ export const SCENARIO_CATALOG: ScenarioCatalogEntry[] = [
       return generateRandomScenario(actualSeed, difficulty);
     },
   },
+  {
+    id: 'FORMATION-1',
+    name: 'FORMATION TRAIN — Cohesive Threat Drill',
+    category: 'TRAIN',
+    description: 'Procedurally generated multi-threat formation exercise (Line Abreast, V-Wedge, Stack, or Decoy Lead) exercising tactical track discrimination.',
+    objective: 'Practice spatial correlation and track discrimination against cohesive multi-drone formations without relying on classified formation identity.',
+    durationSec: 120,
+    classes: ['SWARM_ELEMENT', 'HOSTILE_ATTACK', 'HOSTILE_ISR'],
+    tags: ['FORMATION', 'PROCEDURAL', 'COHESIVE', 'TACTICAL'],
+    isAdaptive: false,
+    getSpec: (seed?: number, difficulty = 0.3) => {
+      const actualSeed = typeof seed === 'number' && Number.isFinite(seed) ? seed : generateLocalSeed();
+      return generateFormationScenario({ seed: actualSeed, difficulty });
+    },
+  },
+  {
+    id: 'POPUP-1',
+    name: 'POP-UP DIVE — Notional Ingress Drill',
+    category: 'TRAIN',
+    description: 'Notional training scenario exercising operator response against low-altitude terrain-masking approach followed by pop-up emergence and terminal dive.',
+    objective: 'Engage pop-up threats emerging from urban terrain masking at 900m range and executing terminal dive ingress towards the defended asset.',
+    durationSec: 120,
+    classes: ['HOSTILE_ATTACK', 'HOSTILE_ISR'],
+    tags: ['POP-UP-DIVE', 'NOTIONAL-PROFILE', 'TERRAIN-MASKING', 'TERMINAL-DIVE'],
+    isAdaptive: false,
+    getSpec: (seed?: number, difficulty = 0.3) => {
+      const actualSeed = typeof seed === 'number' && Number.isFinite(seed) ? seed : generateLocalSeed();
+      return generatePopUpDiveScenario({ seed: actualSeed, difficulty });
+    },
+  },
 ];
 
 export function getScenarioCatalogEntry(id: string): ScenarioCatalogEntry | undefined {
@@ -486,6 +518,10 @@ export function loadCatalogScenario(
     entry = getScenarioCatalogEntry('RANDOM-1');
   } else if (!entry && id.startsWith('PROCEDURAL-')) {
     entry = getScenarioCatalogEntry('PROCEDURAL-1');
+  } else if (!entry && id.startsWith('FORMATION-')) {
+    entry = getScenarioCatalogEntry('FORMATION-1');
+  } else if (!entry && id.startsWith('POPUP-')) {
+    entry = getScenarioCatalogEntry('POPUP-1');
   }
   if (!entry) {
     throw new Error(`Unknown scenario ID: "${id}". Available: ${SCENARIO_CATALOG.map((s) => s.id).join(', ')}`);
