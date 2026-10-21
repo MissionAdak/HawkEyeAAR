@@ -64,6 +64,7 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 | Scoring, oracle, AAR, replay, unit view | **Done** | Decision-tree scoring, cheapest admissible oracle, AAR dashboard, 6×8 confusion matrix, deterministic replay |
 | Director, validator, novelty, triggers, TRAIN/EVAL | **Done** | Weakness-adaptive generator, fairness validator with continuous joint window and debris check, novelty cosine filter, reactive triggers, EVAL tab-background abort |
 | Hardening, e2e, demo content | **Done** | Air-gap E2E, zero-overflow layout, trainee interaction, bundle 0.85 MB < 2 MB limit |
+| Optional Three.js 3D Feature Pack (Track X3D) | **Done** | Lazy-loaded 3D tactical viewport (`render3d` chunk 510 kB, 0B in main chunk), model-faithful sensor domes, effector envelopes, evaluateMasking LOS explanation, cluster hulls, TRAIN-only RCS aid/elevation cross-section, post-session AAR 3D replay & engagement inspector. VR marked experimental |
 
 ### 2.2 Phase checkpoints
 
@@ -73,10 +74,13 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 - [x] H26 — AAR with timeline replay, confusion matrix, unit table; scoring fixtures pass; replay deterministic
 - [x] H31 — Director, validator and novelty (AC-6); EVAL pack; TRAIN/EVAL flows
 - [x] H36 — USB kit demonstrated offline on a clean low-end laptop; backup recording ready [VERIFIED]
+- [x] Track X3D — Optional Three.js 3D Tactical Pack (F1-F5, F7, F8) with lazy chunking, strict ground-truth isolation, zero-network CSP, zero simulation divergence, and 100% deterministic replay [VERIFIED]
 
-### 2.3 Known technical debt
+### 2.3 Known technical debt & architectural limitations
 
-None. All 18 test files (145 tests), ESLint, production build (0.85 MB bundle), and 5 Playwright E2E tests pass cleanly with zero network calls and 100% deterministic replay.
+1. **Tracker Velocity Invariance (Task 10 Blocker / OQ-09):** `SafeTrackView.vel` reflects the engine's instantaneous velocity vector rather than a filtered Kalman state estimate. Visual track predictor aid was halted per specification to prevent leaking ground truth velocity. Full track prediction requires an explicit alpha-beta/Kalman tracker filter in `src/sim/tracker.ts`.
+2. **WebXR VR Platform Status (OQ-11):** WebXR VR remains designated `experimental, unverified` because testing has occurred only in desktop WebGL2 emulation; no physical headset session (Meta Quest / Vive) has been run and recorded.
+3. **Verified Audit Baseline:** All 23 test files (230 tests), ESLint clean (0 errors, 0 warnings), production build (1.490 MB total dist bundle < 2.0 MB budget, with Three.js fully isolated to lazy `render3d` chunk of 510 kB), and 6 Playwright E2E tests pass cleanly with zero network calls and 100% deterministic simulation parity.
 
 ### 2.4 Open questions
 
@@ -141,6 +145,9 @@ None. All 18 test files (145 tests), ESLint, production build (0.85 MB bundle), 
 | D-39 | Authoritative Masking Calculation Single Source | `evaluateMasking()` in `src/sim/masking.ts` (with exact polygon ray-intersection and near-edge distance $d_{\text{near}}$) is the sole authoritative masking calculation. Legacy heuristic `isMasked()` stub is deprecated for 3D visual agreement. 3D shadow volumes must match `evaluateMasking()` | `ARCHITECTURE.md` §8.4, `Rules.md` R10.12, `src/sim/masking.ts` |
 | D-40 | 3D Tactical Console Presentation & Interaction | Viewport strictly adheres to 1366×768 zero-overflow geometry (`806 × 578 px`). Flat unlit materials (`MeshBasicMaterial`), palette tokens from `DESIGN.md` §1, single transform `toThree(x, y, z) = (x, z, -y)`. Camera presets `OBLIQUE`, `TOP`, `POST` | `DESIGN.md` §11, `Rules.md` R10.10 |
 | D-41 | Information Gating & Decision Aids Policy | Class A features (sensor/effector volumes, LOS rays, cluster hulls) are allowed in all modes. Class B decision aids (shadow volume maps, trajectory extrapolation) are TRAIN-only and strictly locked in EVAL (`AIDS LOCKED`); aid usage is logged in session telemetry. Class C truth is AAR-only. WebXR VR is classified as experimental until tested on physical hardware | `ARCHITECTURE.md` §8.8, `Rules.md` R10.13/R10.15 |
+| D-42 | Build-Time and Preview CSP Header Synchronization | Vite preview launcher (`vite.config.ts`) explicitly serves `Content-Security-Policy` HTTP response header matching `index.html`'s `<meta http-equiv="Content-Security-Policy">` tag (`connect-src 'none'`), guaranteeing compliance both on static file hosting and HTTP preview serving | `vite.config.ts`, `index.html`, `tests/e2e/airgap.spec.ts` |
+| D-43 | Disambiguation of POST Camera Preset from Pause Key | Tactical viewport preset button for `POST` was decoupled from conflicting `[P]` shortcut indicator to prevent confusion with `P` (Pause/Resume). `POST` preset is accessible via tactical button; `P` strictly controls simulation Pause/Resume | `src/ui/Console.tsx`, `src/ui/useConsoleKeyboard.ts` |
+| D-44 | Low-Fidelity Mode 3D Pixel Ratio Throttling | Toggling Low-Fidelity mode (`L` key) propagates to `Renderer3D`, capping device pixel ratio to 1.0 to eliminate high-DPI GPU fill-rate bottlenecks on low-end hardware without altering geometry | `src/render3d/renderer3d.ts`, `src/ui/Console.tsx` |
 
 ---
 

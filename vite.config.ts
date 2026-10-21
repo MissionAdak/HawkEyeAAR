@@ -20,6 +20,10 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 4173,
     strictPort: true,
+    headers: {
+      'Content-Security-Policy':
+        "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; worker-src 'self' blob:;",
+    },
   },
   build: {
     target: 'es2022',
@@ -30,7 +34,7 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           const normalizedId = id.replaceAll('\\', '/');
-          if (normalizedId.includes('node_modules/three') || normalizedId.includes('/src/render3d/')) {
+          if (normalizedId.includes('node_modules/three')) {
             return 'render3d';
           }
         },

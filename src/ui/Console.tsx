@@ -3,9 +3,9 @@ import { TopBar } from './TopBar';
 import { TrackTable } from './TrackTable';
 import { EngagementPanel } from './EngagementPanel';
 import { EventLog } from './EventLog';
-import { HotWash } from './HotWash';
+const HotWash = React.lazy(() => import('./HotWash').then((m) => ({ default: m.HotWash })));
 import { QuickGuide } from './QuickGuide';
-import { CrossSectionPanel } from './CrossSectionPanel';
+const CrossSectionPanel = React.lazy(() => import('./CrossSectionPanel').then((m) => ({ default: m.CrossSectionPanel })));
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
@@ -148,7 +148,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
                   : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
               }`}
             >
-              [{preset[0]}] {preset}
+              {preset === 'POST' ? 'POST' : `[${preset[0]}] ${preset}`}
             </button>
           ))}
 
@@ -312,6 +312,9 @@ export const Console: React.FC = () => {
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
+  useEffect(() => {
+    renderer3dRef.current?.setLowFidelity(lowFi);
+  }, [lowFi]);
 
   // Initialize Canvas 2D Renderer Loop
   useEffect(() => {
@@ -432,6 +435,7 @@ export const Console: React.FC = () => {
 
         r3d.setShowLos(showLosRef.current);
         r3d.setShowClusters(showClustersRef.current);
+        r3d.setLowFidelity(lowFi);
         renderer3dRef.current = r3d;
       }
 
@@ -658,27 +662,33 @@ export const Console: React.FC = () => {
       </div>
 
       {/* 6. Hot-Wash / AAR Scoring Debrief Modal */}
-      {isAarOpen && <HotWash onClose={closeAar} />}
+      {isAarOpen && (
+        <React.Suspense fallback={null}>
+          <HotWash onClose={closeAar} />
+        </React.Suspense>
+      )}
 
       {/* 7. Operator Quick-Start Guide Modal */}
       {isQuickGuideOpen && <QuickGuide onClose={closeQuickGuide} />}
 
       {/* 8. F5 Elevation Cross-Section Training Aid Modal */}
       {showCrossSection && engineInstance.mode !== 'EVAL' && (
-        <CrossSectionPanel
-          onClose={() => setShowCrossSection(false)}
-          zones={engineInstance.spec?.zones || []}
-          selectedTrack={
-            engineInstance.selectedTrackNo
-              ? (() => {
-                  const ent = engineInstance.curr.find(
-                    (e) => e.trackNo === engineInstance.selectedTrackNo && e.step !== 'UNDETECTED'
-                  );
-                  return ent ? { trackNo: ent.trackNo!, pos: { ...ent.pos }, masked: ent.masked } : null;
-                })()
-              : null
-          }
-        />
+        <React.Suspense fallback={null}>
+          <CrossSectionPanel
+            onClose={() => setShowCrossSection(false)}
+            zones={engineInstance.spec?.zones || []}
+            selectedTrack={
+              engineInstance.selectedTrackNo
+                ? (() => {
+                    const ent = engineInstance.curr.find(
+                      (e) => e.trackNo === engineInstance.selectedTrackNo && e.step !== 'UNDETECTED'
+                    );
+                    return ent ? { trackNo: ent.trackNo!, pos: { ...ent.pos }, masked: ent.masked } : null;
+                  })()
+                : null
+            }
+          />
+        </React.Suspense>
       )}
     </div>
   );

@@ -268,6 +268,10 @@ export class Renderer3D {
     this.renderer.setSize(width, height, false);
   }
 
+  public setLowFidelity(lowFi: boolean): void {
+    this.renderer.setPixelRatio(lowFi ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+  }
+
   /**
    * Complete renderer and scene teardown.
    */

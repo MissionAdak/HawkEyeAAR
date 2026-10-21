@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RCS_REF, R_REF } from '@/sim/sensors';
+import { RCS_REF } from '@/sim/sensors';
 import { CONFIG } from '@/config';
 import type { ChaosSpec, SensorMode } from '@/sim/types';
 
@@ -54,42 +54,16 @@ export function isChaosActive(
   return chaosList.some((c) => c.type === type && tMs >= c.tStartMs && tMs < c.tEndMs);
 }
 
-/**
- * Radar Constant-SNR Radius (R90) derived from radar equation Pd function (PRD 3.2 & sensors.ts):
- * Pd = 1 - exp(-2.303 * SNR)
- * For Pd = 0.90: SNR_req = 1.0
- * SNR = (RCS / RCS_REF) * (R_REF / R)^4 * A_env
- * R_const = R_REF * ((RCS / RCS_REF) * A_env / SNR_req)^(1/4)
- *
- * Invariant:
- * Larger RCS never produces a smaller constant-SNR radius (monotonic increase).
- */
-export function calculateRadarR90Radius(
-  rcsM2: number = RCS_REF,
-  aEnv: number = 1.0,
-  pdThreshold: number = 0.90,
-  maxRangeM: number = CONFIG.thresholds.radarMaxRangeM
-): number {
-  if (rcsM2 <= 0 || aEnv <= 0 || pdThreshold <= 0 || pdThreshold >= 1) {
-    return 0;
-  }
+import { calculateRadarR90Radius } from './trainingAidMath';
+export { calculateRadarR90Radius };
 
-  // Required SNR for the requested Pd threshold: Pd = 1 - exp(-2.303 * SNR)
-  // For nominal Pd = 0.90, SNR_req is exactly 1.0 (1 - exp(-2.303) = 0.900041...)
-  const snrReq = pdThreshold === 0.90 ? 1.0 : -Math.log(1 - pdThreshold) / 2.303;
-  if (snrReq <= 0) return 0;
-
-  const rcsRatio = rcsM2 / RCS_REF;
-  const radius = R_REF * Math.pow((rcsRatio * aEnv) / snrReq, 0.25);
-
-  return Math.max(0, Math.min(radius, maxRangeM));
-}
+export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
 /**
  * Calculates current radar coverage state based on actual sensor health and active chaos.
  */
 export function calculateRadarCoverage(params: {
-  sensorHealth?: 'OK' | 'DEG' | 'OUT';
+  sensorHealth?: SensorHealthStatus;
   chaosList?: ChaosSpec[];
   tMs?: number;
   rcsRefM2?: number;
@@ -138,7 +112,7 @@ export function calculateRadarCoverage(params: {
 export function calculateEoirCoverage(params: {
   azimuthDeg: number;
   isNight: boolean;
-  sensorHealth?: 'OK' | 'DEG' | 'OUT';
+  sensorHealth?: SensorHealthStatus;
   chaosList?: ChaosSpec[];
   tMs?: number;
 }): EoirCoverageModel {
@@ -152,11 +126,12 @@ export function calculateEoirCoverage(params: {
 
   const multiplier = isFog ? CONFIG.chaos.FOG.eoirRangeMultiplier : 1.0;
   const effectiveRangeM = baseRangeM * multiplier;
-  const status: EoirCoverageStatus = isFog
-    ? 'FOG_DEGRADED'
-    : params.isNight
-    ? 'NIGHT_NOMINAL'
-    : 'DAY_NOMINAL';
+  let status: EoirCoverageStatus = 'DAY_NOMINAL';
+  if (isFog) {
+    status = 'FOG_DEGRADED';
+  } else if (params.isNight) {
+    status = 'NIGHT_NOMINAL';
+  }
 
   const label = `EO/IR 30° FOV [RENDER ONLY VERTICAL CAP] | ${Math.round(effectiveRangeM)}m | ${status}`;
 
@@ -174,7 +149,7 @@ export function calculateEoirCoverage(params: {
  * Calculates RF passive sensor coverage and electronic warfare jamming state.
  */
 export function calculateRfCoverage(params: {
-  sensorHealth?: 'OK' | 'DEG' | 'OUT';
+  sensorHealth?: SensorHealthStatus;
   chaosList?: ChaosSpec[];
   tMs?: number;
 }): RfCoverageModel {
@@ -254,7 +229,7 @@ function createUnitWedgeGeometry(segments: number = 16): {
     );
   }
 
-  // 3. Left side wall
+  // 3. Left and Right side walls
   positions.push(
     apexBottom.x, apexBottom.y, apexBottom.z,
     arcBottom[0].x, arcBottom[0].y, arcBottom[0].z,
@@ -262,11 +237,8 @@ function createUnitWedgeGeometry(segments: number = 16): {
 
     apexBottom.x, apexBottom.y, apexBottom.z,
     arcTop[0].x, arcTop[0].y, arcTop[0].z,
-    apexTop.x, apexTop.y, apexTop.z
-  );
+    apexTop.x, apexTop.y, apexTop.z,
 
-  // 4. Right side wall
-  positions.push(
     apexBottom.x, apexBottom.y, apexBottom.z,
     arcTop[segments].x, arcTop[segments].y, arcTop[segments].z,
     arcBottom[segments].x, arcBottom[segments].y, arcBottom[segments].z,
@@ -276,7 +248,7 @@ function createUnitWedgeGeometry(segments: number = 16): {
     arcTop[segments].x, arcTop[segments].y, arcTop[segments].z
   );
 
-  // 5. Far curved arc wall
+  // 4. Far curved arc wall
   for (let i = 0; i < segments; i++) {
     positions.push(
       arcBottom[i].x, arcBottom[i].y, arcBottom[i].z,
@@ -304,8 +276,7 @@ function createUnitWedgeGeometry(segments: number = 16): {
     arcBottom[segments], arcTop[segments]
   );
   for (let i = 0; i < segments; i++) {
-    wirePoints.push(arcBottom[i], arcBottom[i + 1]);
-    wirePoints.push(arcTop[i], arcTop[i + 1]);
+    wirePoints.push(arcBottom[i], arcBottom[i + 1], arcTop[i], arcTop[i + 1]);
   }
 
   const wireGeom = new THREE.BufferGeometry().setFromPoints(wirePoints);
@@ -356,7 +327,7 @@ function createTextSprite(initialText: string, initialColorHex: string): THREE.S
 function updateSpriteCanvas(sprite: THREE.Sprite, text: string, colorHex: string): void {
   if (typeof document === 'undefined') return;
   const texture = sprite.material.map;
-  if (!texture || !texture.image) return;
+  if (!texture?.image) return;
 
   const canvas = texture.image as HTMLCanvasElement;
   const ctx = canvas.getContext('2d');
@@ -375,6 +346,12 @@ function updateSpriteCanvas(sprite: THREE.Sprite, text: string, colorHex: string
   ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
   texture.needsUpdate = true;
+}
+
+function getRadarStatusColor(status: RadarCoverageStatus): string {
+  if (status === 'DROPOUT') return '#FF3333';
+  if (status === 'DEGRADED') return '#FF9900';
+  return '#00FF66';
 }
 
 /**
@@ -567,49 +544,29 @@ export class Coverage3D {
     this.group.add(this.rfGroup);
   }
 
-  /**
-   * Updates 3D sensor coverage geometries and materials without allocating new objects.
-   */
-  public update(coverageState: SensorCoverageState): void {
-    if (!coverageState.visible) {
-      this.group.visible = false;
-      return;
-    }
-    this.group.visible = true;
-
-    const { radar, eoir, rf, activeSensor } = coverageState;
-
-    // --- 1. Update Radar Volume ---
+  private updateRadarVolume(radar: RadarCoverageModel): void {
     const radarCeilingM = 500;
     if (radar.r90RadiusM > 0) {
       this.radarR90Group.visible = true;
       this.radarR90Group.scale.set(radar.r90RadiusM, radarCeilingM, radar.r90RadiusM);
       this.radarR90Group.position.set(0, radarCeilingM / 2, 0);
 
-      if (radar.status === 'DEGRADED') {
-        this.radarR90Cylinder.material = this.matAmberWire;
-        this.radarR90Surface.material = this.matAmberSurface;
-      } else {
-        this.radarR90Cylinder.material = this.matPhosphorWire;
-        this.radarR90Surface.material = this.matPhosphorSurface;
-      }
+      const isDegraded = radar.status === 'DEGRADED';
+      this.radarR90Cylinder.material = isDegraded ? this.matAmberWire : this.matPhosphorWire;
+      this.radarR90Surface.material = isDegraded ? this.matAmberSurface : this.matPhosphorSurface;
     } else {
       this.radarR90Group.visible = false;
     }
 
-    if (radar.status === 'DROPOUT') {
-      this.radarOuterCylinder.material = this.matRedWire;
-    } else {
-      this.radarOuterCylinder.material = this.matPhosphorDim;
-    }
+    this.radarOuterCylinder.material = radar.status === 'DROPOUT' ? this.matRedWire : this.matPhosphorDim;
 
     if (radar.label !== this.lastRadarLabel) {
       this.lastRadarLabel = radar.label;
-      const color = radar.status === 'DROPOUT' ? '#FF3333' : radar.status === 'DEGRADED' ? '#FF9900' : '#00FF66';
-      updateSpriteCanvas(this.radarLabelSprite, radar.label, color);
+      updateSpriteCanvas(this.radarLabelSprite, radar.label, getRadarStatusColor(radar.status));
     }
+  }
 
-    // --- 2. Update EO/IR Frustum Wedge ---
+  private updateEoirWedge(eoir: EoirCoverageModel): void {
     const eoirHeightM = 250;
     this.eoirGroup.rotation.y = -THREE.MathUtils.degToRad(eoir.boresightAzimuthDeg);
     this.eoirWedgeMesh.scale.set(eoir.effectiveRangeM, eoirHeightM, eoir.effectiveRangeM);
@@ -618,21 +575,18 @@ export class Coverage3D {
 
     this.eoirLabelSprite.position.set(0, eoirHeightM + 25, -Math.min(eoir.effectiveRangeM * 0.8, 2000));
 
-    if (eoir.status === 'FOG_DEGRADED') {
-      this.eoirWedgeWire.material = this.matAmberWire;
-      this.eoirWedgeMesh.material = this.matAmberSurface;
-    } else {
-      this.eoirWedgeWire.material = this.matCyanWire;
-      this.eoirWedgeMesh.material = this.matCyanSurface;
-    }
+    const isFog = eoir.status === 'FOG_DEGRADED';
+    this.eoirWedgeWire.material = isFog ? this.matAmberWire : this.matCyanWire;
+    this.eoirWedgeMesh.material = isFog ? this.matAmberSurface : this.matCyanSurface;
 
     if (eoir.label !== this.lastEoirLabel) {
       this.lastEoirLabel = eoir.label;
-      const color = eoir.status === 'FOG_DEGRADED' ? '#FF9900' : '#00E5FF';
+      const color = isFog ? '#FF9900' : '#00E5FF';
       updateSpriteCanvas(this.eoirLabelSprite, eoir.label, color);
     }
+  }
 
-    // --- 3. Update RF Cylinder ---
+  private updateRfCylinder(rf: RfCoverageModel): void {
     if (!rf.isFunctional) {
       this.rfCylinderWire.material = this.matRedWire;
       this.rfSurface.material = this.matAmberSurface;
@@ -646,9 +600,23 @@ export class Coverage3D {
       const color = rf.isFunctional ? '#FFCC00' : '#FF3333';
       updateSpriteCanvas(this.rfLabelSprite, rf.label, color);
     }
+  }
 
-    // --- 4. Modulate Opacity by Active Sensor Mode ---
-    // The active sensor has full contrast; inactive sensors are rendered subtler
+  /**
+   * Updates 3D sensor coverage geometries and materials without allocating new objects.
+   */
+  public update(coverageState: SensorCoverageState): void {
+    if (!coverageState.visible) {
+      this.group.visible = false;
+      return;
+    }
+    this.group.visible = true;
+
+    this.updateRadarVolume(coverageState.radar);
+    this.updateEoirWedge(coverageState.eoir);
+    this.updateRfCylinder(coverageState.rf);
+
+    const activeSensor = coverageState.activeSensor;
     this.radarGroup.visible = activeSensor === 'RADAR' || activeSensor === undefined;
     this.eoirGroup.visible = activeSensor === 'EOIR' || activeSensor === undefined;
     this.rfGroup.visible = activeSensor === 'RF' || activeSensor === undefined;

@@ -1,8 +1,29 @@
 import { evaluateMasking, isPointInPolygon, raySegmentIntersection } from '@/sim/masking';
 import type { ZoneSpec } from '@/sim/types';
 import { CONFIG } from '@/config';
-import { calculateRadarR90Radius } from './coverage';
-import { RCS_REF } from '@/sim/sensors';
+import { RCS_REF, R_REF } from '@/sim/sensors';
+
+/**
+ * Radar Constant-SNR Radius (R90) derived from radar equation Pd function (PRD 3.2 & sensors.ts):
+ * Pd = 1 - exp(-2.303 * SNR)
+ * For Pd = 0.90: SNR_req = 1.0
+ * SNR = (RCS / RCS_REF) * (R_REF / R)^4 * A_env
+ * R_const = R_REF * ((RCS / RCS_REF) * A_env / SNR_req)^(1/4)
+ */
+export function calculateRadarR90Radius(
+  rcsM2: number = RCS_REF,
+  aEnv: number = 1.0,
+  pdThreshold: number = 0.90,
+  maxRangeM: number = CONFIG.thresholds.radarMaxRangeM
+): number {
+  if (rcsM2 <= 0 || aEnv <= 0 || pdThreshold <= 0 || pdThreshold >= 1) {
+    return 0;
+  }
+  const snrReq = pdThreshold === 0.90 ? 1.0 : -Math.log(1 - pdThreshold) / 2.303;
+  if (snrReq <= 0) return 0;
+  const r = R_REF * Math.pow(((rcsM2 / RCS_REF) * aEnv) / snrReq, 0.25);
+  return Math.min(r, maxRangeM);
+}
 
 export interface CrossSectionSample {
   rangeM: number;

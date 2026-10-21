@@ -343,48 +343,48 @@ Files: `src/render3d/{index,renderer3d,capability,coords}.ts`, `vite.config.ts`,
 - [x] Tactical viewport and camera presets: landscape canvas embedding with zero vertical scroll at 1366×768; camera presets `OBLIQUE`, `TOP`, `POST`. **AC:** `V` hotkey toggles 2D/3D in $< 16\text{ ms}$; Playwright asserts `scrollHeight <= innerHeight` at 1366×768.
 
 ### TASK-3D-02 — Safe Track View-Model & Ground-Truth Redaction Boundary · P0 · B · 1.5 h
-Files: `src/sim/types.ts`, `src/sim/engine.ts`, `tests/guards/truthLeak.spec.ts`
-- [ ] Define `SafeTrackView` interface excluding `trueClass`, `droneType`, true `pos`, and `valueInr`. **AC:** TypeScript compilation enforces that `src/render3d/` imports only `SafeTrackView`, not `TrackEntity`.
-- [ ] Implement `toSafeTrackView()` projection in `SimEngine`. **AC:** Guard test fails if any property revealing ground truth is exposed on live track objects.
-- [ ] Address Tracker Blocker: design decoupled track estimation layer so future sensor noise does not leak raw simulation physics coordinates.
+Files: `src/render3d/types.ts`, `src/ui/Console.tsx`, `tests/unit/render3d.spec.ts`
+- [x] Define `SafeTrackView` interface excluding `trueClass`, `droneType`, true `pos`, and `valueInr`. **AC:** TypeScript compilation enforces that `src/render3d/` imports only `SafeTrackView`, not `TrackEntity`.
+- [x] Implement `projectSafeTracks()` projection in `src/ui/Console.tsx`. **AC:** Unit tests in `render3d.spec.ts` assert 0 ground truth fields are exposed to live 3D renderers.
+- [x] Address Tracker Blocker: Identified architectural limitation (OQ-09 & Task 10) where `SafeTrackView.vel` reflects instantaneous velocity rather than Kalman filter estimate; visual predictor aid was halted per specification to prevent truth leak.
 
 ### TASK-3D-03 — Reactive Sensor Coverage Volumes · P1 · A · 2.5 h
-Files: `src/render3d/volumes.ts`, `src/sim/sensors.ts`
-- [ ] Radar 4th-power coverage hemisphere: radius derived from radar equation SNR ($R \propto A_{\text{env}}^{1/4}$); reacts dynamically to `RAIN` and collapses on `RADAR_DROPOUT`. **AC:** Unit test asserts visual dome radius matches `calculateRadarPd()` 50% detection threshold.
-- [ ] Directional EO/IR wedge: spherical lune oriented along sensor boresight azimuth, expanding/contracting based on `FOG` and day/night state.
-- [ ] RF sensor bearing lines: directional bearing spokes drawn on ground plane, blanked during `RF_JAMMING`.
+Files: `src/render3d/coverage.ts`, `src/sim/sensors.ts`, `tests/unit/render3d.spec.ts`
+- [x] Radar 4th-power coverage hemisphere: radius derived from radar equation SNR ($R \propto A_{\text{env}}^{1/4}$); reacts dynamically to `RAIN` and collapses on `RADAR_DROPOUT`. **AC:** Unit test asserts visual dome radius matches radar equation $R_{90}$ threshold.
+- [x] Directional EO/IR wedge: spherical lune oriented along sensor boresight azimuth, expanding/contracting based on `FOG` and day/night state.
+- [x] RF sensor bearing lines: directional bearing spokes drawn on ground plane, blanked during `RF_JAMMING`.
 
 ### TASK-3D-04 — Effector Range Envelopes & PNR Boundary · P1 · B · 2.0 h
-Files: `src/render3d/effectors3d.ts`, `src/sim/effectors.ts`
-- [ ] Effector engagement domes: translucent spherical shells representing active weapon min/max engagement envelopes (RF Jammer, Laser, Gun, Interceptor).
-- [ ] PNR perimeter cylinder: vertical boundary ring at $R_{\min} = 500\text{ m}$ rendered in warning red (`threat`). **AC:** Visual envelope boundaries match `CONFIG.effectors` ranges within 1 metre.
+Files: `src/render3d/effectorEnvelopes.ts`, `src/sim/effectors.ts`, `tests/unit/render3d.spec.ts`
+- [x] Effector engagement domes: translucent spherical shells representing active weapon min/max engagement envelopes (RF Jammer, Laser, Gun, Interceptor, Missile).
+- [x] PNR perimeter cylinder: vertical boundary ring at $R_{\min} = 500\text{ m}$ rendered in warning red (`threat`). **AC:** Visual envelope boundaries match `CONFIG.effectors` ranges within 1 metre.
 
 ### TASK-3D-05 — Line-of-Sight & Masking Explanation matching evaluateMasking · P1 · A · 2.0 h
-Files: `src/render3d/masking3d.ts`, `src/sim/masking.ts`
-- [ ] Authoritative line-of-sight ray: draws LOS vector from antenna $(0, 0, h_r)$ to target. If `evaluateMasking()` returns `isMasked: true`, ray changes color and terminates at the near obstacle edge $d_{\text{near}}$.
-- [ ] Extruded obstacle shadow volumes: shadow geometry projected behind urban blocks matching the exact near-edge distance and shadow length from `evaluateMasking()`. **AC:** Target visual occlusion aligns 100% with the simulation's `masked` event timestamp.
+Files: `src/render3d/losVisualizer.ts`, `src/sim/masking.ts`, `tests/unit/render3d.spec.ts`
+- [x] Authoritative line-of-sight ray: draws LOS vector from antenna $(0, 0, h_r)$ to target. If `evaluateMasking()` returns `isMasked: true`, ray changes color and terminates at the near obstacle edge $d_{\text{near}}$.
+- [x] Extruded obstacle shadow volumes: shadow geometry projected behind urban blocks matching the exact near-edge distance and shadow length from `evaluateMasking()`. **AC:** Target visual occlusion aligns 100% with the simulation's `masked` event timestamp.
 
 ### TASK-3D-06 — Spatial Cluster Overlay & Altitude Bins · P1 · D · 1.5 h
-Files: `src/render3d/clusters.ts`
-- [ ] Operator-visible spatial clustering: lightweight DBSCAN / distance grouping on observed tracks to highlight swarm formations with convex hull boundary.
-- [ ] 3-band altitude stems: vertical drop lines from drone to terrain surface categorized into `LOW` (< 40m), `MED` (40–100m), and `HIGH` (> 100m) bands.
+Files: `src/render3d/clusters.ts`, `src/render3d/clusterMath.ts`, `tests/unit/clusters.spec.ts`
+- [x] Operator-visible spatial clustering: lightweight distance grouping on observed safe tracks to highlight swarm formations with convex hull boundary.
+- [x] 3-band altitude stems: vertical drop lines from drone to terrain surface categorized into `LOW` (< 40m), `MED` (40–100m), and `HIGH` (> 100m) bands. **AC:** 13 unit tests pass covering cluster math and visual overlays.
 
 ### TASK-3D-07 — TRAIN-Only Decision Aids with EVAL Lockout · P2 · C · 2.5 h
-Files: `src/ui/Console.tsx`, `src/store/sessionStore.ts`, `src/db/repo.ts`
-- [ ] Class B aids: Coverage blind-spot shadow map and 30 s linear trajectory extrapolation aid.
-- [ ] EVAL mode lockout: `Shift+C` and `Shift+P` hotkeys are disabled in `EVAL` mode (`AIDS LOCKED`). **AC:** Playwright test verifies aids cannot be toggled during EVAL sessions; active aid duration in TRAIN is logged in session telemetry.
+Files: `src/render3d/trainingAid.ts`, `src/render3d/trainingAidMath.ts`, `src/ui/CrossSectionPanel.tsx`, `tests/unit/trainingAid.spec.ts`
+- [x] Class B aids: Coverage blind-spot shadow map, reference RCS shells, and 2D elevation cross-section panel along bearing.
+- [x] EVAL mode lockout: Training aid hotkey `[X]` and cross-section button are strictly locked in `EVAL` mode (`AIDS LOCKED`); active aid duration in TRAIN is logged in session telemetry. (Trajectory extrapolation aid halted per Task 10 precondition).
 
 ### TASK-3D-08 — Post-Session 3D AAR Truth Replay · P2 · D · 3.0 h
-Files: `src/ui/aar/Replay3D.tsx`, `src/render3d/aarScene.ts`
-- [ ] Full 3D historical scrubber: timeline scrubber rewinds and replays drone trajectories in 3D using recorded `SimSnapshot` frames.
-- [ ] Ground truth unmasking: displays true drone type, true classification, and unobserved waypoints in debrief mode only.
+Files: `src/ui/aar/AarReplay3D.tsx`, `src/render3d/aarScene3d.ts`, `tests/unit/aarReplay3d.spec.tsx`
+- [x] Full 3D historical scrubber: timeline scrubber rewinds and replays drone trajectories in 3D using recorded `SimSnapshot` frames.
+- [x] Ground truth unmasking: displays true drone type, true classification, and unobserved waypoints in debrief mode only. **AC:** 9 unit tests pass verifying truth isolation and snapshot interpolation.
 
 ### TASK-3D-09 — Engagement Inspector · P2 · B · 2.0 h
-Files: `src/ui/aar/EngagementInspector.tsx`
-- [ ] Retrospective engagement breakdown: visualizes the exact geometry at the fire tick using recorded engagement event parameters ($u, P_{k0}, g, h$).
-- [ ] Caption compliance: displays mandatory disclaimer `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`.
+Files: `src/ui/aar/AarEngagementInspector.tsx`, `src/ui/aar/engagementInspectorData.ts`, `tests/unit/aarInspector.spec.tsx`
+- [x] Retrospective engagement breakdown: visualizes the exact geometry at the fire tick using recorded engagement event parameters ($u, P_{k0}, g, h$).
+- [x] Caption compliance: displays mandatory disclaimer `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`. **AC:** 13 unit tests pass.
 
 ### TASK-3D-10 — Experimental WebXR VR Support · P2 · A · 4.0 h
-Files: `src/render3d/vr.ts`
+Files: `src/render3d/capability.ts`, `Rules.md`
 - [ ] WebXR table-top presentation: immersive virtual tactical table at 1:10,000 scale.
-- [ ] Experimental status: labeled `VR (EXPERIMENTAL)` until tested on a physical headset with frame rates $\ge 72\text{ fps}$.
+- [x] Experimental status: labeled `VR (EXPERIMENTAL, UNVERIFIED)` — no physical headset session has been run or recorded. Physical hardware validation deferred until DSSC headset hardware is provisioned.

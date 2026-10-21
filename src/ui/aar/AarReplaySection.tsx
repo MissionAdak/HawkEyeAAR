@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import type { SimEvent, ScenarioSpec, ZoneSpec } from '@/sim/types';
 import { ReplayCanvas } from './ReplayCanvas';
-import { AarReplay3D } from './AarReplay3D';
+const AarReplay3D = lazy(() => import('./AarReplay3D').then((m) => ({ default: m.AarReplay3D })));
 import {
   reconstructAarReplayState,
   convertToReplayEntities,
@@ -168,11 +168,22 @@ export const AarReplaySection: React.FC<AarReplaySectionProps> = ({
               onSelectTrack={(t) => setSelectedTrackNo(t)}
             />
           ) : (
-            <AarReplay3D
-              replayState={replayState}
-              selectedTrackNo={selectedTrackNo}
-              onSelectTrack={(t) => setSelectedTrackNo(t)}
-            />
+            <Suspense
+              fallback={
+                <div
+                  className="border border-line bg-carbon-950 flex items-center justify-center font-mono text-[11px] text-text-dim"
+                  style={{ width: 'var(--radar, 520px)', height: 'var(--radar, 520px)' }}
+                >
+                  LOADING 3D AAR...
+                </div>
+              }
+            >
+              <AarReplay3D
+                replayState={replayState}
+                selectedTrackNo={selectedTrackNo}
+                onSelectTrack={(t) => setSelectedTrackNo(t)}
+              />
+            </Suspense>
           )}
         </div>
 
