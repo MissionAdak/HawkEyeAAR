@@ -5,6 +5,7 @@ import { EngagementPanel } from './EngagementPanel';
 import { EventLog } from './EventLog';
 const HotWash = React.lazy(() => import('./HotWash').then((m) => ({ default: m.HotWash })));
 import { QuickGuide } from './QuickGuide';
+import { ScenarioModal } from './ScenarioModal';
 const CrossSectionPanel = React.lazy(() => import('./CrossSectionPanel').then((m) => ({ default: m.CrossSectionPanel })));
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
@@ -91,6 +92,8 @@ interface TacticalViewportTabsProps {
   showTrainingAid: boolean;
   showCrossSection: boolean;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  currentScenarioId: string;
+  onOpenScenarioModal: () => void;
   onSetSensor: (m: SensorMode) => void;
   onCameraPreset: (p: CameraPreset) => void;
   onToggleEnvelopes: () => void;
@@ -111,6 +114,8 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   showTrainingAid,
   showCrossSection,
   mode,
+  currentScenarioId,
+  onOpenScenarioModal,
   onSetSensor,
   onCameraPreset,
   onToggleEnvelopes,
@@ -236,6 +241,19 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
       >
         [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
       </button>
+
+      <button
+        onClick={onOpenScenarioModal}
+        disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
+        title="Open Mission / Exercise Scenario Selector [S]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
+            ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+            : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
+        }`}
+      >
+        [S] {currentScenarioId}
+      </button>
     </div>
   );
 };
@@ -308,6 +326,10 @@ export const Console: React.FC = () => {
   const closeAar = useSessionStore((s) => s.closeAar);
   const isQuickGuideOpen = useSessionStore((s) => s.isQuickGuideOpen);
   const closeQuickGuide = useSessionStore((s) => s.closeQuickGuide);
+  const isScenarioModalOpen = useSessionStore((s) => s.isScenarioModalOpen);
+  const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
+  const closeScenarioModal = useSessionStore((s) => s.closeScenarioModal);
+  const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
   const abortSession = useSessionStore((s) => s.abortSession);
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
@@ -590,6 +612,8 @@ export const Console: React.FC = () => {
               showTrainingAid={showTrainingAid}
               showCrossSection={showCrossSection}
               mode={engineInstance.mode}
+              currentScenarioId={currentScenarioId}
+              onOpenScenarioModal={openScenarioModal}
               onSetSensor={setSensor}
               onCameraPreset={handleCameraPreset}
               onToggleEnvelopes={toggleEnvelopes}
@@ -690,6 +714,9 @@ export const Console: React.FC = () => {
           />
         </React.Suspense>
       )}
+
+      {/* 9. Mission Scenario Selector Modal */}
+      {isScenarioModalOpen && <ScenarioModal onClose={closeScenarioModal} />}
     </div>
   );
 };

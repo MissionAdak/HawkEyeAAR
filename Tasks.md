@@ -388,3 +388,15 @@ Files: `src/ui/aar/AarEngagementInspector.tsx`, `src/ui/aar/engagementInspectorD
 Files: `src/render3d/capability.ts`, `Rules.md`
 - [ ] WebXR table-top presentation: immersive virtual tactical table at 1:10,000 scale.
 - [x] Experimental status: labeled `VR (EXPERIMENTAL, UNVERIFIED)` — no physical headset session has been run or recorded. Physical hardware validation deferred until DSSC headset hardware is provisioned.
+
+---
+
+## Phase 6 — Scenario Catalog & Training Exercises (TASK 12)
+
+### TASK-12-01 — Scenario Catalog, Multi-Class Exercises & Evaluated Selector UI · P0 · C/D · 3.5 h
+Files: `src/director/catalog.ts`, `src/ui/ScenarioModal.tsx`, `src/ui/TrackTable.tsx`, `src/ui/Console.tsx`, `src/ui/HotWash.tsx`, `src/store/sessionStore.ts`, `tests/unit/catalog.spec.ts`, `tests/e2e/scenario.spec.ts`
+- [x] Typed Scenario Catalog: Implemented 5 validated scenario entries (`DEMO-1`, `DEMO-2`, `SWARM-1`, `SPECTRUM-1`, `PROCEDURAL-1`) complying strictly with `ScenarioSpec` and `validateDetailed()` fairness criteria. **AC:** All 5 scenarios validate with zero fairness/timeline errors.
+- [x] Full-Spectrum 6-Class Coverage: `SPECTRUM-1` encompasses all 6 ground-truth airspace classes (`HOSTILE_ATTACK`, `HOSTILE_ISR`, `SWARM_ELEMENT`, `CIVIL_UAS`, `BIRD`, `FRIENDLY` with active IFF).
+- [x] Evaluated Session Lifecycle & Recorder Sequencing: `loadScenario` awaits `activeRecorder.stop()`, eliminating race conditions and preserving previous session AAR event data in IndexedDB.
+- [x] Scenario Selector UI & Confirmation Guard: Accessible tactical scenario selection modal with objective descriptions, class badges, active indicator, explicit restart action, and a confirmation dialog before replacing active running sessions. Locked in EVAL mode.
+- [x] Verification & Test Suite: 17 unit tests in `catalog.spec.ts` (247 unit tests total) and 5 Playwright E2E tests in `scenario.spec.ts` (11 E2E tests total) pass at 1366×768 and 1280×700 with zero overflow.

@@ -10,6 +10,12 @@ import type {
   EffectorId,
   TrackClass,
 } from '@/sim/types';
+import {
+  DEFAULT_SCENARIO_ID,
+  getScenarioCatalogEntry,
+  loadCatalogScenario,
+} from '@/director/catalog';
+import { validate } from '@/director/validate';
 
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
@@ -43,6 +49,8 @@ export interface SessionState {
 
   isAarOpen: boolean;
   isQuickGuideOpen: boolean;
+  isScenarioModalOpen: boolean;
+  currentScenarioId: string;
   simSpeed: number;
 
   // Actions pushing onto InputQueue
@@ -62,9 +70,13 @@ export interface SessionState {
   closeAar: () => void;
   openQuickGuide: () => void;
   closeQuickGuide: () => void;
+  openScenarioModal: () => void;
+  closeScenarioModal: () => void;
 
   // Session lifecycle
-  loadScenario: (spec: ScenarioSpec) => void;
+  loadScenario: (spec: ScenarioSpec) => Promise<void>;
+  loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
+  restartSession: () => Promise<void>;
   setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
 
@@ -77,11 +89,13 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } {
   return { tRawMs, applyTick };
 }
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionState>((set, get) => ({
   ui: initialSnapshot,
   isSimRunning: false,
   isAarOpen: false,
   isQuickGuideOpen: false,
+  isScenarioModalOpen: false,
+  currentScenarioId: DEFAULT_SCENARIO_ID,
   simSpeed: 1.0,
 
   designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
@@ -197,14 +211,29 @@ export const useSessionStore = create<SessionState>((set) => ({
     });
   },
 
-  loadScenario: (spec: ScenarioSpec) => {
-    // Stop the previous recorder and preserve its pending events.
+  loadScenario: async (spec: ScenarioSpec): Promise<void> => {
+    // Evaluation check guard: do not permit mid-EVAL scenario modifications
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
+      return;
+    }
+
+    // Fairness check guard: do not load an invalid scenario
+    if (!validate(spec)) {
+      console.error(`[SessionStore] Refusing to load invalid scenario: ${spec.id}`);
+      return;
+    }
+
+    // Stop the previous recorder and drain pending writes before starting new session
     engineInstance.onEvent = null;
 
     if (activeRecorder) {
-      void activeRecorder.stop().catch((error) => {
+      try {
+        await activeRecorder.stop();
+      } catch (error) {
         console.error('[Recorder] Failed to finish previous session:', error);
-      });
+      }
+      activeRecorder = null;
     }
 
     const recorderForSession = new EventRecorder();
@@ -227,12 +256,47 @@ export const useSessionStore = create<SessionState>((set) => ({
     engineInstance.load(spec);
     clockInstance.reset();
 
+    const catalogEntry = getScenarioCatalogEntry(spec.id);
+    const scenarioId = catalogEntry ? catalogEntry.id : (spec.id.startsWith('PROCEDURAL-') ? 'PROCEDURAL-1' : spec.id);
+
     set({
+      currentScenarioId: scenarioId,
       isSimRunning: true,
       isAarOpen: false,
+      isScenarioModalOpen: false,
       simSpeed: 1.0,
       ui: engineInstance.buildUiSnapshot(),
     });
+  },
+
+  loadScenarioById: async (id: string, customSeed?: number): Promise<boolean> => {
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
+      return false;
+    }
+
+    try {
+      const { spec } = loadCatalogScenario(id, customSeed);
+      await get().loadScenario(spec);
+      return true;
+    } catch (err) {
+      console.error(`[SessionStore] Failed to load catalog scenario "${id}":`, err);
+      return false;
+    }
+  },
+
+  restartSession: async (): Promise<void> => {
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Restarting is prohibited mid-EVAL.');
+      return;
+    }
+
+    const activeSpec = engineInstance.spec;
+    if (activeSpec) {
+      await get().loadScenario(structuredClone(activeSpec));
+    } else {
+      await get().loadScenarioById(DEFAULT_SCENARIO_ID);
+    }
   },
 
   setSpeed: (speed: number) => {
@@ -258,6 +322,14 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   closeQuickGuide: () => {
     set({ isQuickGuideOpen: false });
+  },
+
+  openScenarioModal: () => {
+    set({ isScenarioModalOpen: true });
+  },
+
+  closeScenarioModal: () => {
+    set({ isScenarioModalOpen: false });
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {

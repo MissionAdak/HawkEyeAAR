@@ -17,7 +17,9 @@ interface HotWashProps {
 }
 
 export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
-  const loadScenario = useSessionStore((s) => s.loadScenario);
+  const restartSession = useSessionStore((s) => s.restartSession);
+  const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
+  const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
 
   // Reconstruct metrics from raw event log
   const metrics = aggregateAARMetrics(
@@ -57,8 +59,13 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const engagedTracks = engineInstance.curr.filter((e) => e.engagements > 0);
 
   const handleRestart = () => {
-    loadScenario(demo1Spec as unknown as ScenarioSpec);
+    void restartSession();
     onClose();
+  };
+
+  const handleSelectScenario = () => {
+    onClose();
+    openScenarioModal();
   };
 
   return (
@@ -72,6 +79,9 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </span>
             <span className="text-[10px] text-text-dim border border-line px-1.5 py-0.5">
               SIH26247 DOCTRINE ENGINE
+            </span>
+            <span className="text-[10px] text-phosphor border border-line px-1.5 py-0.5 font-bold bg-carbon-950">
+              SCENARIO: {engineInstance.spec?.id ?? currentScenarioId}
             </span>
           </div>
 
@@ -398,7 +408,13 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <button
+              onClick={handleSelectScenario}
+              className="px-3 py-1 font-display font-semibold text-[11px] border border-phosphor/70 hover:border-phosphor text-phosphor hover:bg-phosphorDim/30 transition-colors"
+            >
+              [S] SELECT SCENARIO
+            </button>
             <button
               onClick={handleRestart}
               className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-amber text-amber transition-colors"

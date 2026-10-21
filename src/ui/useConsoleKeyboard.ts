@@ -68,6 +68,7 @@ function handleEscapeKey(): void {
   }
   store.closeQuickGuide();
   store.closeAar();
+  store.closeScenarioModal();
 }
 
 function handlePauseKey(): void {
@@ -118,6 +119,12 @@ function handleSystemKey(
   }
   if (lowerKey === 'h' || rawKey === '?') {
     store.openQuickGuide();
+    return true;
+  }
+  if (lowerKey === 's') {
+    if (engineInstance.mode !== 'EVAL' || engineInstance.sessionEnded) {
+      store.openScenarioModal();
+    }
     return true;
   }
   if (rawKey === 'Escape') {

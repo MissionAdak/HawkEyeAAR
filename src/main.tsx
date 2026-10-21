@@ -18,7 +18,7 @@ const RootApp: React.FC = () => {
 
   useEffect(() => {
     // Automatically load bundled DEMO-1 scenario on boot
-    loadScenario(demo1Spec as unknown as ScenarioSpec);
+    void loadScenario(demo1Spec as unknown as ScenarioSpec);
   }, [loadScenario]);
 
   return <Console />;

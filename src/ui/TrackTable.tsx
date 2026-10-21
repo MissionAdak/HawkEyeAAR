@@ -1,11 +1,19 @@
 import React from 'react';
-import { useSessionStore } from '@/store/sessionStore';
+import { useSessionStore, engineInstance } from '@/store/sessionStore';
+import { getScenarioCatalogEntry } from '@/director/catalog';
 import type { UiTrackRow } from '@/sim/engine';
 
 export const TrackTable: React.FC = () => {
   const trackRows = useSessionStore((s) => s.ui.trackRows);
   const selectedTrackNo = useSessionStore((s) => s.ui.selectedTrackNo);
   const designate = useSessionStore((s) => s.designate);
+  const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
+  const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
+  const restartSession = useSessionStore((s) => s.restartSession);
+  const mode = useSessionStore((s) => s.ui.mode);
+
+  const isEvalLocked = mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0;
+  const currentEntry = getScenarioCatalogEntry(currentScenarioId);
 
   const getStatusPill = (status: string) => {
     switch (status) {
@@ -35,8 +43,53 @@ export const TrackTable: React.FC = () => {
 
   return (
     <aside className="w-[240px] h-full bg-carbon-900 border-r border-line flex flex-col font-mono text-xs select-none">
+      {/* Exercise / Scenario Selector Card */}
+      <div className="px-2 py-1.5 border-b border-line bg-carbon-950 flex flex-col gap-1 shrink-0">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="font-display text-text-dim">EXERCISE:</span>
+          <span
+            className="font-mono font-bold text-phosphor truncate max-w-[150px]"
+            title={currentEntry?.name ?? currentScenarioId}
+          >
+            {currentScenarioId}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={openScenarioModal}
+            disabled={isEvalLocked}
+            className={`flex-1 py-1 px-1.5 text-center text-[10px] font-display font-bold border transition-colors ${
+              isEvalLocked
+                ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+                : 'border-phosphor/70 hover:border-phosphor text-phosphor bg-phosphorDim/20 hover:bg-phosphorDim/40'
+            }`}
+            title={isEvalLocked ? 'Scenario selection locked during active EVAL' : 'Open Scenario Selector (S)'}
+          >
+            [S] SCENARIO
+          </button>
+          <button
+            onClick={() => {
+              if (engineInstance.tickIndex > 0 && !engineInstance.sessionEnded) {
+                openScenarioModal();
+              } else {
+                void restartSession();
+              }
+            }}
+            disabled={isEvalLocked}
+            className={`py-1 px-2 text-center text-[10px] font-mono border transition-colors ${
+              isEvalLocked
+                ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+                : 'border-line hover:border-text-main text-text-dim hover:text-text-main bg-carbon-900'
+            }`}
+            title={isEvalLocked ? 'Restart locked during active EVAL' : 'Restart active scenario'}
+          >
+            RESTART
+          </button>
+        </div>
+      </div>
+
       {/* Title */}
-      <div className="h-[28px] px-2 flex items-center justify-between border-b border-line bg-carbon-800/60">
+      <div className="h-[28px] px-2 flex items-center justify-between border-b border-line bg-carbon-800/60 shrink-0">
         <span className="font-display font-semibold text-[11px] text-text-main tracking-widest">
           TRACK DIRECTORY
         </span>
