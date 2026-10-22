@@ -83,9 +83,8 @@ export function createAircraftBodyGeometry(): THREE.BufferGeometry {
 
   const indices: number[] = [];
   function addQuad(a: number, b: number, c: number, d: number) {
-    indices.push(a, b, c, a, c, d);
     // Double-sided indices for rock-solid visual fidelity
-    indices.push(a, c, b, a, d, c);
+    indices.push(a, b, c, a, c, d, a, c, b, a, d, c);
   }
   function addTri(a: number, b: number, c: number) {
     indices.push(a, b, c, a, c, b);

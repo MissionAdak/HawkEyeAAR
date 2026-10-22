@@ -405,7 +405,10 @@ export class Renderer3D {
   }
 
   public setLowFidelity(lowFi: boolean): void {
-    const dpr = typeof window !== 'undefined' ? (lowFi ? 1 : Math.min(window.devicePixelRatio || 1, 2)) : 1;
+    let dpr = 1;
+    if (typeof window !== 'undefined' && !lowFi) {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+    }
     this.renderer.setPixelRatio(dpr);
   }
 

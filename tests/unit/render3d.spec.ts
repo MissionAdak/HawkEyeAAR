@@ -1299,7 +1299,7 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
 
       // Selectable objects contains proxy, body, and accent
       const selectables = scene3d.getSelectableObjects();
-      expect(selectables.length).toBe(3);
+      expect(selectables).toHaveLength(3);
       expect(selectables.every((obj) => obj.userData.trackNo === 'T-01')).toBe(true);
 
       scene3d.dispose();
