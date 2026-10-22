@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type { ZoneSpec } from '@/sim/types';
 import { calculateCrossSection } from '@/render3d/trainingAidMath';
 import { evaluateMasking } from '@/sim/masking';
@@ -26,11 +26,25 @@ export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
   zones = [],
   selectedTrack,
 }) => {
+  // Global keyboard listener to dismiss on ESC or [X]
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key.toLowerCase() === 'x') {
+        e.stopPropagation();
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   // If track is selected, calculate its bearing
   const trackBearing = useMemo(() => {
     if (!selectedTrack?.pos) return null;
     const posE = selectedTrack.pos.x;
     const posN = selectedTrack.pos.y;
+    if (!Number.isFinite(posE) || !Number.isFinite(posN)) return null;
     const rad = Math.atan2(posE, posN); // 0 = North (+Y), 90 = East (+X)
     let deg = (rad * 180) / Math.PI;
     if (deg < 0) deg += 360;
@@ -50,14 +64,15 @@ export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
   // Coordinate mapping for SVG plot:
   // SVG size: 620 x 270
   // Plot area: x from 55 to 585 (width 530), y from 30 to 220 (height 190)
-  const mapX = (rM: number) => 55 + (Math.max(0, Math.min(5000, rM)) / 5000) * 530;
-  const mapY = (zM: number) => 220 - (Math.max(0, Math.min(160, zM)) / 160) * 190;
+  const mapX = (rM: number) => 55 + (Math.max(0, Math.min(5000, Number.isFinite(rM) ? rM : 0)) / 5000) * 530;
+  const mapY = (zM: number) => 220 - (Math.max(0, Math.min(160, Number.isFinite(zM) ? zM : 0)) / 160) * 190;
 
   // Track status check
   const trackAnalysis = useMemo(() => {
     if (!selectedTrack?.pos) return null;
-    const R = Math.hypot(selectedTrack.pos.x, selectedTrack.pos.y);
-    const z = selectedTrack.pos.z;
+    const { x, y, z } = selectedTrack.pos;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+    const R = Math.hypot(x, y);
     const mask = evaluateMasking(selectedTrack.pos, zones);
     return {
       R,
@@ -68,8 +83,16 @@ export const CrossSectionPanel: React.FC<CrossSectionPanelProps> = ({
   }, [selectedTrack, zones]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-carbon-950/80 backdrop-blur-sm flex items-center justify-center p-4 select-none">
-      <div className="w-[660px] bg-carbon-900 border border-amber/60 flex flex-col font-mono text-xs overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none">
+      {/* Clickable backdrop overlay to dismiss on outside click */}
+      <button
+        type="button"
+        aria-label="Dismiss elevation cross-section modal"
+        onClick={onClose}
+        className="absolute inset-0 bg-carbon-950/80 backdrop-blur-sm cursor-default"
+        tabIndex={-1}
+      />
+      <div className="relative z-10 w-[660px] bg-carbon-900 border border-amber/60 flex flex-col font-mono text-xs overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="h-[40px] px-4 border-b border-line bg-carbon-800/90 flex items-center justify-between">
           <div className="flex items-center gap-2">

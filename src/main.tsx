@@ -13,6 +13,8 @@ import { useSessionStore } from './store/sessionStore';
 import demo1Spec from './director/bundled/demo1.json';
 import type { ScenarioSpec } from './sim/types';
 
+import { ErrorBoundary } from './ui/ErrorBoundary';
+
 const RootApp: React.FC = () => {
   const loadScenario = useSessionStore((s) => s.loadScenario);
 
@@ -26,8 +28,10 @@ const RootApp: React.FC = () => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <HashRouter>
-      <RootApp />
-    </HashRouter>
+    <ErrorBoundary fallbackTitle="TACTICAL CONSOLE INITIALIZATION ERROR">
+      <HashRouter>
+        <RootApp />
+      </HashRouter>
+    </ErrorBoundary>
   </React.StrictMode>
 );

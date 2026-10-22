@@ -7,7 +7,8 @@ const HotWash = React.lazy(() => import('./HotWash').then((m) => ({ default: m.H
 import { QuickGuide } from './QuickGuide';
 import { ScenarioModal } from './ScenarioModal';
 import { WebXrComfortModal } from './WebXrComfortModal';
-const CrossSectionPanel = React.lazy(() => import('./CrossSectionPanel').then((m) => ({ default: m.CrossSectionPanel })));
+import { CrossSectionPanel } from './CrossSectionPanel';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
@@ -907,9 +908,11 @@ export const Console: React.FC = () => {
 
       {/* 6. Hot-Wash / AAR Scoring Debrief Modal */}
       {isAarOpen && (
-        <React.Suspense fallback={null}>
-          <HotWash onClose={closeAar} />
-        </React.Suspense>
+        <ErrorBoundary fallbackTitle="HOTWASH AAR INSPECTOR ERROR" onReset={closeAar}>
+          <React.Suspense fallback={null}>
+            <HotWash onClose={closeAar} />
+          </React.Suspense>
+        </ErrorBoundary>
       )}
 
       {/* 7. Operator Quick-Start Guide Modal */}
@@ -917,7 +920,10 @@ export const Console: React.FC = () => {
 
       {/* 8. F5 Elevation Cross-Section Training Aid Modal */}
       {showCrossSection && engineInstance.mode !== 'EVAL' && (
-        <React.Suspense fallback={null}>
+        <ErrorBoundary
+          fallbackTitle="ELEVATION CROSS-SECTION AID ERROR"
+          onReset={() => setShowCrossSection(false)}
+        >
           <CrossSectionPanel
             onClose={() => setShowCrossSection(false)}
             zones={engineInstance.spec?.zones || []}
@@ -932,7 +938,7 @@ export const Console: React.FC = () => {
                 : null
             }
           />
-        </React.Suspense>
+        </ErrorBoundary>
       )}
 
       {/* 9. Mission Scenario Selector Modal */}

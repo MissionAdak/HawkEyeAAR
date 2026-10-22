@@ -123,4 +123,53 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
     await toggle2DButton.click();
     await expect(fireControlHeader.getByText('T-01').first()).toBeVisible();
   });
+
+  test('opens and closes X-SECTION elevation training aid in 3D view without errors or blank screens', async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    // 1. Switch to 3D view
+    const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DButton).toBeVisible();
+    await toggle3DButton.click();
+
+    // 2. Select track T-01
+    const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
+    await expect(trackRow).toBeVisible();
+    await trackRow.click();
+
+    // 3. Open X-SECTION
+    const xSectionBtn = page.getByRole('button', { name: /X-SECTION/i });
+    await expect(xSectionBtn).toBeVisible();
+    await xSectionBtn.click();
+
+    // 4. Verify modal is visible with chart and elevation labels
+    const modalTitle = page.getByText(/ELEVATION CROSS-SECTION TRAINING AID/i);
+    await expect(modalTitle).toBeVisible();
+    await expect(page.getByText(/VERTICAL EXAGGERATION/i)).toBeVisible();
+
+    // 5. Dismiss with ESC key
+    await page.keyboard.press('Escape');
+    await expect(modalTitle).not.toBeVisible();
+
+    // 6. Reopen and dismiss with [X] key
+    await xSectionBtn.click();
+    await expect(modalTitle).toBeVisible();
+    await page.keyboard.press('x');
+    await expect(modalTitle).not.toBeVisible();
+
+    // 7. Reopen and dismiss via backdrop click
+    await xSectionBtn.click();
+    await expect(modalTitle).toBeVisible();
+    const modalBackdrop = page.getByRole('button', { name: /Dismiss elevation cross-section modal/i });
+    await modalBackdrop.click({ position: { x: 10, y: 10 } });
+    await expect(modalTitle).not.toBeVisible();
+
+    // Zero uncaught page errors
+    expect(pageErrors).toHaveLength(0);
+  });
 });
