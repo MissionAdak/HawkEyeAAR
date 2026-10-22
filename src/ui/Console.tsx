@@ -462,6 +462,9 @@ export const Console: React.FC = () => {
           zones: engineInstance.spec?.zones || [],
           mode: engineInstance.mode,
           showTrainingAid: showTrainingAidRef.current,
+          onSelectTrack: (trackNo: string) => {
+            designate(trackNo, 'CLICK');
+          },
           onContextLost: () => {
             xrManagerRef.current?.exitVR();
             renderer3dRef.current?.stop();
@@ -579,6 +582,9 @@ export const Console: React.FC = () => {
           zones: engineInstance.spec?.zones || [],
           mode: engineInstance.mode,
           showTrainingAid: showTrainingAidRef.current,
+          onSelectTrack: (trackNo: string) => {
+            designate(trackNo, 'CLICK');
+          },
           onContextLost: () => {
             xrManagerRef.current?.exitVR();
             renderer3dRef.current?.stop();
@@ -802,6 +808,7 @@ export const Console: React.FC = () => {
               ref={canvas3dRef}
               width={520}
               height={520}
+              style={{ touchAction: 'none' }}
               className={`cursor-grab active:cursor-grabbing ${viewMode === '3D' ? 'block' : 'hidden'}`}
             />
 
@@ -834,11 +841,19 @@ export const Console: React.FC = () => {
               {renderScopeReadout()}
             </div>
 
-            {/* 3D Orbit Control Hint */}
+            {/* 3D Model Scale & Control Hint */}
             {viewMode === '3D' && (
-              <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
-                DRAG: ORBIT | SCROLL: ZOOM
-              </div>
+              <>
+                <div
+                  title="Aircraft models are enlarged for tactical visual identification. Underlying world positions and radar ranges are authoritative and unchanged."
+                  className="absolute bottom-2 left-2 z-10 text-[8px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none max-w-[270px] truncate"
+                >
+                  AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
+                </div>
+                <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
+                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET
+                </div>
+              </>
             )}
 
             {/* WebGL Error / Context Loss Fallback Banner */}

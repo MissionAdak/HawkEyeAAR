@@ -6,7 +6,11 @@ import { attachContextLossHandler } from './capability';
 
 export interface Renderer3DOptions extends Scene3DOptions {
   onContextLost?: () => void;
+  onSelectTrack?: (trackNo: string) => void;
+  threeRenderer?: THREE.WebGLRenderer;
 }
+
+export const DRAG_THRESHOLD_PX = 5;
 
 export class Renderer3D {
   private readonly canvas: HTMLCanvasElement;
@@ -19,9 +23,15 @@ export class Renderer3D {
   // Camera Orbit State
   private readonly target: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
   private readonly spherical: THREE.Spherical = new THREE.Spherical(7500, Math.PI / 3, Math.PI / 4);
-  private isDragging: boolean = false;
-  private previousMousePosition: { x: number; y: number } = { x: 0, y: 0 };
   public currentPreset: CameraPreset = 'OBLIQUE';
+
+  // Interaction & Picking State
+  private readonly raycaster: THREE.Raycaster = new THREE.Raycaster();
+  private onSelectTrackCallback?: (trackNo: string) => void;
+  private isPointerDown: boolean = false;
+  private hasDragged: boolean = false;
+  private downPosition: { x: number; y: number } = { x: 0, y: 0 };
+  private previousPointerPosition: { x: number; y: number } = { x: 0, y: 0 };
 
   private getTracks?: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null };
   private getCoverage?: () => SensorCoverageState;
@@ -66,22 +76,36 @@ export class Renderer3D {
     return this.showTrainingAid;
   }
 
+  public setOnSelectTrack(fn: (trackNo: string) => void): void {
+    this.onSelectTrackCallback = fn;
+  }
+
+  public get dragging(): boolean {
+    return this.hasDragged;
+  }
+
   constructor(canvas: HTMLCanvasElement, options: Renderer3DOptions) {
     this.canvas = canvas;
     this.options = options;
+    if (options.onSelectTrack) {
+      this.onSelectTrackCallback = options.onSelectTrack;
+    }
     if (options.showTrainingAid && options.mode !== 'EVAL') {
       this.showTrainingAid = true;
     }
 
     // 1. Initialize Three.js WebGLRenderer
-    this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-      powerPreference: 'default',
-    });
+    this.renderer =
+      options.threeRenderer ??
+      new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: false,
+        powerPreference: 'default',
+      });
     this.renderer.setSize(canvas.width, canvas.height, false);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+    this.renderer.setPixelRatio(dpr);
 
     // 2. Setup Tactical Camera
     const aspect = canvas.width / canvas.height;
@@ -99,8 +123,8 @@ export class Renderer3D {
       });
     }
 
-    // 5. Attach Lightweight Orbit Controls
-    this.attachMouseControls();
+    // 5. Attach Unified Pointer & Orbit Controls with Hit Testing
+    this.attachControls();
   }
 
   private applyCameraPreset(preset: CameraPreset): void {
@@ -134,30 +158,62 @@ export class Renderer3D {
     this.camera.lookAt(this.target);
   }
 
-  private attachMouseControls(): void {
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button === 0 || e.button === 2) {
-        this.isDragging = true;
-        this.previousMousePosition = { x: e.clientX, y: e.clientY };
+  private attachControls(): void {
+    const onDown = (clientX: number, clientY: number, button: number, pointerType?: string) => {
+      if (button === 0 || button === 2 || pointerType === 'touch') {
+        this.isPointerDown = true;
+        this.hasDragged = false;
+        this.downPosition = { x: clientX, y: clientY };
+        this.previousPointerPosition = { x: clientX, y: clientY };
       }
     };
 
-    const onMouseMove = (e: MouseEvent) => {
-      if (!this.isDragging) return;
+    const onMove = (clientX: number, clientY: number) => {
+      if (!this.isPointerDown) return;
 
-      const deltaX = e.clientX - this.previousMousePosition.x;
-      const deltaY = e.clientY - this.previousMousePosition.y;
-      this.previousMousePosition = { x: e.clientX, y: e.clientY };
+      const deltaX = clientX - this.previousPointerPosition.x;
+      const deltaY = clientY - this.previousPointerPosition.y;
+      this.previousPointerPosition = { x: clientX, y: clientY };
 
-      // Orbit azimuth and elevation
-      this.spherical.theta -= deltaX * 0.006;
-      this.spherical.phi = Math.max(0.01, Math.min(Math.PI / 2 - 0.02, this.spherical.phi - deltaY * 0.006));
+      const moveDist = Math.hypot(
+        clientX - this.downPosition.x,
+        clientY - this.downPosition.y
+      );
+      if (moveDist >= DRAG_THRESHOLD_PX) {
+        this.hasDragged = true;
+      }
 
-      this.updateCameraFromSpherical();
+      if (this.hasDragged) {
+        // Orbit azimuth and elevation
+        this.spherical.theta -= deltaX * 0.006;
+        this.spherical.phi = Math.max(
+          0.01,
+          Math.min(Math.PI / 2 - 0.02, this.spherical.phi - deltaY * 0.006)
+        );
+        this.updateCameraFromSpherical();
+      }
     };
 
-    const onMouseUp = () => {
-      this.isDragging = false;
+    const onUp = (clientX: number, clientY: number, button: number, pointerType?: string) => {
+      if (!this.isPointerDown) return;
+
+      const wasDragging = this.hasDragged;
+      this.isPointerDown = false;
+      this.hasDragged = false;
+
+      // Click/tap selection discrimination: only when no drag occurred
+      if (!wasDragging && (button === 0 || pointerType === 'touch')) {
+        const pickedTrackNo = this.pickTrackAt(clientX, clientY);
+        if (pickedTrackNo) {
+          this.options.onSelectTrack?.(pickedTrackNo);
+          this.onSelectTrackCallback?.(pickedTrackNo);
+        }
+      }
+    };
+
+    const onCancel = () => {
+      this.isPointerDown = false;
+      this.hasDragged = false;
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -167,27 +223,107 @@ export class Renderer3D {
       this.updateCameraFromSpherical();
     };
 
-    this.canvas.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    // Use Pointer Events when supported, fallback to Mouse Events
+    const hasWindow = typeof window !== 'undefined';
+    const usePointer =
+      (hasWindow && 'PointerEvent' in window) ||
+      (typeof globalThis !== 'undefined' && 'PointerEvent' in globalThis);
+    const targetHub: EventTarget = hasWindow ? window : this.canvas;
+
+    let handlePointerDown: (e: PointerEvent) => void;
+    let handlePointerMove: (e: PointerEvent) => void;
+    let handlePointerUp: (e: PointerEvent) => void;
+    let handlePointerCancel: (e: PointerEvent) => void;
+
+    let handleMouseDown: (e: MouseEvent) => void;
+    let handleMouseMove: (e: MouseEvent) => void;
+    let handleMouseUp: (e: MouseEvent) => void;
+
+    if (usePointer) {
+      handlePointerDown = (e: PointerEvent) => onDown(e.clientX, e.clientY, e.button, e.pointerType);
+      handlePointerMove = (e: PointerEvent) => onMove(e.clientX, e.clientY);
+      handlePointerUp = (e: PointerEvent) => onUp(e.clientX, e.clientY, e.button, e.pointerType);
+      handlePointerCancel = () => onCancel();
+
+      this.canvas.addEventListener('pointerdown', handlePointerDown as EventListener);
+      targetHub.addEventListener('pointermove', handlePointerMove as EventListener);
+      targetHub.addEventListener('pointerup', handlePointerUp as EventListener);
+      targetHub.addEventListener('pointercancel', handlePointerCancel as EventListener);
+    } else {
+      handleMouseDown = (e: MouseEvent) => onDown(e.clientX, e.clientY, e.button);
+      handleMouseMove = (e: MouseEvent) => onMove(e.clientX, e.clientY);
+      handleMouseUp = (e: MouseEvent) => onUp(e.clientX, e.clientY, e.button);
+
+      this.canvas.addEventListener('mousedown', handleMouseDown as EventListener);
+      targetHub.addEventListener('mousemove', handleMouseMove as EventListener);
+      targetHub.addEventListener('mouseup', handleMouseUp as EventListener);
+    }
+
     this.canvas.addEventListener('wheel', onWheel, { passive: false });
 
-    // Store unbind function
-    this.detachMouseControls = () => {
-      this.canvas.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+    this.detachControls = () => {
+      if (usePointer) {
+        this.canvas.removeEventListener('pointerdown', handlePointerDown as EventListener);
+        targetHub.removeEventListener('pointermove', handlePointerMove as EventListener);
+        targetHub.removeEventListener('pointerup', handlePointerUp as EventListener);
+        targetHub.removeEventListener('pointercancel', handlePointerCancel as EventListener);
+      } else {
+        this.canvas.removeEventListener('mousedown', handleMouseDown as EventListener);
+        targetHub.removeEventListener('mousemove', handleMouseMove as EventListener);
+        targetHub.removeEventListener('mouseup', handleMouseUp as EventListener);
+      }
       this.canvas.removeEventListener('wheel', onWheel);
     };
   }
 
-  private detachMouseControls: () => void = () => {};
+  private detachControls: () => void = () => {};
+
+  /**
+   * Raycasts from canvas client coordinates into the 3D scene to pick an operator-visible track.
+   * Returns the trackNo of the closest intersected track, or null if none was hit.
+   */
+  public pickTrackAt(clientX: number, clientY: number): string | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const width = rect.width > 0 ? rect.width : (this.canvas.width || 520);
+    const height = rect.height > 0 ? rect.height : (this.canvas.height || 520);
+    const left = rect.left || 0;
+    const top = rect.top || 0;
+
+    // Normalized Device Coordinates: [-1, +1]
+    const x = ((clientX - left) / width) * 2 - 1;
+    const y = -((clientY - top) / height) * 2 + 1;
+
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld(true);
+    this.scene3d.scene.updateMatrixWorld(true);
+
+    this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera);
+
+    const selectable = this.scene3d.getSelectableObjects();
+    if (selectable.length === 0) return null;
+
+    const intersects = this.raycaster.intersectObjects(selectable, true);
+    if (intersects.length === 0) return null;
+
+    // Intersections are ordered by distance (closest first)
+    for (const hit of intersects) {
+      let curr: THREE.Object3D | null = hit.object;
+      while (curr) {
+        if (curr.userData && typeof curr.userData.trackNo === 'string') {
+          return curr.userData.trackNo;
+        }
+        curr = curr.parent;
+      }
+    }
+
+    return null;
+  }
 
   /**
    * Updates tracks in the 3D scene from safe operator-facing views.
    */
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
-    this.scene3d.updateTracks(tracks, selectedTrackNo);
+    this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height);
   }
 
   /**
@@ -269,7 +405,8 @@ export class Renderer3D {
   }
 
   public setLowFidelity(lowFi: boolean): void {
-    this.renderer.setPixelRatio(lowFi ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+    const dpr = typeof window !== 'undefined' ? (lowFi ? 1 : Math.min(window.devicePixelRatio || 1, 2)) : 1;
+    this.renderer.setPixelRatio(dpr);
   }
 
   public getThreeRenderer(): THREE.WebGLRenderer {
@@ -285,7 +422,7 @@ export class Renderer3D {
    */
   public dispose(): void {
     this.stop();
-    this.detachMouseControls();
+    this.detachControls();
 
     if (this.cleanupContextLoss) {
       this.cleanupContextLoss();

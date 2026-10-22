@@ -5,6 +5,13 @@ import { EffectorEnvelopes3D, type EffectorVisualOptions } from './effectorEnvel
 import { LosVisualizer3D } from './losVisualizer';
 import { ClusterOverlay3D } from './clusters';
 import { TrainingAid3D } from './trainingAid';
+import {
+  createAircraftBodyGeometry,
+  createAircraftAccentGeometry,
+  createAircraftHitProxyGeometry,
+  calculateScreenSpaceScale,
+  calculateAircraftOrientation,
+} from './aircraftModel';
 import type { SafeTrackView, Scene3DOptions } from './types';
 import type { TrackClass, ZoneSpec, SensorMode } from '@/sim/types';
 
@@ -19,13 +26,20 @@ const COLOR_THREAT = 0xFF3333;
 const COLOR_FRIEND = 0x00CCFF;
 const COLOR_UNKNOWN = 0xFFCC00;
 
-interface TrackMeshRecord {
+export interface TrackMeshRecord {
+  trackNo: string;
   group: THREE.Group;
+  modelAnchor: THREE.Group;
+  aircraftGroup: THREE.Group;
+  bodyMesh: THREE.Mesh;
+  accentMesh: THREE.Mesh;
+  hitProxy: THREE.Mesh;
   marker: THREE.Mesh;
   stem: THREE.Line;
   ghostRing: THREE.LineLoop | null;
   labelSprite: THREE.Sprite;
   selectionBox: THREE.LineSegments | null;
+  lastHeadingRad: number;
 }
 
 export class Scene3D {
@@ -48,15 +62,20 @@ export class Scene3D {
     diamond: THREE.BufferGeometry;
     cube: THREE.BufferGeometry;
     cylinder: THREE.BufferGeometry;
+    aircraftBody: THREE.BufferGeometry;
+    aircraftAccent: THREE.BufferGeometry;
+    aircraftHitProxy: THREE.BufferGeometry;
     stem: THREE.BufferGeometry;
     selection: THREE.BufferGeometry;
   };
 
   private readonly sharedMaterials: {
-    threat: THREE.MeshBasicMaterial;
-    friend: THREE.MeshBasicMaterial;
-    civil: THREE.MeshBasicMaterial;
-    unknown: THREE.MeshBasicMaterial;
+    threat: THREE.Material;
+    friend: THREE.Material;
+    civil: THREE.Material;
+    unknown: THREE.Material;
+    aircraftBody: THREE.Material;
+    hitProxy: THREE.Material;
     stem: THREE.LineBasicMaterial;
     stemSelected: THREE.LineBasicMaterial;
     selection: THREE.LineBasicMaterial;
@@ -95,19 +114,24 @@ export class Scene3D {
       diamond: new THREE.OctahedronGeometry(25, 0),
       cube: new THREE.BoxGeometry(30, 30, 30),
       cylinder: new THREE.CylinderGeometry(20, 20, 15, 8),
+      aircraftBody: createAircraftBodyGeometry(),
+      aircraftAccent: createAircraftAccentGeometry(),
+      aircraftHitProxy: createAircraftHitProxyGeometry(),
       stem: new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
         new THREE.Vector3(0, 1, 0),
       ]),
-      selection: this.createSelectionBracketGeometry(40),
+      selection: this.createSelectionBracketGeometry(5.0),
     };
 
     // Initialize shared materials
     this.sharedMaterials = {
-      threat: new THREE.MeshBasicMaterial({ color: COLOR_THREAT, wireframe: true }),
-      friend: new THREE.MeshBasicMaterial({ color: COLOR_FRIEND, wireframe: true }),
-      civil: new THREE.MeshBasicMaterial({ color: COLOR_PHOSPHOR, wireframe: true }),
-      unknown: new THREE.MeshBasicMaterial({ color: COLOR_UNKNOWN, wireframe: true }),
+      threat: new THREE.MeshLambertMaterial({ color: COLOR_THREAT, side: THREE.DoubleSide }),
+      friend: new THREE.MeshLambertMaterial({ color: COLOR_FRIEND, side: THREE.DoubleSide }),
+      civil: new THREE.MeshLambertMaterial({ color: COLOR_PHOSPHOR, side: THREE.DoubleSide }),
+      unknown: new THREE.MeshLambertMaterial({ color: COLOR_UNKNOWN, side: THREE.DoubleSide }),
+      aircraftBody: new THREE.MeshLambertMaterial({ color: 0x2A313C, side: THREE.DoubleSide }),
+      hitProxy: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
       stem: new THREE.LineBasicMaterial({ color: COLOR_PHOSPHOR_DIM, transparent: true, opacity: 0.6 }),
       stemSelected: new THREE.LineBasicMaterial({ color: COLOR_FRIEND, transparent: true, opacity: 0.9 }),
       selection: new THREE.LineBasicMaterial({ color: COLOR_FRIEND, depthTest: false }),
@@ -153,6 +177,13 @@ export class Scene3D {
    * Builds the tactical ground plane, concentric range rings, and cardinal axes.
    */
   private buildStaticGround(maxRangeM: number, rMinM: number): void {
+    // 0. Tactical Illumination (Ambient & Directional inside staticGroup for shader depth)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    this.staticGroup.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
+    dirLight.position.set(2000, 5000, 3000);
+    this.staticGroup.add(dirLight);
+
     // 1. Tactical Grid
     const gridSize = maxRangeM * 2;
     const divisions = 20; // 500m per grid square
@@ -342,37 +373,64 @@ export class Scene3D {
     let record = this.trackMeshMap.get(trackNo);
     if (record) return record;
 
-    // Create new track group
+    // Root group positioned at ground projection (threePos.x, 0, threePos.z)
     const group = new THREE.Group();
 
-    // 1. Low-poly marker
-    const marker = new THREE.Mesh(this.sharedGeometries.diamond, this.sharedMaterials.threat);
-    group.add(marker);
+    // Model anchor positioned at altitude (0, threePos.y, 0)
+    const modelAnchor = new THREE.Group();
+    group.add(modelAnchor);
 
-    // 2. Altitude drop stem (connecting marker to ground at Y=0)
+    // Aircraft group containing vehicle body, accents, and hit proxy with dynamic orientation and scaling
+    const aircraftGroup = new THREE.Group();
+
+    // 1. Solid aircraft body
+    const bodyMesh = new THREE.Mesh(this.sharedGeometries.aircraftBody, this.sharedMaterials.aircraftBody);
+    bodyMesh.userData = { trackNo };
+    aircraftGroup.add(bodyMesh);
+
+    // 2. Aircraft symbology accent (nose turret, canopy)
+    const accentMesh = new THREE.Mesh(this.sharedGeometries.aircraftAccent, this.sharedMaterials.unknown);
+    accentMesh.userData = { trackNo };
+    aircraftGroup.add(accentMesh);
+
+    // 3. Forgiving invisible hit proxy for reliable 3D raycasting
+    const hitProxy = new THREE.Mesh(this.sharedGeometries.aircraftHitProxy, this.sharedMaterials.hitProxy);
+    hitProxy.userData = { trackNo };
+    aircraftGroup.add(hitProxy);
+
+    modelAnchor.add(aircraftGroup);
+
+    // 4. Altitude drop stem (connecting marker to ground at Y=0)
     const stem = new THREE.Line(this.sharedGeometries.stem, this.sharedMaterials.stem);
     group.add(stem);
 
-    // 3. Procedural text sprite
+    // 5. Procedural text sprite
     const sprite = this.createTextSprite(trackNo, '#00FF66');
     sprite.position.set(0, 35, 0);
     group.add(sprite);
 
-    // 4. Selection box
+    // 6. Selection bracket (in modelAnchor so it scales and tracks altitude with the aircraft)
     const selectionBox = new THREE.LineSegments(
       this.sharedGeometries.selection,
       this.sharedMaterials.selection
     );
     selectionBox.visible = false;
-    group.add(selectionBox);
+    modelAnchor.add(selectionBox);
 
     record = {
+      trackNo,
       group,
-      marker,
+      modelAnchor,
+      aircraftGroup,
+      bodyMesh,
+      accentMesh,
+      hitProxy,
+      marker: bodyMesh,
       stem,
       ghostRing: null,
       labelSprite: sprite,
       selectionBox,
+      lastHeadingRad: 0,
     };
 
     this.trackMeshMap.set(trackNo, record);
@@ -380,23 +438,19 @@ export class Scene3D {
     return record;
   }
 
-  private applyTrackSymbology(marker: THREE.Mesh, traineeLabel: TrackClass | null): void {
+  private applyTrackSymbology(record: TrackMeshRecord, traineeLabel: TrackClass | null): void {
     if (traineeLabel === 'FRIENDLY') {
-      marker.geometry = this.sharedGeometries.cylinder;
-      marker.material = this.sharedMaterials.friend;
+      record.accentMesh.material = this.sharedMaterials.friend;
     } else if (traineeLabel === 'CIVIL_UAS') {
-      marker.geometry = this.sharedGeometries.cube;
-      marker.material = this.sharedMaterials.civil;
+      record.accentMesh.material = this.sharedMaterials.civil;
     } else if (
       traineeLabel === 'HOSTILE_ATTACK' ||
       traineeLabel === 'HOSTILE_ISR' ||
       traineeLabel === 'SWARM_ELEMENT'
     ) {
-      marker.geometry = this.sharedGeometries.diamond;
-      marker.material = this.sharedMaterials.threat;
+      record.accentMesh.material = this.sharedMaterials.threat;
     } else {
-      marker.geometry = this.sharedGeometries.diamond;
-      marker.material = this.sharedMaterials.unknown;
+      record.accentMesh.material = this.sharedMaterials.unknown;
     }
   }
 
@@ -431,10 +485,15 @@ export class Scene3D {
   }
 
   /**
-   * Updates track markers in the 3D scene from safe operator-facing views.
+   * Updates track models in the 3D scene from safe operator-facing views.
    * Excludes any tracks that are not visible or undetected.
    */
-  public updateTracks(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
+  public updateTracks(
+    tracks: SafeTrackView[],
+    selectedTrackNo: string | null,
+    camera?: THREE.Camera,
+    viewportHeight: number = 520
+  ): void {
     const activeTrackNos = new Set<string>();
 
     for (const track of tracks) {
@@ -444,24 +503,61 @@ export class Scene3D {
       // Compute Three.js position from estimated coordinates
       const threePos = toThree(track.pos.x, track.pos.y, track.pos.z);
       record.group.position.set(threePos.x, 0, threePos.z);
-      record.marker.position.set(0, threePos.y, 0);
+      record.modelAnchor.position.set(0, threePos.y, 0);
       record.stem.scale.set(1, Math.max(1, threePos.y), 1);
 
-      this.applyTrackSymbology(record.marker, track.traineeLabel);
+      // Calculate distance-dependent screen-space scale
+      let distanceM = 7500;
+      let fovDeg = 45;
+      if (camera instanceof THREE.PerspectiveCamera) {
+        fovDeg = camera.fov;
+        distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
+      } else if (camera) {
+        distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
+      }
+      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, 32);
+
+      // Derive orientation from safe velocity vector with stable fallback
+      const { headingRad, pitchRad } = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
+      record.lastHeadingRad = headingRad;
+      record.aircraftGroup.rotation.set(pitchRad, -headingRad, 0, 'YXZ');
+      record.aircraftGroup.scale.set(scale, scale, scale);
+
+      // Symbology on accent mesh
+      this.applyTrackSymbology(record, track.traineeLabel);
 
       const isSelected = track.trackNo === selectedTrackNo || track.isSelected;
       if (record.selectionBox) {
         record.selectionBox.visible = isSelected;
-        record.selectionBox.position.set(0, threePos.y, 0);
+        record.selectionBox.scale.set(scale, scale, scale);
       }
       record.stem.material = isSelected
         ? this.sharedMaterials.stemSelected
         : this.sharedMaterials.stem;
 
+      // Position label sprite above the aircraft
+      record.labelSprite.position.set(0, threePos.y + Math.max(35, scale * 1.5), 0);
+
       this.updateGhostRing(record, track);
     }
 
     this.pruneInactiveTracks(activeTrackNos);
+  }
+
+  /**
+   * Returns list of selectable objects (hit proxies & aircraft meshes) for 3D raycast picking.
+   * Only includes operator-visible active tracks.
+   */
+  public getSelectableObjects(): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = [];
+    for (const record of this.trackMeshMap.values()) {
+      objects.push(record.hitProxy, record.bodyMesh, record.accentMesh);
+    }
+    return objects;
+  }
+
+  public getTrackRecord(trackNo: string): TrackMeshRecord | undefined {
+    return this.trackMeshMap.get(trackNo);
   }
 
   /**

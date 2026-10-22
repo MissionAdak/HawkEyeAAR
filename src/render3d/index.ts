@@ -88,5 +88,18 @@ export {
 } from './xr';
 export type { WebXRCapabilityResult } from './xr';
 
+export {
+  createAircraftBodyGeometry,
+  createAircraftAccentGeometry,
+  createAircraftHitProxyGeometry,
+  calculateScreenSpaceScale,
+  calculateAircraftOrientation,
+  BASE_WINGSPAN_M,
+  MIN_AIRCRAFT_SCALE,
+  MAX_AIRCRAFT_SCALE,
+  TARGET_PIXEL_SIZE,
+} from './aircraftModel';
+
+
 
 

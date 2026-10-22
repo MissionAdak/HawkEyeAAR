@@ -1,10 +1,21 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
 import { toThree, toThreeCoords, toSimCoords } from '@/render3d/coords';
 import { checkWebGL2Support, isWebGL2Available } from '@/render3d/capability';
 import { Scene3D } from '@/render3d/scene3d';
+import { Renderer3D } from '@/render3d/renderer3d';
+import {
+  createAircraftBodyGeometry,
+  createAircraftAccentGeometry,
+  createAircraftHitProxyGeometry,
+  calculateScreenSpaceScale,
+  calculateAircraftOrientation,
+  MIN_AIRCRAFT_SCALE,
+  MAX_AIRCRAFT_SCALE,
+} from '@/render3d/aircraftModel';
+import { useSessionStore, engineInstance, clockInstance } from '@/store/sessionStore';
 import type { SafeTrackView } from '@/render3d/types';
 import {
   Coverage3D,
@@ -881,6 +892,418 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
         expect(engineA.events[i].type).toBe(engineB.events[i].type);
         expect(engineA.events[i].tMs).toBe(engineB.events[i].tMs);
       }
+    });
+  });
+
+  describe('K. 3D Target Picking & Hit Testing (Phases 1 & 4.A, 4.B)', () => {
+    function createTestCanvas(width = 520, height = 520): HTMLCanvasElement {
+      const listeners: Record<string, ((e: unknown) => void)[]> = {};
+      const canvas = {
+        width,
+        height,
+        style: {},
+        getBoundingClientRect: () => ({
+          left: 0,
+          top: 0,
+          width,
+          height,
+          right: width,
+          bottom: height,
+          x: 0,
+          y: 0,
+          toJSON: () => {},
+        }),
+        getContext: () => ({
+          canvas: null,
+          fillRect: () => {},
+          clearRect: () => {},
+          strokeRect: () => {},
+          fillText: () => {},
+          beginPath: () => {},
+          closePath: () => {},
+          stroke: () => {},
+          fill: () => {},
+          measureText: () => ({ width: 50 }),
+        }),
+        addEventListener: (event: string, fn: (e: unknown) => void) => {
+          listeners[event] = listeners[event] || [];
+          listeners[event].push(fn);
+        },
+        removeEventListener: (event: string, fn: (e: unknown) => void) => {
+          if (listeners[event]) {
+            listeners[event] = listeners[event].filter((f) => f !== fn);
+          }
+        },
+        dispatchEvent: (e: { type: string }) => {
+          const arr = listeners[e.type];
+          if (arr) {
+            arr.forEach((fn) => fn(e));
+          }
+          return true;
+        },
+      } as unknown as HTMLCanvasElement;
+      return canvas;
+    }
+
+    function createMockRenderer(): THREE.WebGLRenderer {
+      return {
+        setSize: vi.fn(),
+        setPixelRatio: vi.fn(),
+        render: vi.fn(),
+        dispose: vi.fn(),
+      } as unknown as THREE.WebGLRenderer;
+    }
+
+    beforeEach(() => {
+      if (typeof globalThis.PointerEvent === 'undefined') {
+        class MockPointerEvent extends Event {
+          public clientX: number;
+          public clientY: number;
+          public button: number;
+          public pointerType: string;
+          constructor(type: string, init?: { clientX?: number; clientY?: number; button?: number; pointerType?: string }) {
+            super(type);
+            this.clientX = init?.clientX ?? 0;
+            this.clientY = init?.clientY ?? 0;
+            this.button = init?.button ?? 0;
+            this.pointerType = init?.pointerType ?? 'mouse';
+          }
+        }
+        (globalThis as unknown as Record<string, unknown>).PointerEvent = MockPointerEvent;
+      }
+    });
+
+    it('picks visible targets accurately at their projected 3D positions', () => {
+      const canvas = createTestCanvas(520, 520);
+      const renderer = new Renderer3D(canvas, {
+        maxRangeM: 5000,
+        rMinM: 500,
+        threeRenderer: createMockRenderer(),
+      });
+
+      // Target T-01 placed at asset center (0, 0, 100)
+      const tracks: SafeTrackView[] = [
+        {
+          trackNo: 'T-01',
+          pos: { x: 0, y: 0, z: 100 },
+          vel: { x: 0, y: 20, z: 0 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.9,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+      ];
+
+      renderer.setPreset('TOP');
+      renderer.update(tracks, null);
+
+      const hit = renderer.pickTrackAt(260, 260);
+      expect(hit).toBe('T-01');
+
+      // Empty space (far top-left corner) returns null
+      const miss = renderer.pickTrackAt(10, 10);
+      expect(miss).toBeNull();
+
+      renderer.dispose();
+    });
+
+    it('successfully picks targets at different altitudes', () => {
+      const canvas = createTestCanvas(520, 520);
+      const renderer = new Renderer3D(canvas, {
+        maxRangeM: 5000,
+        rMinM: 500,
+        threeRenderer: createMockRenderer(),
+      });
+
+      // Low altitude target T-LOW (z = 30) and high altitude target T-HIGH (z = 1500)
+      const tracks: SafeTrackView[] = [
+        {
+          trackNo: 'T-LOW',
+          pos: { x: 0, y: 0, z: 30 },
+          vel: { x: 0, y: 15, z: 0 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.85,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+        {
+          trackNo: 'T-HIGH',
+          pos: { x: 500, y: 0, z: 1500 },
+          vel: { x: 0, y: 15, z: 0 },
+          traineeLabel: 'HOSTILE_ISR',
+          step: 'TRACK',
+          q: 0.95,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+      ];
+
+      renderer.setPreset('TOP');
+      renderer.update(tracks, null);
+
+      // Canvas center picks T-LOW
+      expect(renderer.pickTrackAt(260, 260)).toBe('T-LOW');
+
+      renderer.dispose();
+    });
+
+    it('prefers the closest visible target when multiple targets overlap in view', () => {
+      const canvas = createTestCanvas(520, 520);
+      const renderer = new Renderer3D(canvas, {
+        maxRangeM: 5000,
+        rMinM: 500,
+        threeRenderer: createMockRenderer(),
+      });
+      renderer.setPreset('TOP'); // Looking down from Y=9500
+
+      // T-CLOSE is at z = 1200 (closer to camera at Y=9500), T-FAR is at z = 100
+      const tracks: SafeTrackView[] = [
+        {
+          trackNo: 'T-FAR',
+          pos: { x: 0, y: 0, z: 100 },
+          vel: { x: 0, y: 10, z: 0 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.9,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+        {
+          trackNo: 'T-CLOSE',
+          pos: { x: 0, y: 0, z: 1200 },
+          vel: { x: 0, y: 10, z: 0 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.9,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+      ];
+
+      renderer.update(tracks, null);
+      const hit = renderer.pickTrackAt(260, 260);
+      expect(hit).toBe('T-CLOSE');
+
+      renderer.dispose();
+    });
+
+    it('discriminates between a click (selects) and a drag (orbits camera)', () => {
+      const canvas = createTestCanvas(520, 520);
+      let selectedTrack: string | null = null;
+      const renderer = new Renderer3D(canvas, {
+        maxRangeM: 5000,
+        rMinM: 500,
+        threeRenderer: createMockRenderer(),
+        onSelectTrack: (trackNo) => {
+          selectedTrack = trackNo;
+        },
+      });
+
+      const tracks: SafeTrackView[] = [
+        {
+          trackNo: 'T-01',
+          pos: { x: 0, y: 0, z: 100 },
+          vel: { x: 0, y: 20, z: 0 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.9,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+      ];
+
+      renderer.setPreset('TOP');
+      renderer.update(tracks, null);
+
+      const eventTarget = typeof window !== 'undefined' ? window : canvas;
+
+      // Short click: down at (260, 260), move 1px, up -> selection occurs
+      canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: 260, clientY: 260, button: 0 }));
+      eventTarget.dispatchEvent(new PointerEvent('pointermove', { clientX: 261, clientY: 261 }));
+      expect(renderer.dragging).toBe(false);
+      eventTarget.dispatchEvent(new PointerEvent('pointerup', { clientX: 261, clientY: 261, button: 0 }));
+      expect(selectedTrack).toBe('T-01');
+
+      // Drag movement: down at (260, 260), move 25px (> DRAG_THRESHOLD_PX = 5) -> drag occurs, NO selection
+      selectedTrack = null;
+      canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: 260, clientY: 260, button: 0 }));
+      eventTarget.dispatchEvent(new PointerEvent('pointermove', { clientX: 285, clientY: 285 }));
+      expect(renderer.dragging).toBe(true);
+      eventTarget.dispatchEvent(new PointerEvent('pointerup', { clientX: 285, clientY: 285, button: 0 }));
+      expect(selectedTrack).toBeNull();
+
+      renderer.dispose();
+    });
+
+    it('touch tap selects target without being mistaken for a camera drag', () => {
+      const canvas = createTestCanvas(520, 520);
+      let selectedTrack: string | null = null;
+      const renderer = new Renderer3D(canvas, {
+        maxRangeM: 5000,
+        rMinM: 500,
+        threeRenderer: createMockRenderer(),
+        onSelectTrack: (trackNo) => {
+          selectedTrack = trackNo;
+        },
+      });
+
+      const tracks: SafeTrackView[] = [
+        {
+          trackNo: 'T-TAP',
+          pos: { x: 0, y: 0, z: 100 },
+          vel: { x: 0, y: 20, z: 0 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.9,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: false,
+          lifecycle: 'ACTIVE',
+        },
+      ];
+
+      renderer.setPreset('TOP');
+      renderer.update(tracks, null);
+
+      const eventTarget = typeof window !== 'undefined' ? window : canvas;
+
+      // Touch tap
+      canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: 260, clientY: 260, pointerType: 'touch' }));
+      eventTarget.dispatchEvent(new PointerEvent('pointerup', { clientX: 260, clientY: 260, pointerType: 'touch' }));
+      expect(selectedTrack).toBe('T-TAP');
+
+      renderer.dispose();
+    });
+
+    it('integrates cleanly with sessionStore.designate without side-effects on scoring or effectors', () => {
+      engineInstance.abort('TEST_RESET');
+      clockInstance.reset();
+      engineInstance.load(demo1Json as unknown as ScenarioSpec);
+
+      // Detect first entity so it becomes selectable
+      if (engineInstance.curr[0]) {
+        engineInstance.curr[0].step = 'FIND';
+        const trackNo = engineInstance.curr[0].trackNo!;
+
+        // Trigger designate via store
+        useSessionStore.getState().designate(trackNo, 'CLICK');
+
+        // Verify action queued onto engineInstance.inputQueue
+        expect(engineInstance.inputQueue.getPendingCount()).toBeGreaterThan(0);
+
+        // Step simulation tick to process inputQueue
+        engineInstance.step();
+
+        // Selected track is updated on engineInstance
+        expect(engineInstance.selectedTrackNo).toBe(trackNo);
+
+        // Verify no weapon fired merely by selecting
+        expect(engineInstance.events.filter((e) => e.type === 'ENGAGE')).toHaveLength(0);
+      }
+    });
+  });
+
+  describe('L. Recognizable Aerial-Vehicle Models & Controlled Distance Scaling (Phases 2 & 4.C)', () => {
+    it('creates procedural solid UAV body, accent, and hit proxy geometries', () => {
+      const bodyGeom = createAircraftBodyGeometry();
+      const accentGeom = createAircraftAccentGeometry();
+      const proxyGeom = createAircraftHitProxyGeometry();
+
+      expect(bodyGeom.getAttribute('position').count).toBeGreaterThan(20);
+      expect(bodyGeom.getIndex()).toBeDefined();
+      expect(bodyGeom.getAttribute('normal')).toBeDefined();
+
+      expect(accentGeom.getAttribute('position').count).toBeGreaterThan(5);
+      expect(proxyGeom.getAttribute('position').count).toBeGreaterThan(10);
+
+      bodyGeom.dispose();
+      accentGeom.dispose();
+      proxyGeom.dispose();
+    });
+
+    it('computes screen space scale within guaranteed [15, 140] bounds across all distances', () => {
+      // Normal tactical distance ~7500m
+      const normalScale = calculateScreenSpaceScale(45, 7500, 520, 32);
+      expect(normalScale).toBeGreaterThanOrEqual(MIN_AIRCRAFT_SCALE);
+      expect(normalScale).toBeLessThanOrEqual(MAX_AIRCRAFT_SCALE);
+
+      // Extreme close distance 300m -> clamped at MIN_AIRCRAFT_SCALE (does not explode)
+      const closeScale = calculateScreenSpaceScale(45, 300, 520, 32);
+      expect(closeScale).toBe(MIN_AIRCRAFT_SCALE);
+
+      // Extreme far distance 30000m -> clamped at MAX_AIRCRAFT_SCALE (does not vanish into subpixels)
+      const farScale = calculateScreenSpaceScale(45, 30000, 520, 32);
+      expect(farScale).toBe(MAX_AIRCRAFT_SCALE);
+    });
+
+    it('derives aircraft heading and pitch smoothly with fallback for zero velocity', () => {
+      // North velocity: heading = 0
+      const north = calculateAircraftOrientation({ x: 0, y: 50, z: 0 });
+      expect(north.headingRad).toBeCloseTo(0);
+      expect(north.pitchRad).toBeCloseTo(0);
+
+      // East velocity: heading = pi/2
+      const east = calculateAircraftOrientation({ x: 50, y: 0, z: 0 });
+      expect(east.headingRad).toBeCloseTo(Math.PI / 2);
+
+      // Climbing velocity: pitch > 0
+      const climb = calculateAircraftOrientation({ x: 0, y: 50, z: 25 });
+      expect(climb.pitchRad).toBeGreaterThan(0);
+
+      // Zero or near-zero velocity: stable fallback heading without NaN
+      const zeroVel = calculateAircraftOrientation({ x: 0.1, y: 0.1, z: 0 }, 1.25);
+      expect(Number.isNaN(zeroVel.headingRad)).toBe(false);
+      expect(zeroVel.headingRad).toBe(1.25);
+      expect(zeroVel.pitchRad).toBe(0);
+    });
+
+    it('properly constructs and aligns aircraft group, body, accents, stem, and hit proxy in Scene3D', () => {
+      const scene3d = new Scene3D({ maxRangeM: 5000, rMinM: 500 });
+      const tracks: SafeTrackView[] = [
+        {
+          trackNo: 'T-01',
+          pos: { x: 1200, y: 1500, z: 80 },
+          vel: { x: -10, y: -20, z: 5 },
+          traineeLabel: 'HOSTILE_ATTACK',
+          step: 'TRACK',
+          q: 0.9,
+          masked: false,
+          ghostSigmaM: 0,
+          isSelected: true,
+          lifecycle: 'ACTIVE',
+        },
+      ];
+
+      scene3d.updateTracks(tracks, 'T-01');
+
+      const record = scene3d.getTrackRecord('T-01');
+      expect(record).toBeDefined();
+      expect(record?.bodyMesh).toBeDefined();
+      expect(record?.accentMesh).toBeDefined();
+      expect(record?.hitProxy).toBeDefined();
+      expect(record?.selectionBox?.visible).toBe(true);
+
+      // Selectable objects contains proxy, body, and accent
+      const selectables = scene3d.getSelectableObjects();
+      expect(selectables.length).toBe(3);
+      expect(selectables.every((obj) => obj.userData.trackNo === 'T-01')).toBe(true);
+
+      scene3d.dispose();
+      expect(scene3d.scene.children).toHaveLength(0);
     });
   });
 });
