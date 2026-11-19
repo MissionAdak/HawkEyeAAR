@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import {
   SCENARIO_CATALOG,
@@ -13,6 +13,9 @@ interface ScenarioModalProps {
 
 export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
+  const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId);
+  const sessionStatus = useSessionStore((s) => s.sessionStatus);
+  const selectScenario = useSessionStore((s) => s.selectScenario);
   const loadScenarioById = useSessionStore((s) => s.loadScenarioById);
   const restartSession = useSessionStore((s) => s.restartSession);
   const formattedClock = useSessionStore((s) => s.ui.formattedClock);
@@ -23,6 +26,18 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
 
   const isEvalActive = engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded;
   const isSessionActive = engineInstance.tickIndex > 0 && !engineInstance.sessionEnded;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [onClose]);
 
   const getClassBadgeClass = (cls: TrueClass) => {
     switch (cls) {
@@ -44,6 +59,12 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
   const handleSelectScenario = (entry: ScenarioCatalogEntry) => {
     setLoadError(null);
     if (isEvalActive) return;
+
+    if (sessionStatus === 'READY') {
+      selectScenario(entry.id);
+      onClose();
+      return;
+    }
 
     if (entry.id === currentScenarioId) {
       if (isSessionActive) {
@@ -108,7 +129,7 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
       role="dialog"
       aria-modal="true"
       aria-label="Mission / Exercise Scenario Selector"
-      className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none font-mono"
+      className="fixed inset-0 z-[60] bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none font-mono"
     >
       <div className="w-[860px] max-h-[88vh] bg-carbon-900 border border-line flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
@@ -133,12 +154,21 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
 
         {/* Warning & EVAL Banners */}
         <div className="px-4 py-2 bg-carbon-950 border-b border-line flex flex-col gap-1.5 text-[11px] shrink-0">
-          <div className="flex items-center gap-2 text-amber">
-            <span className="font-bold">⚠ WARNING:</span>
-            <span>
-              Loading a scenario ends the active session. All pending events will be flushed to AAR before the new session begins.
-            </span>
-          </div>
+          {sessionStatus === 'READY' ? (
+            <div className="flex items-center gap-2 text-phosphor">
+              <span className="font-bold">ℹ MISSION BRIEFING MODE:</span>
+              <span>
+                Selecting a scenario updates the mission briefing. The simulation session will begin only when you press [START SESSION].
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-amber">
+              <span className="font-bold">⚠ WARNING:</span>
+              <span>
+                Loading a scenario ends the active session. All pending events will be flushed to AAR before the new session begins.
+              </span>
+            </div>
+          )}
 
           {isEvalActive && (
             <div className="flex items-center gap-2 text-threat bg-threat/10 border border-threat px-2 py-1 font-bold">
@@ -157,11 +187,18 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
         {/* Scenarios List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
           {SCENARIO_CATALOG.map((entry) => {
-            const isActive = entry.id === currentScenarioId;
+            const isSelectedForBriefing = sessionStatus === 'READY' && entry.id === selectedScenarioId;
+            const isActive = sessionStatus === 'RUNNING' && entry.id === currentScenarioId;
 
             let actionBtnStyle = 'border-phosphor text-phosphor hover:bg-phosphor hover:text-carbon-950';
             if (isEvalActive) {
               actionBtnStyle = 'opacity-40 cursor-not-allowed border-line text-text-dim bg-carbon-900';
+            } else if (sessionStatus === 'READY') {
+              if (isSelectedForBriefing) {
+                actionBtnStyle = 'border-phosphor bg-phosphor text-carbon-950 font-bold';
+              } else {
+                actionBtnStyle = 'border-line text-text-main hover:border-phosphor hover:text-phosphor';
+              }
             } else if (isActive) {
               actionBtnStyle = 'border-amber text-amber hover:bg-amber hover:text-carbon-950';
             }
@@ -169,8 +206,17 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
             let actionBtnTitle = `Load ${entry.name}`;
             if (isEvalActive) {
               actionBtnTitle = 'Locked in EVAL mode';
+            } else if (sessionStatus === 'READY') {
+              actionBtnTitle = `Select ${entry.name} for mission briefing`;
             } else if (isActive) {
               actionBtnTitle = 'Restart current scenario session with fresh seed';
+            }
+
+            let buttonLabel = '[LOAD SCENARIO]';
+            if (sessionStatus === 'READY') {
+              buttonLabel = isSelectedForBriefing ? '[SELECTED]' : '[SELECT FOR BRIEFING]';
+            } else if (isActive) {
+              buttonLabel = '[R] RESTART (NEW SEED)';
             }
 
             return (
@@ -178,7 +224,7 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
                 key={entry.id}
                 data-testid={`scenario-card-${entry.id}`}
                 className={`p-3 border transition-colors flex flex-col gap-2 ${
-                  isActive
+                  isSelectedForBriefing || isActive
                     ? 'border-phosphor bg-phosphorDim/10'
                     : 'border-line bg-carbon-850 hover:border-text-dim'
                 }`}
@@ -207,6 +253,11 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
                     >
                       {entry.category}
                     </span>
+                    {isSelectedForBriefing && (
+                      <span className="text-[10px] font-display font-bold px-2 py-0.5 border border-phosphor bg-phosphor text-carbon-950">
+                        SELECTED FOR BRIEFING
+                      </span>
+                    )}
                     {isActive && (
                       <span className="text-[10px] font-display font-bold px-2 py-0.5 border border-phosphor bg-phosphor text-carbon-950">
                         ACTIVE SESSION
@@ -222,7 +273,7 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
                       className={`px-3 py-1 font-display font-bold text-[11px] border transition-colors ${actionBtnStyle}`}
                       title={actionBtnTitle}
                     >
-                      {isActive ? '[R] RESTART (NEW SEED)' : '[LOAD SCENARIO]'}
+                      {buttonLabel}
                     </button>
                   </div>
                 </div>

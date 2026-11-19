@@ -66,6 +66,19 @@ export class ConsoleRenderer {
   }
 
   private tickAndRender(frameTs: number): void {
+    // If no scenario is loaded or session has ended, keep clock and physics at standby
+    if (!engineInstance.spec || engineInstance.sessionEnded) {
+      this.renderActiveSensor(
+        this.canvas.width,
+        this.canvas.height,
+        0,
+        0,
+        0,
+        false
+      );
+      return;
+    }
+
     // 1. Advance simulation accumulator clock
     const { ticksToRun, alpha } = clockInstance.advance(frameTs);
 

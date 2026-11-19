@@ -18,7 +18,9 @@ interface HotWashProps {
 
 export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const restartSession = useSessionStore((s) => s.restartSession);
+  const rerunExactSeedSession = useSessionStore((s) => s.rerunExactSeedSession);
   const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
+  const returnToBriefing = useSessionStore((s) => s.returnToBriefing);
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
 
   // Reconstruct metrics from raw event log
@@ -410,16 +412,36 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
 
           <div className="flex gap-2 items-center">
             <button
-              onClick={handleSelectScenario}
+              onClick={() => {
+                onClose();
+                returnToBriefing();
+              }}
+              data-testid="aar-return-briefing-btn"
               className="px-3 py-1 font-display font-semibold text-[11px] border border-phosphor/70 hover:border-phosphor text-phosphor hover:bg-phosphorDim/30 transition-colors"
             >
+              [B] MISSION BRIEFING
+            </button>
+            <button
+              onClick={handleSelectScenario}
+              className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-text-main text-text-dim hover:text-text-main transition-colors"
+            >
               [S] SELECT SCENARIO
+            </button>
+            <button
+              onClick={() => {
+                onClose();
+                void rerunExactSeedSession();
+              }}
+              className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-friend text-friend transition-colors"
+              title="Replay this exact scenario run using the same seed"
+            >
+              [E] REPLAY EXACT SEED
             </button>
             <button
               onClick={handleRestart}
               className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-amber text-amber transition-colors"
             >
-              [R] RESTART SCENARIO
+              [R] RUN AGAIN (NEW SEED)
             </button>
             <button
               onClick={onClose}

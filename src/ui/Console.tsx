@@ -8,6 +8,7 @@ import { QuickGuide } from './QuickGuide';
 import { ScenarioModal } from './ScenarioModal';
 import { WebXrComfortModal } from './WebXrComfortModal';
 import { CrossSectionPanel } from './CrossSectionPanel';
+import { MissionBriefing } from './MissionBriefing';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
@@ -395,6 +396,11 @@ export const Console: React.FC = () => {
   const closeScenarioModal = useSessionStore((s) => s.closeScenarioModal);
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
   const abortSession = useSessionStore((s) => s.abortSession);
+  const sessionStatus = useSessionStore((s) => s.sessionStatus);
+  const isBriefingOpen = useSessionStore((s) => s.isBriefingOpen);
+  const openBriefing = useSessionStore((s) => s.openBriefing);
+  const closeBriefing = useSessionStore((s) => s.closeBriefing);
+  const startSession = useSessionStore((s) => s.startSession);
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
@@ -876,6 +882,39 @@ export const Console: React.FC = () => {
                 LOW-FIDELITY MODE [L]
               </div>
             )}
+
+            {/* Standby Banner when in READY state and briefing modal is dismissed */}
+            {sessionStatus === 'READY' && !isBriefingOpen && (
+              <div className="absolute inset-0 z-20 bg-carbon-950/75 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 p-6 select-none pointer-events-auto">
+                <div className="text-center space-y-1">
+                  <div className="font-display font-bold text-lg text-text-main tracking-wider">
+                    DRISHTI-CUAS — STANDBY
+                  </div>
+                  <div className="font-mono text-xs text-phosphor border border-phosphor px-2 py-0.5 bg-phosphorDim/20 inline-block">
+                    STATUS: READY FOR EXERCISE
+                  </div>
+                </div>
+                <div className="text-center font-mono text-[11px] text-text-dim max-w-sm">
+                  Simulation clock and target physics are held at T+00:00.000. Review mission parameters or launch the active scenario when ready.
+                </div>
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={openBriefing}
+                    data-testid="open-briefing-btn"
+                    className="px-4 py-2 font-display font-semibold text-xs border border-phosphor/70 hover:border-phosphor text-phosphor hover:bg-phosphorDim/30 transition-colors"
+                  >
+                    [ REVIEW BRIEFING ]
+                  </button>
+                  <button
+                    onClick={() => void startSession()}
+                    data-testid="standby-start-session-btn"
+                    className="px-5 py-2 font-display font-bold text-xs tracking-wider border border-phosphor bg-phosphor text-carbon-950 hover:bg-phosphor/90 shadow-md shadow-phosphor/20 active:scale-95 transition-all"
+                  >
+                    START SESSION ►
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right Gutter: Active Mode Telemetry */}
@@ -944,7 +983,12 @@ export const Console: React.FC = () => {
       {/* 9. Mission Scenario Selector Modal */}
       {isScenarioModalOpen && <ScenarioModal onClose={closeScenarioModal} />}
 
-      {/* 10. WebXR VR Comfort & Safety Advisory Modal */}
+      {/* 10. Mission Briefing Modal */}
+      {sessionStatus === 'READY' && isBriefingOpen && (
+        <MissionBriefing onClose={closeBriefing} />
+      )}
+
+      {/* 11. WebXR VR Comfort & Safety Advisory Modal */}
       <WebXrComfortModal
         isOpen={isVrModalOpen}
         onConfirm={handleConfirmVr}

@@ -8,12 +8,16 @@ export const TrackTable: React.FC = () => {
   const selectedTrackNo = useSessionStore((s) => s.ui.selectedTrackNo);
   const designate = useSessionStore((s) => s.designate);
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
+  const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId);
+  const sessionStatus = useSessionStore((s) => s.sessionStatus);
+  const startSession = useSessionStore((s) => s.startSession);
   const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
   const restartSession = useSessionStore((s) => s.restartSession);
   const mode = useSessionStore((s) => s.ui.mode);
 
+  const displayScenarioId = sessionStatus === 'READY' ? selectedScenarioId : currentScenarioId;
   const isEvalLocked = mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0;
-  const currentEntry = getScenarioCatalogEntry(currentScenarioId);
+  const currentEntry = getScenarioCatalogEntry(displayScenarioId);
 
   const getStatusPill = (status: string) => {
     switch (status) {
@@ -49,9 +53,9 @@ export const TrackTable: React.FC = () => {
           <span className="font-display text-text-dim">EXERCISE:</span>
           <span
             className="font-mono font-bold text-phosphor truncate max-w-[150px]"
-            title={currentEntry?.name ?? currentScenarioId}
+            title={currentEntry?.name ?? displayScenarioId}
           >
-            {currentScenarioId}
+            {displayScenarioId}
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -67,24 +71,34 @@ export const TrackTable: React.FC = () => {
           >
             [S] SCENARIO
           </button>
-          <button
-            onClick={() => {
-              if (engineInstance.tickIndex > 0 && !engineInstance.sessionEnded) {
-                openScenarioModal();
-              } else {
-                void restartSession();
-              }
-            }}
-            disabled={isEvalLocked}
-            className={`py-1 px-2 text-center text-[10px] font-mono border transition-colors ${
-              isEvalLocked
-                ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
-                : 'border-line hover:border-text-main text-text-dim hover:text-text-main bg-carbon-900'
-            }`}
-            title={isEvalLocked ? 'Restart locked during active EVAL' : 'Restart active scenario'}
-          >
-            RESTART
-          </button>
+          {sessionStatus === 'READY' ? (
+            <button
+              onClick={() => void startSession()}
+              className="py-1 px-2 text-center text-[10px] font-display font-bold border border-phosphor bg-phosphor text-carbon-950 hover:bg-phosphor/90 transition-colors shadow-sm"
+              title="Start Simulation Exercise"
+            >
+              START ►
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (engineInstance.tickIndex > 0 && !engineInstance.sessionEnded) {
+                  openScenarioModal();
+                } else {
+                  void restartSession();
+                }
+              }}
+              disabled={isEvalLocked}
+              className={`py-1 px-2 text-center text-[10px] font-mono border transition-colors ${
+                isEvalLocked
+                  ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+                  : 'border-line hover:border-text-main text-text-dim hover:text-text-main bg-carbon-900'
+              }`}
+              title={isEvalLocked ? 'Restart locked during active EVAL' : 'Restart active scenario'}
+            >
+              RESTART
+            </button>
+          )}
         </div>
       </div>
 

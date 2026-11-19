@@ -65,13 +65,19 @@ test.describe('Tactical C2 Zero-Overflow Layout Audit', () => {
 
   test('Mandatory Anti-SaaS disclaimer footer is present', async ({ page }) => {
     await page.goto('/');
-    const disclaimer = page.getByText('SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION');
+    const disclaimer = page.locator('footer').getByText('SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION');
     await expect(disclaimer).toBeVisible();
   });
 
   test('3D toggle preserves zero-overflow layout geometry', async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/');
+
+    // Start session from Mission Briefing to view console scope
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    if (await startBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await startBtn.click();
+    }
 
     // 1. Locate and click [V] 3D VIEW button
     const toggleBtn = page.getByRole('button', { name: /3D VIEW/ });

@@ -32,6 +32,8 @@ export function getIsFinalizingSession(): boolean {
   return isFinalizingSession;
 }
 
+export type SessionStatus = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'ABORTED';
+
 const initialSnapshot: UiSnapshot = {
   tick: 0,
   simTimeMs: 0,
@@ -56,11 +58,14 @@ const initialSnapshot: UiSnapshot = {
 export interface SessionState {
   ui: UiSnapshot;
   isSimRunning: boolean;
+  sessionStatus: SessionStatus;
 
   isAarOpen: boolean;
   isQuickGuideOpen: boolean;
   isScenarioModalOpen: boolean;
+  isBriefingOpen: boolean;
   currentScenarioId: string;
+  selectedScenarioId: string;
   simSpeed: number;
 
   // Actions pushing onto InputQueue
@@ -82,8 +87,13 @@ export interface SessionState {
   closeQuickGuide: () => void;
   openScenarioModal: () => void;
   closeScenarioModal: () => void;
+  openBriefing: () => void;
+  closeBriefing: () => void;
 
   // Session lifecycle
+  selectScenario: (id: string) => void;
+  startSession: (scenarioId?: string, customSeed?: number) => Promise<boolean>;
+  returnToBriefing: () => void;
   loadScenario: (spec: ScenarioSpec) => Promise<void>;
   loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
   restartSession: (options?: { freshSeed?: boolean }) => Promise<boolean>;
@@ -106,6 +116,9 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } | null {
 export const useSessionStore = create<SessionState>((set, get) => ({
   ui: initialSnapshot,
   isSimRunning: false,
+  sessionStatus: 'READY',
+  selectedScenarioId: DEFAULT_SCENARIO_ID,
+  isBriefingOpen: true,
   isAarOpen: false,
   isQuickGuideOpen: false,
   isScenarioModalOpen: false,
@@ -239,8 +252,63 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     engineInstance.abort(reason);
     clockInstance.reset();
     set({
+      sessionStatus: 'ABORTED',
       isSimRunning: false,
       isAarOpen: true,
+      ui: engineInstance.buildUiSnapshot(),
+    });
+  },
+
+  selectScenario: (id: string) => {
+    set({ selectedScenarioId: id });
+  },
+
+  startSession: async (scenarioId?: string, customSeed?: number): Promise<boolean> => {
+    const state = get();
+    if (state.sessionStatus === 'STARTING' || isFinalizingSession) {
+      console.warn('[SessionStore] Session is already starting.');
+      return false;
+    }
+
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
+      return false;
+    }
+
+    const targetId = scenarioId ?? state.selectedScenarioId ?? DEFAULT_SCENARIO_ID;
+
+    try {
+      const { spec } = loadCatalogScenario(targetId, customSeed);
+      if (!validate(spec)) {
+        console.error(`[SessionStore] Refusing to load invalid scenario: ${spec.id}`);
+        return false;
+      }
+      await state.loadScenario(spec);
+      return true;
+    } catch (err) {
+      console.error(`[SessionStore] Failed to start scenario "${targetId}":`, err);
+      return false;
+    }
+  },
+
+  returnToBriefing: () => {
+    if (engineInstance.spec && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      engineInstance.abort('RETURN_TO_BRIEFING');
+    }
+    engineInstance.spec = null;
+    engineInstance.sessionEnded = false;
+    engineInstance.curr = [];
+    engineInstance.prev = [];
+    engineInstance.events = [];
+    engineInstance.tickIndex = 0;
+    engineInstance.selectedTrackNo = null;
+    clockInstance.reset();
+    set({
+      sessionStatus: 'READY',
+      isSimRunning: false,
+      isBriefingOpen: true,
+      isAarOpen: false,
+      isScenarioModalOpen: false,
       ui: engineInstance.buildUiSnapshot(),
     });
   },
@@ -265,6 +333,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     isFinalizingSession = true;
+    set({ sessionStatus: 'STARTING' });
     clockInstance.pause();
 
     const isPreviousActive =
@@ -300,6 +369,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       recorderForSession.record(event);
 
       if (event.type === 'SESSION_END') {
+        const isAborted = Boolean(event.payload?.aborted);
+        set({
+          sessionStatus: isAborted ? 'ABORTED' : 'COMPLETED',
+          isSimRunning: false,
+        });
         void recorderForSession.stop().catch((error) => {
           console.error('[Recorder] Failed to finish session:', error);
         });
@@ -329,8 +403,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     set({
+      sessionStatus: 'RUNNING',
       currentScenarioId: scenarioId,
+      selectedScenarioId: scenarioId,
       isSimRunning: true,
+      isBriefingOpen: false,
       isAarOpen: false,
       isScenarioModalOpen: false,
       simSpeed: 1.0,
@@ -339,19 +416,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   loadScenarioById: async (id: string, customSeed?: number): Promise<boolean> => {
-    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
-      console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
-      return false;
-    }
-
-    try {
-      const { spec } = loadCatalogScenario(id, customSeed);
-      await get().loadScenario(spec);
-      return true;
-    } catch (err) {
-      console.error(`[SessionStore] Failed to load catalog scenario "${id}":`, err);
-      return false;
-    }
+    return await get().startSession(id, customSeed);
   },
 
   restartSession: async (options?: { freshSeed?: boolean }): Promise<boolean> => {
@@ -360,11 +425,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return false;
     }
 
-    const currentId = get().currentScenarioId;
+    const currentId = get().currentScenarioId || get().selectedScenarioId || DEFAULT_SCENARIO_ID;
     const useFreshSeed = options?.freshSeed !== false;
     const seed = useFreshSeed ? generateLocalSeed() : engineInstance.spec?.seed;
 
-    return await get().loadScenarioById(currentId, seed);
+    return await get().startSession(currentId, seed);
   },
 
   rerunExactSeedSession: async (): Promise<boolean> => {
@@ -373,10 +438,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return false;
     }
 
-    const currentId = get().currentScenarioId;
+    const currentId = get().currentScenarioId || get().selectedScenarioId || DEFAULT_SCENARIO_ID;
     const exactSeed = engineInstance.spec?.seed;
 
-    return await get().loadScenarioById(currentId, exactSeed);
+    return await get().startSession(currentId, exactSeed);
   },
 
   setSpeed: (speed: number) => {
@@ -410,6 +475,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   closeScenarioModal: () => {
     set({ isScenarioModalOpen: false });
+  },
+
+  openBriefing: () => {
+    set({ isBriefingOpen: true });
+  },
+
+  closeBriefing: () => {
+    set({ isBriefingOpen: false });
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {

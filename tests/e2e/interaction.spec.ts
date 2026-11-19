@@ -6,9 +6,14 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
   }) => {
     await page.goto('/');
 
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
     // 1. Wait for sim to boot and tracks to appear
     const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
-    await expect(trackRow).toBeVisible({ timeout: 5000 });
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
 
     // 2. Click track row to designate
     await trackRow.click();
@@ -46,6 +51,11 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
   test('sensor mode buttons and pause toggle work smoothly', async ({ page }) => {
     await page.goto('/');
 
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
     const modeTabs = page.locator('.radar-frame');
 
     // Click '[2] EO/IR' tab
@@ -77,9 +87,14 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
   }) => {
     await page.goto('/');
 
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
     // 1. Wait for sim to boot and tracks to appear
     const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
-    await expect(trackRow).toBeVisible({ timeout: 5000 });
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
 
     // 2. Toggle from 2D RADAR to 3D VIEW
     const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
@@ -131,6 +146,11 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
     page.on('pageerror', (err) => pageErrors.push(err.message));
 
     await page.goto('/');
+
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
 
     // 1. Switch to 3D view
     const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });

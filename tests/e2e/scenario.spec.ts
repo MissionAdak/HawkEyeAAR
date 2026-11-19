@@ -1,14 +1,20 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
+test.describe('Scenario Selector & Lifecycle (TASK 12 & TASK 15)', () => {
   test('DEMO-1 is the startup default scenario', async ({ page }) => {
     await page.goto('/');
 
-    // 1. Verify left rail displays DEMO-1
+    // 1. Verify Mission Briefing modal opens on start with DEMO-1 selected
+    const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+    await expect(briefingModal).toBeVisible({ timeout: 5000 });
+    await expect(briefingModal.getByText('STATUS: READY FOR EXERCISE')).toBeVisible();
+    await expect(briefingModal.getByText(/ID:\s*DEMO-1/i)).toBeVisible();
+
+    // 2. Verify left rail displays DEMO-1
     const leftRail = page.locator('aside').first();
     await expect(leftRail.getByText('DEMO-1').first()).toBeVisible({ timeout: 5000 });
 
-    // 2. Verify Tactical Viewport Tabs shows [S] DEMO-1
+    // 3. Verify Tactical Viewport Tabs shows [S] DEMO-1
     await expect(page.getByRole('button', { name: /\[S\] DEMO-1/i })).toBeVisible();
   });
 
@@ -17,10 +23,10 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
   }) => {
     await page.goto('/');
 
-    // Open Scenario Modal using left rail button
-    const scenarioBtn = page.getByRole('button', { name: /\[S\] SCENARIO/i });
-    await expect(scenarioBtn).toBeVisible({ timeout: 5000 });
-    await scenarioBtn.click();
+    // Open Scenario Modal using briefing change scenario button
+    const changeScenarioBtn = page.locator('[data-testid="change-scenario-btn"]');
+    await expect(changeScenarioBtn).toBeVisible({ timeout: 5000 });
+    await changeScenarioBtn.click();
 
     // Verify modal header is visible
     const modal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
@@ -47,9 +53,9 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(modal.locator('[data-testid="scenario-duration-FORMATION-1"]')).toHaveText(/DURATION:\s*120s/i);
     await expect(modal.locator('[data-testid="scenario-duration-POPUP-1"]')).toHaveText(/DURATION:\s*120s/i);
 
-    // Verify DEMO-1 has ACTIVE SESSION badge and restart action
-    await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByText('ACTIVE SESSION')).toBeVisible();
-    await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByRole('button', { name: /RESTART/i })).toBeVisible();
+    // Verify DEMO-1 has SELECTED FOR BRIEFING badge in READY state
+    await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByText('SELECTED FOR BRIEFING')).toBeVisible();
+    await expect(modal.locator('[data-testid="scenario-card-DEMO-1"]').getByRole('button', { name: /\[SELECTED\]/i })).toBeVisible();
 
     // Close modal via Escape key
     await page.keyboard.press('Escape');
@@ -59,26 +65,30 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
   test('loads RANDOM-1 unpredictable assessment and updates tactical console', async ({ page }) => {
     await page.goto('/');
 
-    // Wait for simulation clock to advance
-    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible();
-
-    // Open Scenario Modal
-    await page.getByRole('button', { name: /\[S\] SCENARIO/i }).click();
+    // Open Scenario Modal from briefing
+    await page.locator('[data-testid="change-scenario-btn"]').click();
     const modal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
     await expect(modal).toBeVisible();
 
-    // Find RANDOM-1 card and click [LOAD SCENARIO]
+    // Find RANDOM-1 card and click [SELECT FOR BRIEFING]
     const randomCard = modal.locator('[data-testid="scenario-card-RANDOM-1"]');
     await expect(randomCard).toBeVisible();
-    await randomCard.getByRole('button', { name: /LOAD SCENARIO/i }).click();
+    await randomCard.getByRole('button', { name: /SELECT FOR BRIEFING/i }).click();
 
-    // Explicit confirmation dialog must appear
-    const confirmDialog = page.getByRole('alertdialog');
-    await expect(confirmDialog).toBeVisible();
-    await confirmDialog.getByRole('button', { name: /CONFIRM & LOAD SCENARIO/i }).click();
-
-    // Modal should close and active scenario should now be RANDOM-1
+    // Modal closes and briefing updates to RANDOM-1
     await expect(modal).not.toBeVisible();
+    const briefing = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+    await expect(briefing).toBeVisible();
+    await expect(briefing.getByText(/ID:\s*RANDOM-1/i)).toBeVisible();
+    await expect(briefing.getByText(/RANDOMIZED ENCOUNTER EXERCISE/i)).toBeVisible();
+
+    // Click START SESSION button
+    await page.locator('[data-testid="start-session-btn"]').click();
+
+    // Briefing closes, simulation starts, clock advances
+    await expect(briefing).not.toBeVisible();
+    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible({ timeout: 10000 });
+
     const leftRail = page.locator('aside').first();
     await expect(leftRail.getByText('RANDOM-1').first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole('button', { name: /\[S\] RANDOM-1/i })).toBeVisible();
@@ -87,8 +97,11 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
   test('requires explicit confirmation before replacing an active session', async ({ page }) => {
     await page.goto('/');
 
+    // Start initial session
+    await page.locator('[data-testid="start-session-btn"]').click();
+
     // Wait for simulation clock to advance
-    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible();
+    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible({ timeout: 10000 });
 
     // Open Scenario Modal
     await page.getByRole('button', { name: /\[S\] SCENARIO/i }).click();
@@ -125,6 +138,9 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
   test('restarts the currently active scenario, not DEMO-1', async ({ page }) => {
     await page.goto('/');
 
+    // Start initial session
+    await page.locator('[data-testid="start-session-btn"]').click();
+
     // Switch to DEMO-2 via modal
     await page.getByRole('button', { name: /\[S\] SCENARIO/i }).click();
     const modal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
@@ -143,7 +159,7 @@ test.describe('Scenario Selector & Lifecycle (TASK 12)', () => {
     await expect(leftRail.getByText('DEMO-2').first()).toBeVisible({ timeout: 5000 });
 
     // Allow the simulation to run so clock advances beyond T+00:00
-    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible();
+    await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible({ timeout: 10000 });
 
     // Click RESTART in left rail, which opens the Scenario Modal while a session is active
     const restartBtn = leftRail.getByRole('button', { name: /RESTART/i });

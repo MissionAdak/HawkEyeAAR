@@ -73,6 +73,7 @@ function handleEscapeKey(): void {
   store.closeQuickGuide();
   store.closeAar();
   store.closeScenarioModal();
+  store.closeBriefing();
 }
 
 function handlePauseKey(): void {
