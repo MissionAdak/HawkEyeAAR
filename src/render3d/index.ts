@@ -100,6 +100,15 @@ export {
   TARGET_PIXEL_SIZE,
 } from './aircraftModel';
 
+export {
+  CameraController,
+  MIN_CAMERA_DISTANCE_M,
+  MAX_CAMERA_DISTANCE_M,
+} from './cameraController';
+
+export * from './environment';
+
+
 
 
 

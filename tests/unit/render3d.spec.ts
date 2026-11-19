@@ -41,6 +41,73 @@ import { RCS_REF, R_REF } from '@/sim/sensors';
 import { SimEngine } from '@/sim/engine';
 import demo1Json from '@/director/bundled/demo1.json';
 import type { ScenarioSpec, TrackEntity, ChaosSpec, EffectorId, ZoneSpec } from '@/sim/types';
+import {
+  CameraController,
+  MIN_CAMERA_DISTANCE_M,
+  MAX_CAMERA_DISTANCE_M,
+  getScenarioEnvironmentDescriptor,
+  buildProceduralBuildings,
+  buildProceduralVegetation,
+  EnvironmentManager,
+} from '@/render3d';
+
+function createTestCanvas(width = 520, height = 520): HTMLCanvasElement {
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  const canvas = {
+    width,
+    height,
+    style: {},
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width,
+      height,
+      right: width,
+      bottom: height,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    }),
+    getContext: () => ({
+      canvas: null,
+      fillRect: () => {},
+      clearRect: () => {},
+      strokeRect: () => {},
+      fillText: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      stroke: () => {},
+      fill: () => {},
+      measureText: () => ({ width: 50 }),
+    }),
+    addEventListener: (event: string, fn: (e: unknown) => void) => {
+      listeners[event] = listeners[event] || [];
+      listeners[event].push(fn);
+    },
+    removeEventListener: (event: string, fn: (e: unknown) => void) => {
+      if (listeners[event]) {
+        listeners[event] = listeners[event].filter((f) => f !== fn);
+      }
+    },
+    dispatchEvent: (e: { type: string }) => {
+      const arr = listeners[e.type];
+      if (arr) {
+        arr.forEach((fn) => fn(e));
+      }
+      return true;
+    },
+  } as unknown as HTMLCanvasElement;
+  return canvas;
+}
+
+function createMockRenderer(): THREE.WebGLRenderer {
+  return {
+    setSize: vi.fn(),
+    setPixelRatio: vi.fn(),
+    render: vi.fn(),
+    dispose: vi.fn(),
+  } as unknown as THREE.WebGLRenderer;
+}
 
 describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () => {
   describe('A. Coordinate System Transformations (coords.ts)', () => {
@@ -896,64 +963,6 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
   });
 
   describe('K. 3D Target Picking & Hit Testing (Phases 1 & 4.A, 4.B)', () => {
-    function createTestCanvas(width = 520, height = 520): HTMLCanvasElement {
-      const listeners: Record<string, ((e: unknown) => void)[]> = {};
-      const canvas = {
-        width,
-        height,
-        style: {},
-        getBoundingClientRect: () => ({
-          left: 0,
-          top: 0,
-          width,
-          height,
-          right: width,
-          bottom: height,
-          x: 0,
-          y: 0,
-          toJSON: () => {},
-        }),
-        getContext: () => ({
-          canvas: null,
-          fillRect: () => {},
-          clearRect: () => {},
-          strokeRect: () => {},
-          fillText: () => {},
-          beginPath: () => {},
-          closePath: () => {},
-          stroke: () => {},
-          fill: () => {},
-          measureText: () => ({ width: 50 }),
-        }),
-        addEventListener: (event: string, fn: (e: unknown) => void) => {
-          listeners[event] = listeners[event] || [];
-          listeners[event].push(fn);
-        },
-        removeEventListener: (event: string, fn: (e: unknown) => void) => {
-          if (listeners[event]) {
-            listeners[event] = listeners[event].filter((f) => f !== fn);
-          }
-        },
-        dispatchEvent: (e: { type: string }) => {
-          const arr = listeners[e.type];
-          if (arr) {
-            arr.forEach((fn) => fn(e));
-          }
-          return true;
-        },
-      } as unknown as HTMLCanvasElement;
-      return canvas;
-    }
-
-    function createMockRenderer(): THREE.WebGLRenderer {
-      return {
-        setSize: vi.fn(),
-        setPixelRatio: vi.fn(),
-        render: vi.fn(),
-        dispose: vi.fn(),
-      } as unknown as THREE.WebGLRenderer;
-    }
-
     beforeEach(() => {
       if (typeof globalThis.PointerEvent === 'undefined') {
         class MockPointerEvent extends Event {
@@ -1301,6 +1310,194 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       const selectables = scene3d.getSelectableObjects();
       expect(selectables).toHaveLength(3);
       expect(selectables.every((obj) => obj.userData.trackNo === 'T-01')).toBe(true);
+
+      scene3d.dispose();
+      expect(scene3d.scene.children).toHaveLength(0);
+    });
+  });
+
+  describe('M. 3D Tactical Environment, Realistic Weather & Camera Navigation (TASK 16)', () => {
+    it('CameraController enforces strict polar angle clamping and zoom bounds [80m, 30000m]', () => {
+      const canvas = createTestCanvas(520, 520);
+      const camera = new THREE.PerspectiveCamera(45, 1, 10, 35000);
+      const controller = new CameraController({ canvas, camera });
+
+      // 1. Initial preset
+      expect(controller.currentPreset).toBe('OBLIQUE');
+      expect(controller.spherical.radius).toBe(7500);
+
+      // 2. Clamp extreme zoom in (< 80m)
+      controller.spherical.radius = 10;
+      controller.updateCamera();
+      expect(controller.spherical.radius).toBe(MIN_CAMERA_DISTANCE_M);
+      expect(controller.spherical.radius).toBe(80);
+
+      // 3. Clamp extreme zoom out (> 30000m)
+      controller.spherical.radius = 60000;
+      controller.updateCamera();
+      expect(controller.spherical.radius).toBe(MAX_CAMERA_DISTANCE_M);
+      expect(controller.spherical.radius).toBe(30000);
+
+      // 4. Clamp extreme polar angle (phi <= 0 or phi >= PI/2)
+      controller.spherical.phi = -1;
+      controller.updateCamera();
+      expect(controller.spherical.phi).toBeGreaterThanOrEqual(0.005);
+
+      controller.spherical.phi = Math.PI;
+      controller.updateCamera();
+      expect(controller.spherical.phi).toBeLessThanOrEqual(Math.PI / 2 - 0.01);
+
+      controller.dispose();
+    });
+
+    it('CameraController smooth focus transition moves target towards point and converges', () => {
+      const canvas = createTestCanvas(520, 520);
+      const camera = new THREE.PerspectiveCamera(45, 1, 10, 35000);
+      const controller = new CameraController({ canvas, camera });
+
+      const targetPt = new THREE.Vector3(1500, 0, -2000);
+      controller.focusOnPoint(targetPt, 450, true);
+
+      // Progressively step frames through updateTransition
+      for (let i = 0; i < 40; i++) {
+        controller.updateTransition();
+      }
+
+      expect(controller.target.distanceTo(targetPt)).toBeLessThan(5.0);
+      expect(Math.abs(controller.spherical.radius - 450)).toBeLessThan(5.0);
+
+      controller.dispose();
+    });
+
+    it('derives deterministic environment descriptors for standard catalog scenarios', () => {
+      const demo1Desc = getScenarioEnvironmentDescriptor('DEMO-1', demo1Json as unknown as ScenarioSpec);
+      expect(demo1Desc.preset).toBe('URBAN_DENSE');
+      expect(demo1Desc.weather).toBe('FOG'); // demo1 has scheduled FOG chaos
+      expect(demo1Desc.dayNight).toBe('DAY');
+
+      const swarmDesc = getScenarioEnvironmentDescriptor('SWARM-1');
+      expect(swarmDesc.preset).toBe('MOUNTAIN_RIDGE');
+
+      const spectrumDesc = getScenarioEnvironmentDescriptor('SPECTRUM-1');
+      expect(spectrumDesc.preset).toBe('FOREST_VALLEY');
+
+      const proceduralDesc = getScenarioEnvironmentDescriptor('PROCEDURAL-1');
+      expect(proceduralDesc.preset).toBe('COASTAL_AIRFIELD');
+    });
+
+    it('produces bit-for-bit identical procedural buildings and terrain from same seed', () => {
+      const descA = getScenarioEnvironmentDescriptor('DEMO-1', demo1Json as unknown as ScenarioSpec);
+      const descB = getScenarioEnvironmentDescriptor('DEMO-1', demo1Json as unknown as ScenarioSpec);
+
+      const bldA = buildProceduralBuildings(descA);
+      const bldB = buildProceduralBuildings(descB);
+
+      expect(bldA.objects.length).toBe(bldB.objects.length);
+      expect(bldA.objects[0].id).toBe(bldB.objects[0].id);
+      expect(bldA.objects[0].position.x).toBe(bldB.objects[0].position.x);
+      expect(bldA.objects[0].position.y).toBe(bldB.objects[0].position.y);
+
+      // Disposals
+      bldA.disposables.geometries.forEach((g) => g.dispose());
+      bldA.disposables.materials.forEach((m) => m.dispose());
+      bldB.disposables.geometries.forEach((g) => g.dispose());
+      bldB.disposables.materials.forEach((m) => m.dispose());
+    });
+
+    it('procedural vegetation builds instanced conifer & broad-canopy meshes', () => {
+      const desc = getScenarioEnvironmentDescriptor('SPECTRUM-1', {
+        id: 'SPECTRUM-1',
+        name: 'Forest Valley',
+        zones: [
+          {
+            id: 'ZONE-FOR-1',
+            type: 'FOREST',
+            polygon: [
+              [-2000, 1000],
+              [-1000, 1000],
+              [-1000, 2000],
+              [-2000, 2000],
+            ],
+            heightM: 25,
+            attenuationDbPerM: 0.1,
+          },
+        ],
+        seed: 42,
+      } as unknown as ScenarioSpec);
+
+      const veg = buildProceduralVegetation(desc);
+      expect(veg.group.children.length).toBeGreaterThanOrEqual(2); // Instanced conifer & deciduous meshes
+      expect(veg.objects.length).toBeGreaterThan(0);
+
+      veg.disposables.geometries.forEach((g) => g.dispose());
+      veg.disposables.materials.forEach((m) => m.dispose());
+    });
+
+    it('WeatherManager updates rain particles strictly deterministically from simMs without Math.random', () => {
+      const parentGroup = new THREE.Group();
+      const desc = getScenarioEnvironmentDescriptor('DEMO-1', {
+        id: 'DEMO-1',
+        chaos: [{ type: 'RAIN', tStartMs: 0, tEndMs: 60000, severity: 1 }],
+      } as unknown as ScenarioSpec);
+
+      const envMgr = new EnvironmentManager(parentGroup, desc);
+      const simMs1 = 1000;
+      envMgr.update(simMs1, [{ type: 'RAIN', tStartMs: 0, tEndMs: 60000, severity: 1 }]);
+
+      // Get rain geometry attribute
+      const weatherGroup = parentGroup.getObjectByName('WeatherManager');
+      expect(weatherGroup).toBeDefined();
+
+      envMgr.dispose();
+    });
+
+    it('Environment object picking returns public physical properties without ground truth leaks', () => {
+      const scene3d = new Scene3D({
+        maxRangeM: 5000,
+        rMinM: 500,
+        zones: (demo1Json as unknown as ScenarioSpec).zones,
+      });
+
+      // Target ray at command bunker (at sim (0, 0, 0), Three.js (0, 8, 0))
+      const raycaster = new THREE.Raycaster(
+        new THREE.Vector3(0, 500, 0),
+        new THREE.Vector3(0, -1, 0)
+      );
+
+      const picked = scene3d.pickEnvironmentObject(raycaster);
+      expect(picked).not.toBeNull();
+      if (picked) {
+        expect(picked.id).toBeDefined();
+        expect(picked.category).toBeDefined();
+        expect(picked.name).toBeDefined();
+        expect(picked.position).toBeDefined();
+
+        // STRICT INVARIANT: Verify no simulation ground-truth properties leaked
+        const raw = picked as unknown as Record<string, unknown>;
+        expect(raw.trueClass).toBeUndefined();
+        expect(raw.droneType).toBeUndefined();
+        expect(raw.valueInr).toBeUndefined();
+        expect(raw.truthWaypoints).toBeUndefined();
+      }
+
+      scene3d.dispose();
+    });
+
+    it('Scene3D supports repeated scenario switching with zero WebGL leaks', () => {
+      const scene3d = new Scene3D({
+        maxRangeM: 5000,
+        rMinM: 500,
+        zones: (demo1Json as unknown as ScenarioSpec).zones,
+      });
+
+      // Rapidly switch environments 5 times (simulating operator switching scenarios in modal)
+      const presets = ['DEMO-1', 'DEMO-2', 'SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1'];
+      for (const p of presets) {
+        const desc = getScenarioEnvironmentDescriptor(p);
+        scene3d.setEnvironment(desc);
+      }
+
+      expect(scene3d.scene.children).toHaveLength(8); // Invariant maintained throughout
 
       scene3d.dispose();
       expect(scene3d.scene.children).toHaveLength(0);

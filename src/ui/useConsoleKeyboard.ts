@@ -94,6 +94,8 @@ export interface ConsoleKeyboardActions {
   toggleLos?: () => void;
   toggleClusters?: () => void;
   toggleTrainingAid?: () => void;
+  focusSelection?: () => void;
+  resetCamera?: () => void;
 }
 
 function handlePresetKey(
@@ -160,6 +162,10 @@ function handleSystemKey(
     actions.toggleClusters?.();
     return true;
   }
+  if (rawKey === 'Home') {
+    actions.resetCamera?.();
+    return true;
+  }
   if (lowerKey === 'x') {
     if (engineInstance.mode !== 'EVAL') {
       actions.toggleTrainingAid?.();
@@ -192,6 +198,10 @@ export function useConsoleKeyboard(
       }
       const lower = e.key.toLowerCase();
       if (handleEngagementKey(lower, e.repeat)) {
+        return;
+      }
+      if (lower === 'f' && !e.repeat && actions.focusSelection) {
+        actions.focusSelection();
         return;
       }
       handleSystemKey(lower, e.key, { ...actions, toggleLowFi });

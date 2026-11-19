@@ -900,3 +900,7 @@ $$\operatorname{toThree}(x, y, z) = (x, z, -y)$$
 | **F7 — Post-Session 3D AAR Replay** | Full 3D replay with ground truth unmasked for retrospective debrief. | Class C (Post-Session AAR) |
 | **F8 — Engagement Inspector** | Visual breakdown of engagement outcome using recorded event parameters ($u, P_{k0}, g, h$). | Class C (Post-Session AAR) |
 | **F9 — WebXR VR Mode** | Experimental immersive table-top console; deferred until verified on hardware. | Class A/B (Experimental) |
+| **F10 — Procedural Tactical Environment & Terrain** | 6 deterministic presets (`URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL`) with procedural buildings, C2 bunker, S-band radar mast, and instanced vegetation. | Class A (Operator Visible) |
+| **F11 — Advanced Camera Navigation** | Horizontal plane panning, cursor-anchored zoom, polar angle safety clamps, smooth focus transitions (`[F]`, double-click), and preset reset (`Home`). | Class A (Operator Visible) |
+| **F12 — Environment Object Inspector** | Dual-domain raycasting pipeline with dedicated inspector panel displaying object metadata, coordinates, height, elevation, and masking parameters without ground truth leaks. | Class A (Operator Visible) |
+| **F13 — Dynamic Atmospheric Weather & Timeline Sync** | Deterministic fog density, rain particles driven by `simMs`, and daylight/night lighting synchronized across live console and AAR replay. | Class A (Operator Visible) |

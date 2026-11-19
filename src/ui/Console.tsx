@@ -10,10 +10,11 @@ import { WebXrComfortModal } from './WebXrComfortModal';
 import { CrossSectionPanel } from './CrossSectionPanel';
 import { MissionBriefing } from './MissionBriefing';
 import { ErrorBoundary } from './ErrorBoundary';
+import { EnvironmentInspector } from './EnvironmentInspector';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
-import type { SafeTrackView, CameraPreset } from '@/render3d/types';
+import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo } from '@/render3d/types';
 import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
@@ -331,6 +332,7 @@ export const Console: React.FC = () => {
   const [isVrModalOpen, setIsVrModalOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
   const [webGlError, setWebGlError] = useState<string | null>(null);
+  const [selectedEnvObject, setSelectedEnvObject] = useState<EnvironmentObjectInfo | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('OBLIQUE');
   const [showEnvelopes, setShowEnvelopes] = useState<boolean>(true);
   const showEnvelopesRef = useRef<boolean>(true);
@@ -452,6 +454,7 @@ export const Console: React.FC = () => {
         calculateRadarCoverage,
         calculateEoirCoverage,
         calculateRfCoverage,
+        getScenarioEnvironmentDescriptor,
       } = await import('@/render3d');
       const cap = checkWebGL2Support();
       if (!cap.supported) {
@@ -469,8 +472,13 @@ export const Console: React.FC = () => {
           zones: engineInstance.spec?.zones || [],
           mode: engineInstance.mode,
           showTrainingAid: showTrainingAidRef.current,
+          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
           onSelectTrack: (trackNo: string) => {
+            setSelectedEnvObject(null);
             designate(trackNo, 'CLICK');
+          },
+          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
+            setSelectedEnvObject(info);
           },
           onContextLost: () => {
             xrManagerRef.current?.exitVR();
@@ -479,6 +487,11 @@ export const Console: React.FC = () => {
             setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
           },
         });
+
+        r3d.setSimTimeProvider(() => ({
+          simMs: engineInstance.tickIndex * 50,
+          chaosList: engineInstance.spec?.chaos,
+        }));
 
         r3d.setTrackProvider(() => ({
           tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
@@ -564,6 +577,7 @@ export const Console: React.FC = () => {
         calculateRadarCoverage,
         calculateEoirCoverage,
         calculateRfCoverage,
+        getScenarioEnvironmentDescriptor,
       } = await import('@/render3d');
 
       const cap = await checkWebXRSupport();
@@ -589,8 +603,13 @@ export const Console: React.FC = () => {
           zones: engineInstance.spec?.zones || [],
           mode: engineInstance.mode,
           showTrainingAid: showTrainingAidRef.current,
+          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
           onSelectTrack: (trackNo: string) => {
+            setSelectedEnvObject(null);
             designate(trackNo, 'CLICK');
+          },
+          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
+            setSelectedEnvObject(info);
           },
           onContextLost: () => {
             xrManagerRef.current?.exitVR();
@@ -599,6 +618,11 @@ export const Console: React.FC = () => {
             setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
           },
         });
+
+        r3d.setSimTimeProvider(() => ({
+          simMs: engineInstance.tickIndex * 50,
+          chaosList: engineInstance.spec?.chaos,
+        }));
 
         r3d.setTrackProvider(() => ({
           tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
@@ -705,6 +729,14 @@ export const Console: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [abortSession]);
 
+  // Synchronize 3D environment when active scenario changes
+  useEffect(() => {
+    if (renderer3dRef.current) {
+      renderer3dRef.current.setScenarioEnvironment(currentScenarioId, engineInstance.spec);
+      setSelectedEnvObject(null);
+    }
+  }, [currentScenarioId]);
+
   // Keyboard navigation & Hotkeys (including 'v' 2D/3D, presets, 'e' envelopes, 'k' LOS, 'u' clusters, and 'x' training aid)
   useConsoleKeyboard(rendererRef, setLowFi, {
     toggle3D: toggleViewMode,
@@ -713,6 +745,8 @@ export const Console: React.FC = () => {
     toggleLos,
     toggleClusters,
     toggleTrainingAid,
+    focusSelection: () => renderer3dRef.current?.focusSelection(),
+    resetCamera: () => renderer3dRef.current?.resetCamera(),
   });
 
   // Automatically trigger HotWash AAR when simulation session ends
@@ -858,9 +892,18 @@ export const Console: React.FC = () => {
                   AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
                 </div>
                 <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
-                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET
+                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [F] | RESET: [HOME]
                 </div>
               </>
+            )}
+
+            {/* 3D Environment Object Inspector */}
+            {viewMode === '3D' && selectedEnvObject && (
+              <EnvironmentInspector
+                objectInfo={selectedEnvObject}
+                onClose={() => setSelectedEnvObject(null)}
+                onFocus={() => renderer3dRef.current?.focusSelection()}
+              />
             )}
 
             {/* WebGL Error / Context Loss Fallback Banner */}

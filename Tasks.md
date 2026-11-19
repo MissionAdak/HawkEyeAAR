@@ -424,3 +424,36 @@ Files: `src/director/randomScenario.ts`, `src/director/catalog.ts`, `src/store/s
 - [x] Seed Semantics & Replay: Fresh seed generated for each restart via `crypto.getRandomValues`; exact seed replay supported via `rerunExactSeedSession()`.
 - [x] Verification & Automated Test Suite: 12 unit tests in `randomScenario.spec.ts`, 24 unit tests in `catalog.spec.ts` (266 unit tests total across 25 files), and 12 Playwright E2E tests passing.
 
+---
+
+## Phase 8 — 3D Tactical Environment, Realistic Weather, Camera Navigation & Object Inspection (TASK 16)
+
+### TASK-16-01 — Procedural 3D Tactical Environment & Terrain · P0 · B/D · 3.0 h
+Files: `src/render3d/environment/types.ts`, `src/render3d/environment/descriptor.ts`, `src/render3d/environment/terrain.ts`, `src/render3d/environment/buildings.ts`, `src/render3d/environment/vegetation.ts`, `src/render3d/environment/environmentManager.ts`
+- [x] 6 Deterministic Presets: `URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL` mapped to scenarios deterministically.
+- [x] Procedural Structures & Air Defense Base: C2 Command bunker with S-band surveillance radar array, beacon mast, perimeter security fence, RF triangulator towers, and multi-story urban buildings matching scenario zone heights and bounds.
+- [x] Instanced Vegetation: Low-poly conifer and broad-canopy trees generated via `THREE.InstancedMesh` (hundreds of trees across forest zones in only 2 draw calls) with selectable bounding proxies.
+- [x] Zone Integration: Terrain elevation and masking buildings adhere to scenario `ZoneSpec` boundaries without conflicting with `evaluateMasking()`.
+
+### TASK-16-02 — Advanced 3D Camera Navigation & Touch Controls · P0 · B/C · 2.5 h
+Files: `src/render3d/cameraController.ts`, `src/render3d/renderer3d.ts`, `src/ui/Console.tsx`, `src/ui/useConsoleKeyboard.ts`
+- [x] 6-DOF Tactical Navigation: Orbit (LMB drag), horizontal plane panning (RMB drag, MMB drag, Shift+LMB drag), cursor-anchored zoom (scroll wheel rays against ground plane).
+- [x] Zoom & Angle Safety Clamps: Strict polar angle clamping (`0.005` to `PI/2 - 0.015`) prevents camera inversion or looking under ground; zoom range clamped between 80m and 30,000m.
+- [x] Focus & Reset Actions: Double-click aircraft, environmental object, or ground point to smoothly focus camera; `Home` key resets to preset default; `[F]` hotkey focuses selected entity.
+- [x] Multi-Touch Gestures: 1-finger orbit, 2-finger pan and pinch-to-zoom for mobile/tablet operator consoles.
+- [x] Controls Guide HUD: Clear tactical hint bar: `DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [F] | RESET: [HOME]`.
+
+### TASK-16-03 — Environment Object Inspection & Information Security · P0 · B/D · 2.0 h
+Files: `src/render3d/scene3d.ts`, `src/render3d/renderer3d.ts`, `src/ui/EnvironmentInspector.tsx`, `src/ui/Console.tsx`
+- [x] Dual-Domain Picking: Separate raycasting pipelines for airborne tracks vs environmental terrain objects. Clicking scenery never generates `DESIGNATE`, `CLASSIFY`, or `FIRE` actions.
+- [x] Environment Inspector Panel: Tactical dark-themed HUD displaying ID, name, category badge, preset, zone reference, coordinates (E, N), height, elevation, masking shadow/rho, and `[F] FOCUS` button.
+- [x] Information Boundary Guard: Strictly excludes simulation ground truth (no trueClass, droneType, valueInr, or secret waypoints).
+
+### TASK-16-04 — Dynamic Atmospheric Weather & Timeline Synchronization · P0 · B · 2.0 h
+Files: `src/render3d/environment/weather.ts`, `src/ui/MissionBriefing.tsx`, `src/render3d/aarScene3d.ts`, `src/ui/aar/AarReplay3D.tsx`
+- [x] Time & Chaos-Driven Atmosphere: Dynamic fog density, precipitation rain particles, and daylight/night operational lighting driven strictly by simulation time (`simMs = tickIndex * 50`) and `ChaosSpec`.
+- [x] Zero Math.random / Zero Date.now: Rain lines derive deterministic vertical displacement from `(y - (simMs * speed) % boxHeight)`, achieving 100% bit-for-bit parity in live sim and AAR replay.
+- [x] Mission Briefing Card: Tactical Environment & Weather summary card with preset badges, lighting, atmosphere, and radar reach advisory.
+- [x] Low-Fidelity Mode [L]: Reduced particle counts and simplified geometries for low-end hardware target (i3, 4GB RAM, integrated GPU).
+
+

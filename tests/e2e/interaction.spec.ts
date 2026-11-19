@@ -192,4 +192,58 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
     // Zero uncaught page errors
     expect(pageErrors).toHaveLength(0);
   });
+
+  test('displays Mission Briefing environment & weather card with tactical conditions on initial load', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    // 1. Verify Mission Briefing modal is visible
+    const briefingTitle = page.getByTestId('briefing-title');
+    await expect(briefingTitle).toBeVisible();
+
+    // 2. Verify 3D Environment card is present
+    const envCard = page.getByTestId('briefing-environment-card');
+    await expect(envCard).toBeVisible();
+    await expect(envCard.getByText(/3D TACTICAL ENVIRONMENT & ATMOSPHERE/i)).toBeVisible();
+    await expect(envCard.getByText(/URBAN DENSE/i)).toBeVisible();
+    await expect(envCard.getByText(/Coverage Radius/i)).toBeVisible();
+  });
+
+  test('supports 3D camera navigation, Home reset, and Environment Inspector in 3D tactical view', async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    // 1. Start simulation session from Mission Briefing
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // 2. Switch to 3D tactical view
+    const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DButton).toBeVisible();
+    await toggle3DButton.click();
+
+    const canvas3d = page.locator('canvas.cursor-grab');
+    await expect(canvas3d).toBeVisible();
+
+    // 3. Verify enhanced camera navigation controls hint
+    await expect(page.getByText('DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET')).toBeVisible();
+
+    // 4. Test pressing Home key resets camera
+    await page.keyboard.press('Home');
+    expect(pageErrors).toHaveLength(0);
+
+    // 5. Test double click on canvas ground does not throw
+    const canvasBox = await canvas3d.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    if (canvasBox) {
+      await page.mouse.dblclick(canvasBox.x + 260, canvasBox.y + 260);
+    }
+    expect(pageErrors).toHaveLength(0);
+  });
 });

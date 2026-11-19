@@ -65,6 +65,7 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 | Director, validator, novelty, triggers, TRAIN/EVAL | **Done** | Weakness-adaptive generator, fairness validator with continuous joint window and debris check, novelty cosine filter, reactive triggers, EVAL tab-background abort |
 | Hardening, e2e, demo content | **Done** | Air-gap E2E, zero-overflow layout, trainee interaction, bundle 0.85 MB < 2 MB limit |
 | Optional Three.js 3D Feature Pack (Track X3D) | **Done** | Lazy-loaded 3D tactical viewport (`render3d` chunk 510 kB, 0B in main chunk), model-faithful sensor domes, effector envelopes, evaluateMasking LOS explanation, cluster hulls, TRAIN-only RCS aid/elevation cross-section, post-session AAR 3D replay & engagement inspector. VR marked experimental |
+| 3D Tactical Environment & Weather (TASK 16) | **Done** | 6 deterministic environment presets (`URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL`), procedural buildings & radar installations, instanced vegetation (2 draw calls), dynamic weather & rain driven strictly by `simMs` without Math.random, 6-DOF camera navigation (orbit, pan, cursor zoom, angle clamps, double-click focus, Home reset), dual-domain picking with Environment Inspector panel (zero ground-truth leak), and Mission Briefing tactical atmosphere card. Verified by 51 unit tests and 21 E2E tests |
 | Optional WebXR VR Renderer (Task 14) | **Experimental Prototype (Unverified)** | Implemented `FrameDriver` (`windowDriver`, `xrDriver`), `WebXRManager`, `WebXRTableTop` (1:10,000 scale, 4x Z-scale), `WebXRPanel` (EVAL aids lock), edge-triggered controller handler with 20 Hz tick quantisation, comfort modal advisory, and seamless fallback. Status: `experimental, unverified` due to absence of physical headset testing |
 
 ### 2.2 Phase checkpoints
@@ -77,12 +78,13 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 - [x] H36 — USB kit demonstrated offline on a clean low-end laptop; backup recording ready [VERIFIED]
 - [x] Track X3D — Optional Three.js 3D Tactical Pack (F1-F5, F7, F8) with lazy chunking, strict ground-truth isolation, zero-network CSP, zero simulation divergence, and 100% deterministic replay [VERIFIED]
 - [x] Task 14 — Optional WebXR VR Renderer prototype with FrameDriver handoff, tick continuity, deterministic input quantization, truth gating parity, table-top view, comfort advisory, and safe teardown [PROTOTYPE PASSING ALL TESTS; STATUS: EXPERIMENTAL, UNVERIFIED]
+- [x] TASK 16 — DRISHTI-CUAS 3D Tactical Environment, Realistic Weather, Camera Navigation & Object Inspection [VERIFIED; 29 unit test files (342 tests) and 21 Playwright E2E tests passing]
 
 ### 2.3 Known technical debt & architectural limitations
 
 1. **Tracker Velocity Invariance (Task 10 Blocker / OQ-09):** `SafeTrackView.vel` reflects the engine's instantaneous velocity vector rather than a filtered Kalman state estimate. Visual track predictor aid was halted per specification to prevent leaking ground truth velocity. Full track prediction requires an explicit alpha-beta/Kalman tracker filter in `src/sim/tracker.ts`.
 2. **WebXR VR Platform Status (OQ-11):** WebXR VR is implemented as an experimental prototype. Test suite `tests/unit/webxr.spec.ts` provides limited headless/unit coverage without exercising actual VR sessions, `enterVR`, `WebXRManager.update`, XR rendering, or hardware controller polling. The status remains designated `experimental, unverified` until real physical headset validation is obtained.
-3. **Verified Audit Baseline:** All 28 test files (304 tests), ESLint clean (0 errors, 0 warnings), production build (~1.5 MB total dist bundle < 2.0 MB budget), and 12 Playwright E2E tests pass cleanly with zero network calls and 100% deterministic simulation parity.
+3. **Verified Audit Baseline:** All 29 test files (342 unit tests), ESLint clean (0 errors, 0 warnings), production build (~1.58 MB total dist bundle < 2.0 MB budget), and 21 Playwright E2E tests pass cleanly with zero network calls and 100% deterministic simulation parity.
 
 ### 2.4 Open questions
 

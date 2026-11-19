@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSessionStore } from '@/store/sessionStore';
 import { getScenarioCatalogEntry, DEFAULT_SCENARIO_ID } from '@/director/catalog';
 import { SHORT_CODES, type TrueClass } from '@/sim/taxonomy';
+import { getScenarioEnvironmentDescriptor } from '@/render3d/environment/descriptor';
 
 interface MissionBriefingProps {
   onClose?: () => void;
@@ -29,6 +30,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
 
   const entry = getScenarioCatalogEntry(selectedScenarioId);
   const isRandom = selectedScenarioId.startsWith('RANDOM-');
+  const envDesc = getScenarioEnvironmentDescriptor(selectedScenarioId);
 
   const getClassBadgeClass = (cls: TrueClass) => {
     switch (cls) {
@@ -228,16 +230,26 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
           {/* Environmental Conditions & Tactical Parameters Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Left Box: Environment & Radar Suite */}
-            <div className="p-3 bg-carbon-850 border border-line flex flex-col gap-1.5">
-              <div className="text-[10px] font-display font-bold text-text-dim tracking-wider">
-                ENVIRONMENTAL & SENSOR CONDITIONS
+            <div className="p-3 bg-carbon-850 border border-line flex flex-col gap-1.5" data-testid="briefing-environment-card">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-display font-bold text-text-dim tracking-wider">
+                  3D TACTICAL ENVIRONMENT & ATMOSPHERE
+                </span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 border border-friend text-friend bg-friend/10">
+                  {envDesc.preset.replace('_', ' ')}
+                </span>
               </div>
-              <ul className="text-[11px] space-y-1 text-text-main list-disc list-inside">
-                <li><span className="text-text-dim">Coverage Radius:</span> 5,000 meters tactical radius</li>
-                <li><span className="text-text-dim">Radar Rotation:</span> S-Band Primary Radar at 30 RPM</li>
-                <li><span className="text-text-dim">Sensors:</span> Radar (30 RPM), EO/IR Pan-Tilt, RF Triangulator</li>
-                <li><span className="text-text-dim">Asset Core:</span> High-Value Urban Zone at (0, 0)</li>
-                <li><span className="text-text-dim">Exclusion Zone:</span> 500m Restricted Defense Bubble</li>
+              <div className="text-[11px] text-text-main font-semibold">
+                {envDesc.terrainType}
+              </div>
+              <div className="text-[10px] text-text-dim italic leading-tight">
+                {envDesc.description}
+              </div>
+              <ul className="text-[11px] space-y-1 text-text-main list-disc list-inside pt-1">
+                <li><span className="text-text-dim">Lighting:</span> {envDesc.dayNight === 'NIGHT' ? '🌙 Night Operations (Thermal EO/IR Priority)' : '☀️ Daylight Standard (Visual & EO/IR Active)'}</li>
+                <li><span className="text-text-dim">Atmosphere:</span> {envDesc.weather === 'FOG' ? `🌫 Dense Fog (Severity ${(envDesc.fogSeverity ?? 1).toFixed(1)}x - Optical Range Reduced)` : envDesc.weather === 'RAIN' ? '🌧 Precipitation / Rain (Radar Backscatter Present)' : '🌤 Clear Visibility (Nominal Propagation)'}</li>
+                <li><span className="text-text-dim">Coverage Radius:</span> 5,000 meters tactical radius (S-Band 30 RPM)</li>
+                <li><span className="text-text-dim">Exclusion Zone:</span> 500m Point-of-No-Return (PNR) Defense Core</li>
               </ul>
             </div>
 

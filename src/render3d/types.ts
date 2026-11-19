@@ -1,4 +1,5 @@
 import type { TrackClass, F2T2EAStep, ZoneSpec } from '@/sim/types';
+import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
 
 /**
  * Safe Operator-Visible Track Projection for 3D Rendering.
@@ -37,6 +38,8 @@ export interface Scene3DOptions {
   showLos?: boolean;
   showTrainingAid?: boolean;
   mode?: 'TRAIN' | 'EVAL' | 'DEMO';
+  environment?: EnvironmentDescriptor;
+  onSelectEnvironment?: (info: EnvironmentObjectInfo | null) => void;
 }
 
 export type {
@@ -60,4 +63,13 @@ export type {
   LosBlockStatus,
   LosExplanation,
 } from './losVisualizer';
+
+export type {
+  EnvironmentPreset,
+  WeatherType,
+  EnvironmentCategory,
+  EnvironmentObjectInfo,
+  EnvironmentDescriptor,
+} from './environment/types';
+
 

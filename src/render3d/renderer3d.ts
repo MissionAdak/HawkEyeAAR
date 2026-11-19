@@ -1,12 +1,23 @@
 import * as THREE from 'three';
 import { Scene3D } from './scene3d';
-import type { SafeTrackView, CameraPreset, Scene3DOptions, SensorCoverageState, EffectorVisualOptions } from './types';
-import type { SensorMode } from '@/sim/types';
+import { CameraController } from './cameraController';
+import type {
+  SafeTrackView,
+  CameraPreset,
+  Scene3DOptions,
+  SensorCoverageState,
+  EffectorVisualOptions,
+  EnvironmentObjectInfo,
+} from './types';
+import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec } from '@/sim/types';
 import { attachContextLossHandler } from './capability';
+import { toThree } from './coords';
+import { getScenarioEnvironmentDescriptor } from './environment';
 
 export interface Renderer3DOptions extends Scene3DOptions {
   onContextLost?: () => void;
   onSelectTrack?: (trackNo: string) => void;
+  onSelectEnvironment?: (info: EnvironmentObjectInfo | null) => void;
   threeRenderer?: THREE.WebGLRenderer;
 }
 
@@ -17,25 +28,23 @@ export class Renderer3D {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly scene3d: Scene3D;
+  private readonly cameraController: CameraController;
   private animFrameId: number | null = null;
   private cleanupContextLoss: (() => void) | null = null;
-
-  // Camera Orbit State
-  private readonly target: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
-  private readonly spherical: THREE.Spherical = new THREE.Spherical(7500, Math.PI / 3, Math.PI / 4);
-  public currentPreset: CameraPreset = 'OBLIQUE';
+  private cleanupKeydown: (() => void) | null = null;
 
   // Interaction & Picking State
   private readonly raycaster: THREE.Raycaster = new THREE.Raycaster();
   private onSelectTrackCallback?: (trackNo: string) => void;
-  private isPointerDown: boolean = false;
-  private hasDragged: boolean = false;
-  private downPosition: { x: number; y: number } = { x: 0, y: 0 };
-  private previousPointerPosition: { x: number; y: number } = { x: 0, y: 0 };
+  private onSelectEnvironmentCallback?: (info: EnvironmentObjectInfo | null) => void;
+  private selectedTrackNo: string | null = null;
+  private selectedEnvironmentObject: EnvironmentObjectInfo | null = null;
 
   private getTracks?: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null };
   private getCoverage?: () => SensorCoverageState;
   private getEffectorOptions?: () => EffectorVisualOptions;
+  private getSimTime?: () => { simMs: number; chaosList?: ChaosSpec[] };
+
   private showLos: boolean = true;
   private showClusters: boolean = true;
   private showTrainingAid: boolean = false;
@@ -51,6 +60,10 @@ export class Renderer3D {
 
   public setEffectorProvider(fn: () => EffectorVisualOptions): void {
     this.getEffectorOptions = fn;
+  }
+
+  public setSimTimeProvider(fn: () => { simMs: number; chaosList?: ChaosSpec[] }): void {
+    this.getSimTime = fn;
   }
 
   public setShowLos(show: boolean): void {
@@ -80,8 +93,28 @@ export class Renderer3D {
     this.onSelectTrackCallback = fn;
   }
 
+  public setOnSelectEnvironment(fn: (info: EnvironmentObjectInfo | null) => void): void {
+    this.onSelectEnvironmentCallback = fn;
+  }
+
   public get dragging(): boolean {
-    return this.hasDragged;
+    return this.cameraController.dragging;
+  }
+
+  public get currentPreset(): CameraPreset {
+    return this.cameraController.currentPreset;
+  }
+
+  public get target(): THREE.Vector3 {
+    return this.cameraController.target;
+  }
+
+  public get spherical(): THREE.Spherical {
+    return this.cameraController.spherical;
+  }
+
+  public getCameraController(): CameraController {
+    return this.cameraController;
   }
 
   constructor(canvas: HTMLCanvasElement, options: Renderer3DOptions) {
@@ -89,6 +122,9 @@ export class Renderer3D {
     this.options = options;
     if (options.onSelectTrack) {
       this.onSelectTrackCallback = options.onSelectTrack;
+    }
+    if (options.onSelectEnvironment) {
+      this.onSelectEnvironmentCallback = options.onSelectEnvironment;
     }
     if (options.showTrainingAid && options.mode !== 'EVAL') {
       this.showTrainingAid = true;
@@ -107,15 +143,22 @@ export class Renderer3D {
     const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
     this.renderer.setPixelRatio(dpr);
 
-    // 2. Setup Tactical Camera
+    // 2. Setup Tactical Camera (near plane 5m, far plane 45000m)
     const aspect = canvas.width / canvas.height;
-    this.camera = new THREE.PerspectiveCamera(45, aspect, 10, 35000);
-    this.applyCameraPreset('OBLIQUE');
+    this.camera = new THREE.PerspectiveCamera(45, aspect, 5, 45000);
 
-    // 3. Initialize Tactical Scene
+    // 3. Initialize Camera Controller (Navigation, Pan, Orbit, Zoom to Cursor, Focus)
+    this.cameraController = new CameraController({
+      canvas,
+      camera: this.camera,
+      onSelectTrack: (clientX, clientY) => this.handlePointerClick(clientX, clientY),
+      onDoubleClick: (clientX, clientY) => this.handleDoubleClick(clientX, clientY),
+    });
+
+    // 4. Initialize Tactical Scene with Procedural Environment
     this.scene3d = new Scene3D(options);
 
-    // 4. Attach Context Loss Listener (Rule R10.1)
+    // 5. Attach Context Loss Listener (Rule R10.1)
     if (options.onContextLost) {
       this.cleanupContextLoss = attachContextLossHandler(canvas, () => {
         this.stop();
@@ -123,164 +166,154 @@ export class Renderer3D {
       });
     }
 
-    // 5. Attach Unified Pointer & Orbit Controls with Hit Testing
-    this.attachControls();
-  }
-
-  private applyCameraPreset(preset: CameraPreset): void {
-    this.currentPreset = preset;
-    this.target.set(0, 0, 0);
-
-    if (preset === 'OBLIQUE') {
-      // 3/4 perspective looking at asset from distance 7500m
-      this.spherical.set(7500, Math.PI / 3.2, Math.PI / 4);
-      this.camera.up.set(0, 1, 0);
-    } else if (preset === 'TOP') {
-      // Direct overhead top-down view looking at ground with North facing up (-Z)
-      this.spherical.set(9500, 0.001, 0);
-      this.camera.up.set(0, 0, -1);
-    } else if (preset === 'POST') {
-      // Perimeter low-altitude post looking from South (0, 300, 4500)
-      this.spherical.set(4500, Math.PI / 2.2, 0);
-      this.camera.up.set(0, 1, 0);
+    // 6. Global Navigation Keyboard Handler (F to focus, Home to reset)
+    if (typeof window !== 'undefined') {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          (e.target instanceof HTMLElement && e.target.isContentEditable)
+        ) {
+          return;
+        }
+        if (e.key === 'Home') {
+          this.resetCamera();
+        } else if (e.key === 'f' || e.key === 'F') {
+          this.focusSelection();
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      this.cleanupKeydown = () => window.removeEventListener('keydown', handleKeyDown);
     }
-
-    this.updateCameraFromSpherical();
   }
 
   public setPreset(preset: CameraPreset): void {
-    this.applyCameraPreset(preset);
+    this.cameraController.applyPreset(preset, false);
   }
 
-  private updateCameraFromSpherical(): void {
-    const offset = new THREE.Vector3().setFromSpherical(this.spherical);
-    this.camera.position.copy(this.target).add(offset);
-    this.camera.lookAt(this.target);
+  public applyCameraPreset(preset: CameraPreset): void {
+    this.cameraController.applyPreset(preset, false);
   }
-
-  private attachControls(): void {
-    const onDown = (clientX: number, clientY: number, button: number, pointerType?: string) => {
-      if (button === 0 || button === 2 || pointerType === 'touch') {
-        this.isPointerDown = true;
-        this.hasDragged = false;
-        this.downPosition = { x: clientX, y: clientY };
-        this.previousPointerPosition = { x: clientX, y: clientY };
-      }
-    };
-
-    const onMove = (clientX: number, clientY: number) => {
-      if (!this.isPointerDown) return;
-
-      const deltaX = clientX - this.previousPointerPosition.x;
-      const deltaY = clientY - this.previousPointerPosition.y;
-      this.previousPointerPosition = { x: clientX, y: clientY };
-
-      const moveDist = Math.hypot(
-        clientX - this.downPosition.x,
-        clientY - this.downPosition.y
-      );
-      if (moveDist >= DRAG_THRESHOLD_PX) {
-        this.hasDragged = true;
-      }
-
-      if (this.hasDragged) {
-        // Orbit azimuth and elevation
-        this.spherical.theta -= deltaX * 0.006;
-        this.spherical.phi = Math.max(
-          0.01,
-          Math.min(Math.PI / 2 - 0.02, this.spherical.phi - deltaY * 0.006)
-        );
-        this.updateCameraFromSpherical();
-      }
-    };
-
-    const onUp = (clientX: number, clientY: number, button: number, pointerType?: string) => {
-      if (!this.isPointerDown) return;
-
-      const wasDragging = this.hasDragged;
-      this.isPointerDown = false;
-      this.hasDragged = false;
-
-      // Click/tap selection discrimination: only when no drag occurred
-      if (!wasDragging && (button === 0 || pointerType === 'touch')) {
-        const pickedTrackNo = this.pickTrackAt(clientX, clientY);
-        if (pickedTrackNo) {
-          this.options.onSelectTrack?.(pickedTrackNo);
-          this.onSelectTrackCallback?.(pickedTrackNo);
-        }
-      }
-    };
-
-    const onCancel = () => {
-      this.isPointerDown = false;
-      this.hasDragged = false;
-    };
-
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
-      this.spherical.radius = Math.max(800, Math.min(25000, this.spherical.radius * zoomFactor));
-      this.updateCameraFromSpherical();
-    };
-
-    // Use Pointer Events when supported, fallback to Mouse Events
-    const hasWindow = typeof window !== 'undefined';
-    const usePointer =
-      (hasWindow && 'PointerEvent' in window) ||
-      (typeof globalThis !== 'undefined' && 'PointerEvent' in globalThis);
-    const targetHub: EventTarget = hasWindow ? window : this.canvas;
-
-    let handlePointerDown: (e: PointerEvent) => void;
-    let handlePointerMove: (e: PointerEvent) => void;
-    let handlePointerUp: (e: PointerEvent) => void;
-    let handlePointerCancel: (e: PointerEvent) => void;
-
-    let handleMouseDown: (e: MouseEvent) => void;
-    let handleMouseMove: (e: MouseEvent) => void;
-    let handleMouseUp: (e: MouseEvent) => void;
-
-    if (usePointer) {
-      handlePointerDown = (e: PointerEvent) => onDown(e.clientX, e.clientY, e.button, e.pointerType);
-      handlePointerMove = (e: PointerEvent) => onMove(e.clientX, e.clientY);
-      handlePointerUp = (e: PointerEvent) => onUp(e.clientX, e.clientY, e.button, e.pointerType);
-      handlePointerCancel = () => onCancel();
-
-      this.canvas.addEventListener('pointerdown', handlePointerDown as EventListener);
-      targetHub.addEventListener('pointermove', handlePointerMove as EventListener);
-      targetHub.addEventListener('pointerup', handlePointerUp as EventListener);
-      targetHub.addEventListener('pointercancel', handlePointerCancel as EventListener);
-    } else {
-      handleMouseDown = (e: MouseEvent) => onDown(e.clientX, e.clientY, e.button);
-      handleMouseMove = (e: MouseEvent) => onMove(e.clientX, e.clientY);
-      handleMouseUp = (e: MouseEvent) => onUp(e.clientX, e.clientY, e.button);
-
-      this.canvas.addEventListener('mousedown', handleMouseDown as EventListener);
-      targetHub.addEventListener('mousemove', handleMouseMove as EventListener);
-      targetHub.addEventListener('mouseup', handleMouseUp as EventListener);
-    }
-
-    this.canvas.addEventListener('wheel', onWheel, { passive: false });
-
-    this.detachControls = () => {
-      if (usePointer) {
-        this.canvas.removeEventListener('pointerdown', handlePointerDown as EventListener);
-        targetHub.removeEventListener('pointermove', handlePointerMove as EventListener);
-        targetHub.removeEventListener('pointerup', handlePointerUp as EventListener);
-        targetHub.removeEventListener('pointercancel', handlePointerCancel as EventListener);
-      } else {
-        this.canvas.removeEventListener('mousedown', handleMouseDown as EventListener);
-        targetHub.removeEventListener('mousemove', handleMouseMove as EventListener);
-        targetHub.removeEventListener('mouseup', handleMouseUp as EventListener);
-      }
-      this.canvas.removeEventListener('wheel', onWheel);
-    };
-  }
-
-  private detachControls: () => void = () => {};
 
   /**
-   * Raycasts from canvas client coordinates into the 3D scene to pick an operator-visible track.
-   * Returns the trackNo of the closest intersected track, or null if none was hit.
+   * Focuses camera on the currently selected entity (environment object or aircraft).
+   */
+  public focusSelection(): void {
+    if (this.selectedEnvironmentObject) {
+      const env = this.selectedEnvironmentObject;
+      const threePos = toThree(env.position.x, env.position.y, env.elevationM ?? 0);
+      const targetDist = Math.max(200, env.heightM * 2.5);
+      this.cameraController.focusOnPoint(threePos, targetDist, true);
+      return;
+    }
+
+    if (this.selectedTrackNo) {
+      const record = this.scene3d.getTrackRecord(this.selectedTrackNo);
+      if (record) {
+        const worldPos = new THREE.Vector3();
+        record.aircraftGroup.getWorldPosition(worldPos);
+        this.cameraController.focusOnPoint(worldPos, 350, true);
+      }
+    }
+  }
+
+  public resetCamera(): void {
+    this.cameraController.resetCamera(true);
+  }
+
+  public pan(deltaX: number, deltaY: number): void {
+    this.cameraController.pan(deltaX, deltaY);
+  }
+
+  public zoomToCursor(clientX: number, clientY: number, zoomFactor: number): void {
+    this.cameraController.zoomToCursor(clientX, clientY, zoomFactor);
+  }
+
+  /**
+   * Pointer Click handler with priority discrimination:
+   * 1. Aircraft track (operator target selection)
+   * 2. Environment scene object (inspection panel)
+   * 3. Ground / empty space (clears environment inspector)
+   */
+  private handlePointerClick(clientX: number, clientY: number): void {
+    // 1. Try picking an operator-visible aircraft
+    const pickedTrackNo = this.pickTrackAt(clientX, clientY);
+    if (pickedTrackNo) {
+      this.selectedTrackNo = pickedTrackNo;
+      this.selectedEnvironmentObject = null;
+      this.options.onSelectTrack?.(pickedTrackNo);
+      this.onSelectTrackCallback?.(pickedTrackNo);
+      this.options.onSelectEnvironment?.(null);
+      this.onSelectEnvironmentCallback?.(null);
+      return;
+    }
+
+    // 2. Try picking an environmental scene object
+    const pickedEnv = this.pickEnvironmentObjectAt(clientX, clientY);
+    if (pickedEnv) {
+      this.selectedEnvironmentObject = pickedEnv;
+      this.options.onSelectEnvironment?.(pickedEnv);
+      this.onSelectEnvironmentCallback?.(pickedEnv);
+      return;
+    }
+
+    // 3. Clicked empty terrain/space: dismiss environment inspector
+    this.selectedEnvironmentObject = null;
+    this.options.onSelectEnvironment?.(null);
+    this.onSelectEnvironmentCallback?.(null);
+  }
+
+  /**
+   * Double-click handler: smoothly focuses camera on hit target.
+   * INVARIANT: Does NOT generate duplicate designation or firing actions.
+   */
+  private handleDoubleClick(clientX: number, clientY: number): void {
+    // 1. Check aircraft double-click
+    const pickedTrackNo = this.pickTrackAt(clientX, clientY);
+    if (pickedTrackNo) {
+      this.selectedTrackNo = pickedTrackNo;
+      this.options.onSelectTrack?.(pickedTrackNo);
+      this.onSelectTrackCallback?.(pickedTrackNo);
+
+      const record = this.scene3d.getTrackRecord(pickedTrackNo);
+      if (record) {
+        const worldPos = new THREE.Vector3();
+        record.aircraftGroup.getWorldPosition(worldPos);
+        this.cameraController.focusOnPoint(worldPos, 350, true);
+      }
+      return;
+    }
+
+    // 2. Check environmental object double-click
+    const pickedEnv = this.pickEnvironmentObjectAt(clientX, clientY);
+    if (pickedEnv) {
+      this.selectedEnvironmentObject = pickedEnv;
+      this.options.onSelectEnvironment?.(pickedEnv);
+      this.onSelectEnvironmentCallback?.(pickedEnv);
+
+      const threePos = toThree(pickedEnv.position.x, pickedEnv.position.y, pickedEnv.elevationM ?? 0);
+      const targetDist = Math.max(200, pickedEnv.heightM * 2.5);
+      this.cameraController.focusOnPoint(threePos, targetDist, true);
+      return;
+    }
+
+    // 3. Ground plane double click
+    const rect = this.canvas.getBoundingClientRect();
+    const width = rect.width > 0 ? rect.width : (this.canvas.width || 520);
+    const height = rect.height > 0 ? rect.height : (this.canvas.height || 520);
+    const x = ((clientX - (rect.left || 0)) / width) * 2 - 1;
+    const y = -((clientY - (rect.top || 0)) / height) * 2 + 1;
+
+    this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const groundPoint = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(plane, groundPoint)) {
+      this.cameraController.focusOnPoint(groundPoint, undefined, true);
+    }
+  }
+
+  /**
+   * Raycasts from canvas client coordinates into 3D scene to pick an operator-visible track.
    */
   public pickTrackAt(clientX: number, clientY: number): string | null {
     const rect = this.canvas.getBoundingClientRect();
@@ -289,7 +322,6 @@ export class Renderer3D {
     const left = rect.left || 0;
     const top = rect.top || 0;
 
-    // Normalized Device Coordinates: [-1, +1]
     const x = ((clientX - left) / width) * 2 - 1;
     const y = -((clientY - top) / height) * 2 + 1;
 
@@ -305,7 +337,6 @@ export class Renderer3D {
     const intersects = this.raycaster.intersectObjects(selectable, true);
     if (intersects.length === 0) return null;
 
-    // Intersections are ordered by distance (closest first)
     for (const hit of intersects) {
       let curr: THREE.Object3D | null = hit.object;
       while (curr) {
@@ -320,9 +351,53 @@ export class Renderer3D {
   }
 
   /**
+   * Raycasts from canvas client coordinates into 3D scene to pick an environmental object.
+   */
+  public pickEnvironmentObjectAt(clientX: number, clientY: number): EnvironmentObjectInfo | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const width = rect.width > 0 ? rect.width : (this.canvas.width || 520);
+    const height = rect.height > 0 ? rect.height : (this.canvas.height || 520);
+    const left = rect.left || 0;
+    const top = rect.top || 0;
+
+    const x = ((clientX - left) / width) * 2 - 1;
+    const y = -((clientY - top) / height) * 2 + 1;
+
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld(true);
+    this.scene3d.scene.updateMatrixWorld(true);
+
+    this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera);
+    return this.scene3d.pickEnvironmentObject(this.raycaster);
+  }
+
+  public getSelectedEnvironmentObject(): EnvironmentObjectInfo | null {
+    return this.selectedEnvironmentObject;
+  }
+
+  /**
+   * Updates scenario environment descriptor for seamless scenario switching.
+   */
+  public setScenarioEnvironment(scenarioId: string, spec?: ScenarioSpec | null): void {
+    const descriptor = getScenarioEnvironmentDescriptor(scenarioId, spec);
+    this.scene3d.setEnvironment(descriptor);
+    if (spec?.zones) {
+      this.scene3d.buildZones(spec.zones);
+    }
+  }
+
+  /**
+   * Dynamically rebuilds zone extrusion meshes.
+   */
+  public setZones(zones: ZoneSpec[]): void {
+    this.scene3d.buildZones(zones);
+  }
+
+  /**
    * Updates tracks in the 3D scene from safe operator-facing views.
    */
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
+    this.selectedTrackNo = selectedTrackNo;
     this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height);
   }
 
@@ -384,6 +459,14 @@ export class Renderer3D {
         const effOpts = this.getEffectorOptions();
         this.updateEffectorEnvelopes(effOpts);
       }
+      if (this.getSimTime) {
+        const { simMs, chaosList } = this.getSimTime();
+        this.scene3d.updateEnvironment(simMs, chaosList);
+      }
+
+      // Update camera smooth focus transition
+      this.cameraController.updateTransition();
+
       this.renderer.render(this.scene3d.scene, this.camera);
       this.animFrameId = requestAnimationFrame(renderLoop);
     };
@@ -410,6 +493,7 @@ export class Renderer3D {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
     }
     this.renderer.setPixelRatio(dpr);
+    this.scene3d.setLowFidelity(lowFi);
   }
 
   public getThreeRenderer(): THREE.WebGLRenderer {
@@ -425,7 +509,12 @@ export class Renderer3D {
    */
   public dispose(): void {
     this.stop();
-    this.detachControls();
+    this.cameraController.dispose();
+
+    if (this.cleanupKeydown) {
+      this.cleanupKeydown();
+      this.cleanupKeydown = null;
+    }
 
     if (this.cleanupContextLoss) {
       this.cleanupContextLoss();

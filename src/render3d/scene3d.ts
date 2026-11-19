@@ -13,7 +13,9 @@ import {
   calculateAircraftOrientation,
 } from './aircraftModel';
 import type { SafeTrackView, Scene3DOptions } from './types';
-import type { TrackClass, ZoneSpec, SensorMode } from '@/sim/types';
+import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec } from '@/sim/types';
+import { EnvironmentManager, getScenarioEnvironmentDescriptor } from './environment';
+import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
 
 // Tactical Color Tokens adhering to DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -52,6 +54,7 @@ export class Scene3D {
   public readonly losVisualizer3d: LosVisualizer3D;
   public readonly clusterOverlay3d: ClusterOverlay3D;
   public readonly trainingAid3d: TrainingAid3D;
+  public environmentManager: EnvironmentManager;
   private readonly zones: ZoneSpec[];
 
   // Track marker pool & meshes
@@ -142,6 +145,31 @@ export class Scene3D {
     if (options.zones && options.zones.length > 0) {
       this.buildZones(options.zones);
     }
+
+    const envDescriptor =
+      options.environment ??
+      getScenarioEnvironmentDescriptor('DEMO-1', {
+        id: 'DEMO-1',
+        schemaVersion: 1,
+        simVersion: '1.1.0',
+        configHash: '',
+        mode: options.mode ?? 'TRAIN',
+        seed: 2026,
+        difficulty: 0.5,
+        dayNight: 'DAY',
+        durationMs: 120000,
+        asset: { x: 0, y: 0, rMinM: options.rMinM },
+        zones: this.zones,
+        threats: [],
+        decoys: [],
+        chaos: [],
+        triggers: [],
+        roeText: '',
+        levers: [],
+        features: [],
+      });
+
+    this.environmentManager = new EnvironmentManager(this.staticGroup, envDescriptor, this.scene);
   }
 
   private createSelectionBracketGeometry(size: number): THREE.BufferGeometry {
@@ -603,9 +631,42 @@ export class Scene3D {
   }
 
   /**
+   * Updates or replaces the procedural environment with a new descriptor.
+   */
+  public setEnvironment(descriptor: EnvironmentDescriptor): void {
+    this.environmentManager.dispose();
+    this.environmentManager = new EnvironmentManager(this.staticGroup, descriptor, this.scene);
+  }
+
+  public getEnvironmentManager(): EnvironmentManager {
+    return this.environmentManager;
+  }
+
+  /**
+   * Raycasts against selectable environmental structures (buildings, installations, vegetation, zones).
+   */
+  public pickEnvironmentObject(raycaster: THREE.Raycaster): EnvironmentObjectInfo | null {
+    return this.environmentManager.pickEnvironmentObject(raycaster);
+  }
+
+  /**
+   * Updates dynamic weather effects according to simulation time and chaos schedule.
+   */
+  public updateEnvironment(simMs: number, chaosList?: ChaosSpec[]): void {
+    this.environmentManager.update(simMs, chaosList);
+  }
+
+  public setLowFidelity(lowFi: boolean): void {
+    this.environmentManager.setLowFidelity(lowFi);
+  }
+
+  /**
    * Complete scene teardown and memory cleanup.
    */
   public dispose(): void {
+    // 0. Dispose environment manager
+    this.environmentManager.dispose();
+
     // 1. Dispose sensor coverage, effector resources, LOS visualizer, clusters, and training aid
     this.coverage3d.dispose();
     this.effectorEnvelopes3d.dispose();
