@@ -297,6 +297,10 @@ export class CameraController {
         this.pan(deltaX, deltaY);
       } else if (this.activePointerButton === 0) {
         // Orbit: Left button
+        if (this.currentPreset === 'TOP') {
+          this.camera.up.set(0, 1, 0);
+          this.currentPreset = 'OBLIQUE';
+        }
         this.spherical.theta -= deltaX * 0.006;
         this.spherical.phi = Math.max(
           0.005,

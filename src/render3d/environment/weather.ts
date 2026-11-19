@@ -34,22 +34,22 @@ export class WeatherManager {
     const isNight = descriptor.dayNight === 'NIGHT';
 
     // 1. Lighting Setup
-    const ambientColor = isNight ? 0x152230 : 0xdde6f0;
-    const ambientIntensity = isNight ? 0.45 : 0.75;
+    const ambientColor = isNight ? 0x223344 : 0xffffff;
+    const ambientIntensity = isNight ? 0.6 : 0.95;
     this.ambientLight = new THREE.AmbientLight(ambientColor, ambientIntensity);
     this.weatherGroup.add(this.ambientLight);
 
     // Directional Sun Light
-    this.sunLight = new THREE.DirectionalLight(0xffffff, isNight ? 0.05 : 0.85);
+    this.sunLight = new THREE.DirectionalLight(0xffffff, isNight ? 0.2 : 0.95);
     this.sunLight.position.set(2500, 5000, 3000);
     this.weatherGroup.add(this.sunLight);
 
     // Moonlight (subtle cyan/blue in Night mode)
-    this.moonLight = new THREE.DirectionalLight(0x4488cc, isNight ? 0.35 : 0);
+    this.moonLight = new THREE.DirectionalLight(0x4488cc, isNight ? 0.45 : 0);
     this.moonLight.position.set(-2000, 4500, -2500);
     this.weatherGroup.add(this.moonLight);
 
-    // 2. Sky Background & Baseline Fog
+    // 2. Sky Background & Tactical Distance Fog
     this.setupAtmosphere(descriptor.weather, descriptor.fogSeverity, isNight);
 
     // 3. Setup Rain Particle System if configured
@@ -65,32 +65,20 @@ export class WeatherManager {
     this.scene.background = new THREE.Color(bgColor);
 
     if (weather === 'FOG') {
-      const fogDensity = 0.00015 + fogSeverity * 0.00025;
+      const near = 7000 - fogSeverity * 2000;
+      const far = 26000 - fogSeverity * 6000;
       const fogColor = isNight ? 0x101a24 : 0x222c38;
-      this.scene.fog = new THREE.FogExp2(fogColor, fogDensity);
+      this.scene.fog = new THREE.Fog(fogColor, near, far);
     } else {
-      // Subtle tactical distance fog for horizon depth
+      // Subtle tactical distance fog for horizon depth beyond tactical radius
       const defaultFogColor = isNight ? 0x070c12 : 0x0d1117;
-      this.scene.fog = new THREE.FogExp2(defaultFogColor, 0.000035);
+      this.scene.fog = new THREE.Fog(defaultFogColor, 12000, 35000);
     }
   }
 
-  private setupClouds(isNight: boolean): void {
-    const cloudGeom = new THREE.PlaneGeometry(16000, 16000, 4, 4);
-    cloudGeom.rotateX(Math.PI / 2);
-
-    const cloudColor = isNight ? 0x0d1520 : 0x202b38;
-    const cloudMat = new THREE.MeshBasicMaterial({
-      color: cloudColor,
-      transparent: true,
-      opacity: 0.3,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-
-    this.cloudMesh = new THREE.Mesh(cloudGeom, cloudMat);
-    this.cloudMesh.position.y = 2200;
-    this.weatherGroup.add(this.cloudMesh);
+  private setupClouds(_isNight: boolean): void {
+    // Keep cloud layer non-occluding so tactical assets are never obscured
+    this.cloudMesh = null;
   }
 
   private setupRain(seed: number): void {
@@ -164,19 +152,24 @@ export class WeatherManager {
     if (this.scene) {
       if (activeFogSeverity !== null || this.descriptor.weather === 'FOG') {
         const sev = activeFogSeverity ?? this.descriptor.fogSeverity ?? 0.6;
-        const density = 0.00015 + sev * 0.00025;
+        const near = 7000 - sev * 2000;
+        const far = 26000 - sev * 6000;
         const fogColor = isNight ? 0x101a24 : 0x222c38;
-        if (this.scene.fog instanceof THREE.FogExp2) {
-          this.scene.fog.density = density;
+        if (this.scene.fog instanceof THREE.Fog) {
+          this.scene.fog.near = near;
+          this.scene.fog.far = far;
           this.scene.fog.color.setHex(fogColor);
         } else {
-          this.scene.fog = new THREE.FogExp2(fogColor, density);
+          this.scene.fog = new THREE.Fog(fogColor, near, far);
         }
       } else {
         const defaultFogColor = isNight ? 0x070c12 : 0x0d1117;
-        if (this.scene.fog instanceof THREE.FogExp2) {
-          this.scene.fog.density = 0.000035;
+        if (this.scene.fog instanceof THREE.Fog) {
+          this.scene.fog.near = 12000;
+          this.scene.fog.far = 35000;
           this.scene.fog.color.setHex(defaultFogColor);
+        } else {
+          this.scene.fog = new THREE.Fog(defaultFogColor, 12000, 35000);
         }
       }
     }

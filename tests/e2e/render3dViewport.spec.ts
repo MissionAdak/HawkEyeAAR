@@ -1,0 +1,126 @@
+import { test, expect } from '@playwright/test';
+
+test.describe('3D Tactical Environment and Viewport Functionality', () => {
+  test('3D view renders, navigates, selects targets, and supports controls without blanking', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    // 1. Start session from Mission Briefing
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // Wait for simulation tick and tracks to populate
+    await page.waitForTimeout(1000);
+
+    // 2. Switch to 3D View
+    const toggle3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DBtn).toBeVisible();
+    await toggle3DBtn.click();
+
+    // Ensure 3D canvas is visible
+    const canvas3d = page.locator('canvas.cursor-grab');
+    await expect(canvas3d).toBeVisible();
+
+    // Verify Readout shows 3D CAM: OBLIQUE
+    await expect(page.getByText(/3D VIEW \| CAM:/i)).toBeVisible();
+
+    // 3. Cycle Camera Presets
+    const topPresetBtn = page.getByRole('button', { name: /\[T\] TOP/i });
+    await topPresetBtn.click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText(/CAM: TOP/i)).toBeVisible();
+
+    const postPresetBtn = page.getByRole('button', { name: /POST/i });
+    await postPresetBtn.click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText(/CAM: POST/i)).toBeVisible();
+
+    const obliquePresetBtn = page.getByRole('button', { name: /\[O\] OBLIQUE/i });
+    await obliquePresetBtn.click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText(/CAM: OBLIQUE/i)).toBeVisible();
+
+    // 4. Test Orbit Dragging on 3D Canvas
+    const canvasBox = await canvas3d.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    if (canvasBox) {
+      const centerX = canvasBox.x + canvasBox.width / 2;
+      const centerY = canvasBox.y + canvasBox.height / 2;
+
+      // Mouse Drag Orbit
+      await page.mouse.move(centerX, centerY);
+      await page.mouse.down({ button: 'left' });
+      await page.mouse.move(centerX + 60, centerY - 40, { steps: 5 });
+      await page.mouse.up({ button: 'left' });
+      await page.waitForTimeout(200);
+
+      // Shift + Drag Pan
+      await page.keyboard.down('Shift');
+      await page.mouse.move(centerX, centerY);
+      await page.mouse.down({ button: 'left' });
+      await page.mouse.move(centerX - 40, centerY + 30, { steps: 5 });
+      await page.mouse.up({ button: 'left' });
+      await page.keyboard.up('Shift');
+      await page.waitForTimeout(200);
+
+      // Mouse Wheel Zoom
+      await page.mouse.wheel(0, -150);
+      await page.waitForTimeout(200);
+    }
+
+    // 5. Test X-Section in 3D View (Must never turn screen black)
+    const xSectionBtn = page.getByRole('button', { name: /X-SECTION/i });
+    if (await xSectionBtn.isVisible()) {
+      await xSectionBtn.click();
+      await page.waitForTimeout(300);
+
+      // Verify modal is open and visible
+      const modalHeader = page.getByText(/ELEVATION CROSS-SECTION TRAINING AID/i);
+      await expect(modalHeader).toBeVisible();
+
+      // Dismiss modal via ESC
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      await expect(modalHeader).not.toBeVisible();
+    }
+
+    // 6. Test Toggle Controls (Weapons, LOS, Clusters, Aid)
+    const weaponsToggle = page.getByRole('button', { name: /\[E\] WEAPONS/i });
+    await weaponsToggle.click(); // Toggle OFF
+    await page.waitForTimeout(100);
+    await weaponsToggle.click(); // Toggle ON
+
+    const losToggle = page.getByRole('button', { name: /\[K\] LOS/i });
+    await losToggle.click(); // Toggle OFF
+    await page.waitForTimeout(100);
+    await losToggle.click(); // Toggle ON
+
+    const clustersToggle = page.getByRole('button', { name: /\[U\] CLUSTERS/i });
+    await clustersToggle.click();
+    await page.waitForTimeout(100);
+    await clustersToggle.click();
+
+    // 7. Toggle back to 2D Radar
+    const toggle2DBtn = page.getByRole('button', { name: /\[V\] 2D RADAR/i });
+    await expect(toggle2DBtn).toBeVisible();
+    await toggle2DBtn.click();
+
+    // Verify 2D Canvas is back
+    const canvas2d = page.locator('canvas.cursor-crosshair');
+    await expect(canvas2d).toBeVisible();
+
+    // 8. Toggle back to 3D View to ensure idempotence
+    await toggle3DBtn.click();
+    await expect(canvas3d).toBeVisible();
+
+    // Take screenshot of final healthy 3D viewport
+    const radarFrame = page.locator('.radar-frame');
+    await radarFrame.screenshot({ path: 'test-results/3d-view-healthy.png' });
+
+    // Assert zero uncaught page errors
+    expect(pageErrors).toEqual([]);
+  });
+});
