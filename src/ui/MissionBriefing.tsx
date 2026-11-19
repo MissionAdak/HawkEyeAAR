@@ -7,6 +7,15 @@ interface MissionBriefingProps {
   onClose?: () => void;
 }
 
+function isInteractiveElement(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof Element)) return false;
+  return (
+    target.closest(
+      'button, a, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], [role="option"], [contenteditable="true"]'
+    ) !== null
+  );
+}
+
 export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => {
   const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId) || DEFAULT_SCENARIO_ID;
   const startSession = useSessionStore((s) => s.startSession);
@@ -62,33 +71,63 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isScenarioModalOpen) return;
+
       if (e.key === 'Enter') {
-        e.preventDefault();
-        void handleStart();
-      } else if (e.key === 'Escape') {
+        const isInteractive =
+          isInteractiveElement(e.target) ||
+          (typeof document !== 'undefined' && isInteractiveElement(document.activeElement));
+
+        // Enter triggers the global START SESSION shortcut only when focus is on a non-interactive area.
+        // When a button, link, input, select, textarea, or other interactive element has focus,
+        // preserve its native keyboard behavior (e.g. Enter on a focused button triggers its onClick).
+        if (!isInteractive) {
+          e.preventDefault();
+          void handleStart();
+        }
+        return;
+      }
+
+      if (e.key === 'Escape') {
         e.preventDefault();
         handleDismiss();
-      } else if (e.key === 's' || e.key === 'S') {
+        return;
+      }
+
+      if (e.key === 's' || e.key === 'S') {
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          (e.target instanceof HTMLElement && e.target.isContentEditable)
+        ) {
+          return;
+        }
         e.preventDefault();
         openScenarioModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedScenarioId, isStarting, sessionStatus, isScenarioModalOpen]);
+  }, [selectedScenarioId, isStarting, sessionStatus, isScenarioModalOpen, onClose, closeBriefing]);
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Mission Briefing & Exercise Control"
-      className="fixed inset-0 z-50 bg-carbon-950/85 backdrop-blur-sm flex items-center justify-center p-4 select-none font-mono text-xs"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 bg-carbon-950/85 backdrop-blur-sm flex items-center justify-center p-4 select-none font-mono text-xs outline-none"
     >
-      <div className="w-[840px] max-h-[92vh] bg-carbon-900 border border-phosphor/60 flex flex-col shadow-2xl overflow-hidden">
+      <div
+        tabIndex={-1}
+        className="w-[840px] max-h-[92vh] bg-carbon-900 border border-phosphor/60 flex flex-col shadow-2xl overflow-hidden outline-none"
+      >
         {/* Header */}
         <div className="h-[46px] px-4 border-b border-line bg-carbon-800/90 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <span className="font-display font-bold text-sm tracking-widest text-text-main">
+            <span
+              data-testid="briefing-title"
+              className="font-display font-bold text-sm tracking-widest text-text-main"
+            >
               DRISHTI-CUAS — MISSION CONTROL
             </span>
             <span className="text-[10px] font-display font-bold px-2 py-0.5 border border-phosphor text-phosphor bg-phosphorDim/20 tracking-wider">
@@ -98,6 +137,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
 
           <button
             onClick={handleDismiss}
+            data-testid="standby-view-btn"
             aria-label="Close Briefing to Standby View"
             className="px-2 py-0.5 text-[11px] font-bold border border-line hover:border-text-main text-text-dim hover:text-text-main transition-colors"
             title="Preview tactical console scope in standby mode (Esc)"
@@ -258,6 +298,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
           <div className="flex items-center gap-3">
             <button
               onClick={openScenarioModal}
+              data-testid="footer-change-scenario-btn"
               className="px-3 py-1.5 font-display font-semibold text-[11px] border border-line hover:border-text-main text-text-dim hover:text-text-main transition-colors"
             >
               CHANGE SCENARIO

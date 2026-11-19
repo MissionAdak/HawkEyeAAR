@@ -209,4 +209,132 @@ test.describe('Scenario Selector & Lifecycle (TASK 12 & TASK 15)', () => {
       ).toBeLessThanOrEqual(overflowMetrics.innerHeight);
     }
   });
+
+  test.describe('Mission Briefing Keyboard Interactions (TASK 15.1)', () => {
+    test('Enter triggers START SESSION when focus is on a non-interactive area of briefing', async ({ page }) => {
+      await page.goto('/');
+
+      const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+      await expect(briefingModal).toBeVisible({ timeout: 5000 });
+
+      // Focus non-interactive element
+      await page.locator('[data-testid="briefing-title"]').click();
+
+      // Press Enter
+      await page.keyboard.press('Enter');
+
+      // Simulation starts, briefing closes, clock advances
+      await expect(briefingModal).not.toBeVisible({ timeout: 5000 });
+      await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('header').getByText('SESSION ACTIVE')).toBeVisible();
+    });
+
+    test('Enter on CHANGE SCENARIO opens scenario catalog without starting simulation', async ({ page }) => {
+      await page.goto('/');
+
+      const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+      await expect(briefingModal).toBeVisible({ timeout: 5000 });
+
+      // Focus the [S] CHANGE SCENARIO button
+      const changeScenarioBtn = page.locator('[data-testid="change-scenario-btn"]');
+      await changeScenarioBtn.focus();
+      await expect(changeScenarioBtn).toBeFocused();
+
+      // Press Enter
+      await page.keyboard.press('Enter');
+
+      // Scenario catalog modal must open
+      const scenarioModal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
+      await expect(scenarioModal).toBeVisible({ timeout: 5000 });
+
+      // Simulation must NOT have started - clock remains at T+00:00
+      await expect(page.locator('header').getByText('T+00:00')).toBeVisible();
+
+      // Close modal with Escape
+      await page.keyboard.press('Escape');
+      await expect(scenarioModal).not.toBeVisible();
+      await expect(briefingModal).toBeVisible();
+
+      // Now test footer CHANGE SCENARIO button
+      const footerChangeBtn = page.locator('[data-testid="footer-change-scenario-btn"]');
+      await footerChangeBtn.focus();
+      await expect(footerChangeBtn).toBeFocused();
+
+      await page.keyboard.press('Enter');
+      await expect(scenarioModal).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('header').getByText('T+00:00')).toBeVisible();
+    });
+
+    test('Enter on STANDBY VIEW dismisses briefing without starting simulation', async ({ page }) => {
+      await page.goto('/');
+
+      const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+      await expect(briefingModal).toBeVisible({ timeout: 5000 });
+
+      // Focus the STANDBY VIEW button
+      const standbyBtn = page.locator('[data-testid="standby-view-btn"]');
+      await standbyBtn.focus();
+      await expect(standbyBtn).toBeFocused();
+
+      // Press Enter
+      await page.keyboard.press('Enter');
+
+      // Briefing modal must close
+      await expect(briefingModal).not.toBeVisible();
+
+      // Simulation must NOT have started
+      await expect(page.getByTestId('session-status-badge')).toHaveText('READY FOR EXERCISE');
+      await expect(page.locator('header').getByText('T+00:00')).toBeVisible();
+      await expect(page.getByRole('button', { name: /\[BRIEFING\]/i })).toBeVisible();
+    });
+
+    test('Enter on START SESSION button starts exactly one session', async ({ page }) => {
+      await page.goto('/');
+
+      const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+      await expect(briefingModal).toBeVisible({ timeout: 5000 });
+
+      // Focus the START SESSION button
+      const startBtn = page.locator('[data-testid="start-session-btn"]');
+      await startBtn.focus();
+      await expect(startBtn).toBeFocused();
+
+      // Press Enter
+      await page.keyboard.press('Enter');
+
+      // Briefing closes, session starts, clock advances
+      await expect(briefingModal).not.toBeVisible();
+      await expect(page.locator('header').getByText(/T\+00:0[1-9]/i)).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('header').getByText('SESSION ACTIVE')).toBeVisible();
+    });
+
+    test('Preserves S and Escape keyboard shortcuts and scenario-modal guard', async ({ page }) => {
+      await page.goto('/');
+
+      const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+      await expect(briefingModal).toBeVisible({ timeout: 5000 });
+
+      // 1. Press 's' to open scenario modal
+      await page.keyboard.press('s');
+      const scenarioModal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
+      await expect(scenarioModal).toBeVisible({ timeout: 5000 });
+
+      // 2. While scenario modal is open, pressing Enter does NOT start simulation
+      await page.keyboard.press('Enter');
+      await expect(scenarioModal).toBeVisible();
+      await expect(page.locator('header').getByText('T+00:00')).toBeVisible();
+
+      // 3. Press Escape to close scenario modal
+      await page.keyboard.press('Escape');
+      await expect(scenarioModal).not.toBeVisible();
+      await expect(briefingModal).toBeVisible();
+
+      // 4. Press Escape to dismiss briefing to standby view
+      await page.keyboard.press('Escape');
+      await expect(briefingModal).not.toBeVisible();
+      await expect(page.getByTestId('session-status-badge')).toHaveText('READY FOR EXERCISE');
+      await expect(page.locator('header').getByText('T+00:00')).toBeVisible();
+      await expect(page.getByRole('button', { name: /\[BRIEFING\]/i })).toBeVisible();
+    });
+  });
 });
