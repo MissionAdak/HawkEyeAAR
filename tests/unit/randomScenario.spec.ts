@@ -5,10 +5,11 @@ import {
 } from '@/director/randomScenario';
 import { validateDetailed, validate } from '@/director/validate';
 import { SCENARIO_CATALOG, getScenarioCatalogEntry, loadCatalogScenario } from '@/director/catalog';
-import { useSessionStore, engineInstance } from '@/store/sessionStore';
+import { useSessionStore, engineInstance, getActiveRecorder } from '@/store/sessionStore';
 import {
   clearFallbackEventsForTest,
   setMockPersistenceFailureForTest,
+  getRecordedEventsForSession,
 } from '@/db/recorder';
 import type { TrueClass } from '@/sim/types';
 
@@ -147,9 +148,26 @@ describe('RANDOM-1 — Dedicated Unpredictable Assessment (TASK 13)', () => {
       const snapshot = store.ui;
       expect(snapshot).toBeDefined();
 
-      // UI snapshot must only contain active tracks, not the planned future threats list
+      // UI snapshot must only contain active tracks; startup shows no future contacts
       expect(snapshot.trackRows).toBeDefined();
-      for (const row of snapshot.trackRows) {
+      const futureSpawns = [
+        ...(engineInstance.spec?.threats ?? []),
+        ...(engineInstance.spec?.decoys ?? []),
+      ].filter((t) => t.spawnTMs > 0);
+      expect(futureSpawns.length).toBeGreaterThan(0);
+      for (const future of futureSpawns) {
+        expect(snapshot.trackRows.some((r) => r.trackNo === future.id)).toBe(false);
+      }
+
+      // Advance scenario until a contact is visible and require at least one row
+      while (engineInstance.curr.filter((e) => e.step !== 'UNDETECTED').length === 0 && engineInstance.tickIndex < 300) {
+        engineInstance.step();
+      }
+      store.setUiSnapshot(engineInstance.buildUiSnapshot());
+      const liveSnapshot = useSessionStore.getState().ui;
+      expect(liveSnapshot.trackRows.length).toBeGreaterThanOrEqual(1);
+
+      for (const row of liveSnapshot.trackRows) {
         // Label must be traineeLabel (null before trainee classifies)
         expect(row.label).toBeNull();
         expect(row.shortCode).toBe('NON');
@@ -188,18 +206,35 @@ describe('RANDOM-1 — Dedicated Unpredictable Assessment (TASK 13)', () => {
     it('rerunExactSeedSession on RANDOM-1 preserves the exact seed and encounters', async () => {
       const store = useSessionStore.getState();
       await store.loadScenarioById('RANDOM-1', 9876);
-      const threatsOriginal = engineInstance.spec?.threats.map((t) => t.id);
+      const originalSpec = engineInstance.spec;
+      const threatsOriginal = originalSpec?.threats.map((t) => t.id);
+      const encountersOriginal = originalSpec?.threats.map((t) => ({
+        id: t.id,
+        spawnTMs: t.spawnTMs,
+        waypoints: t.waypoints.map((w) => ({ ...w })),
+      }));
 
       const rerun = await store.rerunExactSeedSession();
       expect(rerun).toBe(true);
       expect(engineInstance.spec?.seed).toBe(9876);
-      const threatsRerun = engineInstance.spec?.threats.map((t) => t.id);
+      const rerunSpec = engineInstance.spec;
+      const threatsRerun = rerunSpec?.threats.map((t) => t.id);
       expect(threatsRerun).toEqual(threatsOriginal);
+      const encountersRerun = rerunSpec?.threats.map((t) => ({
+        id: t.id,
+        spawnTMs: t.spawnTMs,
+        waypoints: t.waypoints.map((w) => ({ ...w })),
+      }));
+      expect(encountersRerun).toEqual(encountersOriginal);
     });
 
     it('finalizes previous active RANDOM-1 session when switching to another scenario', async () => {
       const store = useSessionStore.getState();
       await store.loadScenarioById('RANDOM-1', 5555);
+
+      const oldRecorder = getActiveRecorder();
+      expect(oldRecorder).not.toBeNull();
+      const oldSessionUid = oldRecorder!.getSessionUid();
 
       // Simulate a few ticks to make session active
       for (let i = 0; i < 50; i++) {
@@ -211,6 +246,12 @@ describe('RANDOM-1 — Dedicated Unpredictable Assessment (TASK 13)', () => {
       await store.loadScenarioById('DEMO-1');
       expect(store.currentScenarioId).toBe('DEMO-1');
       expect(engineInstance.spec?.id).toBe('DEMO-1');
+
+      // Verify the old recorder has exactly one SESSION_END event with reason SCENARIO_SWITCH
+      const oldEvents = await getRecordedEventsForSession(oldSessionUid);
+      const endEvents = oldEvents.filter((e) => e.type === 'SESSION_END');
+      expect(endEvents.length).toBe(1);
+      expect((endEvents[0].payload as { reason?: string })?.reason).toBe('SCENARIO_SWITCH');
     });
   });
 });

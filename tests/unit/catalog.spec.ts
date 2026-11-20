@@ -239,12 +239,12 @@ describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
       expect(newStartEvent?.payload.scenarioId).toBe('DEMO-2');
     });
 
-    it('does not append duplicate SESSION_END if session had already ended naturally before switching', async () => {
+    it('does not append duplicate SESSION_END on scenario switch if session had already ended via manual abort', async () => {
       const store = useSessionStore.getState();
       await store.loadScenarioById('DEMO-1');
       const oldSessionUid = getActiveRecorder()!.getSessionUid();
 
-      // Run 5 ticks and end naturally / abort
+      // Run 5 ticks and abort
       for (let i = 0; i < 5; i++) engineInstance.step();
       store.abortSession('USER_MANUAL_ABORT');
       expect(engineInstance.sessionEnded).toBe(true);
@@ -255,7 +255,8 @@ describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
       expect(endsBefore[0].payload.reason).toBe('USER_MANUAL_ABORT');
 
       // Now switch scenario to SWARM-1
-      await store.loadScenarioById('SWARM-1');
+      const switched = await store.loadScenarioById('SWARM-1');
+      expect(switched).toBe(true);
 
       // The old session must STILL have exactly one SESSION_END
       const eventsAfterSwitch = await getRecordedEventsForSession(oldSessionUid);
@@ -362,10 +363,16 @@ describe('Scenario Catalog & Validation (TASK 12 & TASK 12A)', () => {
       expect(engineInstance.tickIndex).toBe(0);
       expect(useSessionStore.getState().currentScenarioId).toBe('SPECTRUM-1');
 
-      // The events array should only contain SPECTRUM-1 events starting at tick 0
-      const startEv = engineInstance.events.find((e) => e.type === 'SIM_START');
-      expect(startEv?.payload.scenarioId).toBe('SPECTRUM-1');
-      expect(engineInstance.events.every((e) => e.payload.scenarioId !== 'DEMO-1' || e.type !== 'SIM_START')).toBe(true);
+      // The events array should start at initial-session sequence value (seq: 1)
+      expect(engineInstance.events.length).toBeGreaterThan(0);
+      expect(engineInstance.events[0].seq).toBe(1);
+      expect(engineInstance.events[0].type).toBe('SIM_START');
+      expect(engineInstance.events[0].payload.scenarioId).toBe('SPECTRUM-1');
+
+      // Buffer contains only events belonging to the new run
+      expect(engineInstance.events.every((e) => e.tMs === 0)).toBe(true);
+      expect(engineInstance.events.every((e) => e.payload?.scenarioId === 'SPECTRUM-1' || !e.payload?.scenarioId)).toBe(true);
+      expect(engineInstance.events.some((e) => e.payload?.scenarioId === 'DEMO-1')).toBe(false);
     });
 
     it('a failed scenario load does not silently replace the current session', async () => {

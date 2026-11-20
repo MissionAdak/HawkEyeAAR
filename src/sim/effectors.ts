@@ -111,6 +111,19 @@ export function computeChaosMultiplier(
   return 1.0;
 }
 
+function calculatePkComponents(
+  effectorId: EffectorId,
+  rangeM: number,
+  target: { droneType: DroneType; emitsRf: boolean },
+  context: EngagementContext = {}
+): { pk0: number; g: number; h: number; pk: number } {
+  const pk0 = computeBasePk0(effectorId, target);
+  const g = computeRangeAttenuation(rangeM, effectorId);
+  const h = computeChaosMultiplier(effectorId, context);
+  const pk = Math.min(1.0, Math.max(0.0, pk0 * g * h));
+  return { pk0, g, h, pk };
+}
+
 /**
  * Calculates effective Probability of Kill (Pk) in [0, 1].
  * Pk = Pk0 * g(R) * h(chaos)
@@ -121,12 +134,7 @@ export function computeEffectivePk(
   target: { droneType: DroneType; emitsRf: boolean },
   context: EngagementContext = {}
 ): number {
-  const pk0 = computeBasePk0(effectorId, target);
-  const g = computeRangeAttenuation(rangeM, effectorId);
-  const h = computeChaosMultiplier(effectorId, context);
-
-  const pk = pk0 * g * h;
-  return Math.min(1.0, Math.max(0.0, pk));
+  return calculatePkComponents(effectorId, rangeM, target, context).pk;
 }
 
 export interface EngagementResolutionResult {
@@ -149,11 +157,7 @@ export function resolveEngagement(
   killRng: () => number,
   context: EngagementContext = {}
 ): EngagementResolutionResult {
-  const pk0 = computeBasePk0(effectorId, target);
-  const g = computeRangeAttenuation(rangeM, effectorId);
-  const h = computeChaosMultiplier(effectorId, context);
-  const rawPk = pk0 * g * h;
-  const pk = Math.min(1.0, Math.max(0.0, rawPk));
+  const { pk0, g, h, pk } = calculatePkComponents(effectorId, rangeM, target, context);
   const u = killRng();
   const killed = u <= pk;
 

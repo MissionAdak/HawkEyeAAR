@@ -313,6 +313,35 @@ export class Renderer3D {
   }
 
   /**
+   * Projects a track's world position to canvas client coordinates.
+   * Useful for UI overlay alignment and E2E target pick verification.
+   */
+  public getTrackScreenCoords(trackNo: string): { clientX: number; clientY: number } | null {
+    const record = this.scene3d.getTrackRecord(trackNo);
+    if (!record) return null;
+
+    const worldPos = new THREE.Vector3();
+    record.aircraftGroup.getWorldPosition(worldPos);
+
+    this.camera.updateMatrixWorld(true);
+    this.camera.updateProjectionMatrix();
+
+    const projected = worldPos.clone().project(this.camera);
+    if (projected.z > 1) return null;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const width = rect.width > 0 ? rect.width : (this.canvas.width || 520);
+    const height = rect.height > 0 ? rect.height : (this.canvas.height || 520);
+    const left = rect.left || 0;
+    const top = rect.top || 0;
+
+    const clientX = left + ((projected.x + 1) / 2) * width;
+    const clientY = top + ((-projected.y + 1) / 2) * height;
+
+    return { clientX, clientY };
+  }
+
+  /**
    * Raycasts from canvas client coordinates into 3D scene to pick an operator-visible track.
    */
   public pickTrackAt(clientX: number, clientY: number): string | null {

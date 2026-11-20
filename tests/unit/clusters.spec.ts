@@ -8,6 +8,7 @@ import {
 import { ClusterOverlay3D } from '@/render3d/clusters';
 import type { SafeTrackView } from '@/render3d/types';
 import { SimEngine } from '@/sim/engine';
+import { aggregateAARMetrics } from '@/sim/metrics';
 import demo1Json from '@/director/bundled/demo1.json';
 import type { ScenarioSpec } from '@/sim/types';
 
@@ -252,6 +253,23 @@ describe('Track X3D — Operator-Visible Spatial Clustering (TASK-F4)', () => {
         expect(engineA.events[i].type).toBe(engineB.events[i].type);
         expect(engineA.events[i].tMs).toBe(engineB.events[i].tMs);
       }
+      expect(engineA.events).toEqual(engineB.events);
+      expect(engineA.curr).toEqual(engineB.curr);
+      expect(engineA.sensorHealth).toEqual(engineB.sensorHealth);
+
+      const spec = demo1Json as unknown as ScenarioSpec;
+      const metricsA = aggregateAARMetrics(engineA.events, spec);
+      const metricsB = aggregateAARMetrics(engineB.events, spec);
+      expect(metricsA).toEqual(metricsB);
+      expect(metricsA.score).toBe(metricsB.score);
+
+      // Compare subsequent simulation steps that depend on deterministic PRNG stream
+      for (let t = 0; t < 60; t++) {
+        engineA.step();
+        engineB.step();
+      }
+      expect(engineA.curr).toEqual(engineB.curr);
+      expect(engineA.events).toEqual(engineB.events);
     });
   });
 

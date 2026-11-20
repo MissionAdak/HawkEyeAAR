@@ -92,7 +92,7 @@ describe('OPTIONAL TASK 13 — Notional POP_UP_DIVE Trajectory Profile', () => {
   });
 
   describe('Authoritative Simulation Kinematics in SimEngine', () => {
-    it('models POP_UP_DIVE in simulation engine and preserves authoritative 2D/3D agreement', () => {
+    it('models POP_UP_DIVE kinematics in simulation engine (engine-only)', () => {
       const spec = generatePopUpDiveScenario({ seed: 4444, difficulty: 0.3, speedMps: 30 });
       const engine = new SimEngine();
       engine.load(spec);
@@ -237,6 +237,7 @@ describe('OPTIONAL TASK 13 — Notional POP_UP_DIVE Trajectory Profile', () => {
           pos: { ...engine.curr[0].pos },
           vel: { ...engine.curr[0].vel },
           eventsCount: engine.events.length,
+          events: engine.events.map((e) => ({ ...e })),
         };
       };
 
@@ -246,6 +247,7 @@ describe('OPTIONAL TASK 13 — Notional POP_UP_DIVE Trajectory Profile', () => {
       expect(run1.pos).toEqual(run2.pos);
       expect(run1.vel).toEqual(run2.vel);
       expect(run1.eventsCount).toBe(run2.eventsCount);
+      expect(run1.events).toEqual(run2.events);
     });
   });
 
@@ -358,7 +360,7 @@ describe('OPTIONAL TASK 13 — Notional POP_UP_DIVE Trajectory Profile', () => {
       const metrics = aggregateAARMetrics(engine.events, demo1Spec);
 
       // Metrics must exactly match DEMO-1 golden baselines (79.21 score, zero leakers/collateral/roe)
-      expect(metrics.score).toBeCloseTo(79.21, 1);
+      expect(metrics.score).toBeCloseTo(79.21, 2);
       expect(metrics.grade).toBe('PROFICIENT_IN_SIMULATION');
       expect(metrics.leakers).toBe(0);
       expect(metrics.collateralIncidents).toBe(0);

@@ -94,6 +94,9 @@ export class WebXRPanel {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D | null;
   private readonly texture: THREE.CanvasTexture;
+  private lastSimSec: number = -1;
+  private lastTrackReadout: string = '';
+  private lastSelections: string = '';
 
   constructor() {
     if (typeof document !== 'undefined') {
@@ -131,9 +134,42 @@ export class WebXRPanel {
   }
 
   public update(): void {
-    this.draw();
-    if (this.texture) {
-      this.texture.needsUpdate = true;
+    const simSec = Math.floor(engineInstance.tickIndex * 0.05);
+    const mode = engineInstance.mode || 'TRAIN';
+    const activeSensor = useSessionStore.getState().ui.activeSensor;
+    const activeEffector = useSessionStore.getState().ui.activeEffector;
+    const selTrackNo = engineInstance.selectedTrackNo ?? '';
+
+    const selEntity = selTrackNo
+      ? engineInstance.curr.find((e) => e.trackNo === selTrackNo && e.step !== 'UNDETECTED')
+      : null;
+
+    let trackReadout = '';
+    if (selEntity) {
+      const distKm = (Math.hypot(selEntity.pos.x, selEntity.pos.y) / 1000).toFixed(2);
+      let brgDeg = Math.round((Math.atan2(selEntity.pos.x, selEntity.pos.y) * 180) / Math.PI);
+      if (brgDeg < 0) brgDeg += 360;
+      const speed = Math.round(Math.hypot(selEntity.vel.x, selEntity.vel.y));
+      const altM = Math.round(selEntity.pos.z);
+      const label = selEntity.traineeLabel ?? 'NONE';
+      const q = (selEntity.q * 100).toFixed(0);
+      trackReadout = `${selEntity.trackNo}|${distKm}|${brgDeg}|${speed}|${altM}|${label}|${q}`;
+    }
+
+    const selections = `${mode}|${activeSensor}|${activeEffector}|${selTrackNo}`;
+
+    if (
+      simSec !== this.lastSimSec ||
+      trackReadout !== this.lastTrackReadout ||
+      selections !== this.lastSelections
+    ) {
+      this.lastSimSec = simSec;
+      this.lastTrackReadout = trackReadout;
+      this.lastSelections = selections;
+      this.draw();
+      if (this.texture) {
+        this.texture.needsUpdate = true;
+      }
     }
   }
 

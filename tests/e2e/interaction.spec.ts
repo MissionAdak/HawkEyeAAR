@@ -127,8 +127,15 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
     await topPresetBtn.click();
     await expect(page.getByText('3D VIEW | CAM: TOP')).toBeVisible();
 
-    // 7. Click track row or 3D target to verify right rail selection updates
-    await trackRow.click();
+    // 7. Designate target by clicking it directly in the 3D canvas
+    const coords = await page.evaluate(() => {
+      const r3d = (window as unknown as { __RENDERER_3D__?: { getTrackScreenCoords: (id: string) => { clientX: number; clientY: number } | null } }).__RENDERER_3D__;
+      return r3d?.getTrackScreenCoords('T-01') ?? null;
+    });
+    expect(coords).not.toBeNull();
+    if (coords) {
+      await page.mouse.click(coords.clientX, coords.clientY);
+    }
     const fireControlHeader = page.locator('aside').last();
     await expect(fireControlHeader.getByText('T-01').first()).toBeVisible();
 

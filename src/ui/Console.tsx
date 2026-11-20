@@ -435,6 +435,9 @@ export const Console: React.FC = () => {
       xrManagerRef.current = null;
       renderer3dRef.current?.dispose();
       renderer3dRef.current = null;
+      if (typeof window !== 'undefined') {
+        (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = null;
+      }
     };
   }, []);
 
@@ -549,6 +552,9 @@ export const Console: React.FC = () => {
         r3d.setShowClusters(showClustersRef.current);
         r3d.setLowFidelity(lowFi);
         renderer3dRef.current = r3d;
+        if (typeof window !== 'undefined') {
+          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
+        }
       }
 
       renderer3dRef.current?.start();
@@ -680,6 +686,9 @@ export const Console: React.FC = () => {
         r3d.setShowClusters(showClustersRef.current);
         r3d.setLowFidelity(lowFi);
         renderer3dRef.current = r3d;
+        if (typeof window !== 'undefined') {
+          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
+        }
       }
 
       if (renderer3dRef.current && rendererRef.current) {

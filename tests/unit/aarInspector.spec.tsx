@@ -6,6 +6,8 @@ import {
 } from '@/ui/aar/engagementInspectorData';
 import { AarEngagementInspector } from '@/ui/aar/AarEngagementInspector';
 import { resolveEngagement } from '@/sim/effectors';
+import { computeCostRegret } from '@/sim/oracle';
+import { CONFIG } from '@/config';
 import type { SimEvent, TrackEntity, ScenarioSpec } from '@/sim/types';
 import demo1Json from '@/director/bundled/demo1.json';
 
@@ -159,6 +161,10 @@ describe('AAR Engagement Inspector (TASK-F8)', () => {
       expect(data!.cer).toBeCloseTo(0.40, 2);
       expect(data!.isUnfavourableCer).toBe(false);
       expect(data!.roeGate?.classifiedOk).toBe(true);
+      expect(data!.roeGate?.zoneOk).toBe(true);
+      expect(data!.zoneId).toBe('Z-URBAN-1');
+      expect(data!.rhoZone).toBe(0.3);
+      expect(data!.targetPos).toEqual({ x: 900, y: 0, z: 50 });
       expect(data!.decisionLuck.category).toBe('AS_EXPECTED');
     });
 
@@ -253,6 +259,8 @@ describe('AAR Engagement Inspector (TASK-F8)', () => {
       expect(data!.trueClass).toBe('CIVIL_UAS');
       expect(data!.oracleEffector).toBe('HOLD_FIRE');
       expect(data!.isOptimalChoice).toBe(false);
+      expect(data!.costRegretText).toBe('ROE VIOLATION (+₹30,00,000)');
+      expect(computeCostRegret('MISSILE', data!.oracleEffector!).regretInr).toBe(CONFIG.effectors.MISSILE.costInr);
     });
   });
 

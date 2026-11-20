@@ -2,6 +2,23 @@ import * as THREE from 'three';
 import type { ChaosSpec } from '@/sim/types';
 import type { EnvironmentDescriptor, WeatherType } from './types';
 
+const DEFAULT_FOG_SEVERITY = 0.5;
+
+function computeFogParameters(
+  isFog: boolean,
+  isNight: boolean,
+  severity: number = DEFAULT_FOG_SEVERITY
+): { color: number; near: number; far: number } {
+  if (isFog) {
+    const near = 7000 - severity * 2000;
+    const far = 26000 - severity * 6000;
+    const color = isNight ? 0x101a24 : 0x222c38;
+    return { color, near, far };
+  }
+  const color = isNight ? 0x070c12 : 0x0d1117;
+  return { color, near: 12000, far: 35000 };
+}
+
 export class WeatherManager {
   private readonly parent: THREE.Group;
   private readonly scene?: THREE.Scene;
@@ -59,21 +76,18 @@ export class WeatherManager {
     this.setupClouds(isNight);
   }
 
-  private setupAtmosphere(weather: WeatherType, fogSeverity: number = 0.5, isNight: boolean): void {
+  private setupAtmosphere(
+    weather: WeatherType,
+    fogSeverity: number = DEFAULT_FOG_SEVERITY,
+    isNight: boolean
+  ): void {
     if (!this.scene) return;
     const bgColor = isNight ? 0x070c12 : 0x0d1117;
     this.scene.background = new THREE.Color(bgColor);
 
-    if (weather === 'FOG') {
-      const near = 7000 - fogSeverity * 2000;
-      const far = 26000 - fogSeverity * 6000;
-      const fogColor = isNight ? 0x101a24 : 0x222c38;
-      this.scene.fog = new THREE.Fog(fogColor, near, far);
-    } else {
-      // Subtle tactical distance fog for horizon depth beyond tactical radius
-      const defaultFogColor = isNight ? 0x070c12 : 0x0d1117;
-      this.scene.fog = new THREE.Fog(defaultFogColor, 12000, 35000);
-    }
+    const isFog = weather === 'FOG';
+    const { color, near, far } = computeFogParameters(isFog, isNight, fogSeverity);
+    this.scene.fog = new THREE.Fog(color, near, far);
   }
 
   private setupClouds(_isNight: boolean): void {
@@ -150,27 +164,16 @@ export class WeatherManager {
 
     // 2. Dynamic Fog Adjustment
     if (this.scene) {
-      if (activeFogSeverity !== null || this.descriptor.weather === 'FOG') {
-        const sev = activeFogSeverity ?? this.descriptor.fogSeverity ?? 0.6;
-        const near = 7000 - sev * 2000;
-        const far = 26000 - sev * 6000;
-        const fogColor = isNight ? 0x101a24 : 0x222c38;
-        if (this.scene.fog instanceof THREE.Fog) {
-          this.scene.fog.near = near;
-          this.scene.fog.far = far;
-          this.scene.fog.color.setHex(fogColor);
-        } else {
-          this.scene.fog = new THREE.Fog(fogColor, near, far);
-        }
+      const isFog = activeFogSeverity !== null || this.descriptor.weather === 'FOG';
+      const sev = activeFogSeverity ?? this.descriptor.fogSeverity ?? DEFAULT_FOG_SEVERITY;
+      const { color, near, far } = computeFogParameters(isFog, isNight, sev);
+
+      if (this.scene.fog instanceof THREE.Fog) {
+        this.scene.fog.near = near;
+        this.scene.fog.far = far;
+        this.scene.fog.color.setHex(color);
       } else {
-        const defaultFogColor = isNight ? 0x070c12 : 0x0d1117;
-        if (this.scene.fog instanceof THREE.Fog) {
-          this.scene.fog.near = 12000;
-          this.scene.fog.far = 35000;
-          this.scene.fog.color.setHex(defaultFogColor);
-        } else {
-          this.scene.fog = new THREE.Fog(defaultFogColor, 12000, 35000);
-        }
+        this.scene.fog = new THREE.Fog(color, near, far);
       }
     }
 

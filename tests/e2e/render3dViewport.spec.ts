@@ -13,7 +13,8 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
     await startBtn.click();
 
     // Wait for simulation tick and tracks to populate
-    await page.waitForTimeout(1000);
+    const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
 
     // 2. Switch to 3D View
     const toggle3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
@@ -30,17 +31,14 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
     // 3. Cycle Camera Presets
     const topPresetBtn = page.getByRole('button', { name: /\[T\] TOP/i });
     await topPresetBtn.click();
-    await page.waitForTimeout(300);
     await expect(page.getByText(/CAM: TOP/i)).toBeVisible();
 
     const postPresetBtn = page.getByRole('button', { name: /POST/i });
     await postPresetBtn.click();
-    await page.waitForTimeout(300);
     await expect(page.getByText(/CAM: POST/i)).toBeVisible();
 
     const obliquePresetBtn = page.getByRole('button', { name: /\[O\] OBLIQUE/i });
     await obliquePresetBtn.click();
-    await page.waitForTimeout(300);
     await expect(page.getByText(/CAM: OBLIQUE/i)).toBeVisible();
 
     // 4. Test Orbit Dragging on 3D Canvas
@@ -55,7 +53,6 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
       await page.mouse.down({ button: 'left' });
       await page.mouse.move(centerX + 60, centerY - 40, { steps: 5 });
       await page.mouse.up({ button: 'left' });
-      await page.waitForTimeout(200);
 
       // Shift + Drag Pan
       await page.keyboard.down('Shift');
@@ -64,18 +61,15 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
       await page.mouse.move(centerX - 40, centerY + 30, { steps: 5 });
       await page.mouse.up({ button: 'left' });
       await page.keyboard.up('Shift');
-      await page.waitForTimeout(200);
 
       // Mouse Wheel Zoom
       await page.mouse.wheel(0, -150);
-      await page.waitForTimeout(200);
     }
 
     // 5. Test X-Section in 3D View (Must never turn screen black)
     const xSectionBtn = page.getByRole('button', { name: /X-SECTION/i });
     if (await xSectionBtn.isVisible()) {
       await xSectionBtn.click();
-      await page.waitForTimeout(300);
 
       // Verify modal is open and visible
       const modalHeader = page.getByText(/ELEVATION CROSS-SECTION TRAINING AID/i);
@@ -83,25 +77,27 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
 
       // Dismiss modal via ESC
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(300);
       await expect(modalHeader).not.toBeVisible();
     }
 
     // 6. Test Toggle Controls (Weapons, LOS, Clusters, Aid)
     const weaponsToggle = page.getByRole('button', { name: /\[E\] WEAPONS/i });
     await weaponsToggle.click(); // Toggle OFF
-    await page.waitForTimeout(100);
+    await expect(weaponsToggle).toHaveText(/\[E\] WEAPONS OFF/i);
     await weaponsToggle.click(); // Toggle ON
+    await expect(weaponsToggle).toHaveText(/\[E\] WEAPONS ON/i);
 
     const losToggle = page.getByRole('button', { name: /\[K\] LOS/i });
     await losToggle.click(); // Toggle OFF
-    await page.waitForTimeout(100);
+    await expect(losToggle).toHaveText(/\[K\] LOS OFF/i);
     await losToggle.click(); // Toggle ON
+    await expect(losToggle).toHaveText(/\[K\] LOS ON/i);
 
     const clustersToggle = page.getByRole('button', { name: /\[U\] CLUSTERS/i });
     await clustersToggle.click();
-    await page.waitForTimeout(100);
+    await expect(clustersToggle).toHaveText(/\[U\] CLUSTERS OFF/i);
     await clustersToggle.click();
+    await expect(clustersToggle).toHaveText(/\[U\] CLUSTERS ON/i);
 
     // 7. Toggle back to 2D Radar
     const toggle2DBtn = page.getByRole('button', { name: /\[V\] 2D RADAR/i });

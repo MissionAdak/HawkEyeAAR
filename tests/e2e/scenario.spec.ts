@@ -122,6 +122,8 @@ test.describe('Scenario Selector & Lifecycle (TASK 12 & TASK 15)', () => {
     await confirmDialog.getByRole('button', { name: /CANCEL/i }).click();
     await expect(confirmDialog).not.toBeVisible();
     await expect(modal).toBeVisible();
+    await expect(page.getByRole('button', { name: /\[S\] DEMO-1/i })).toBeVisible();
+    await expect(page.locator('aside').first().getByText('DEMO-1').first()).toBeVisible();
 
     // Click [LOAD SCENARIO] again and this time CONFIRM
     await swarmCard.getByRole('button', { name: /LOAD SCENARIO/i }).click();
@@ -191,6 +193,16 @@ test.describe('Scenario Selector & Lifecycle (TASK 12 & TASK 15)', () => {
     ]) {
       await page.setViewportSize(viewport);
       await page.goto('/');
+
+      const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });
+      await expect(briefingModal).toBeVisible({ timeout: 5000 });
+
+      // Open scenario selector and wait for its dialog before measuring overflow
+      const changeScenarioBtn = page.locator('[data-testid="change-scenario-btn"]');
+      await changeScenarioBtn.click();
+
+      const scenarioModal = page.getByRole('dialog', { name: /Mission \/ Exercise Scenario Selector/i });
+      await expect(scenarioModal).toBeVisible({ timeout: 5000 });
 
       const overflowMetrics = await page.evaluate(() => ({
         scrollHeight: document.documentElement.scrollHeight,
@@ -288,7 +300,7 @@ test.describe('Scenario Selector & Lifecycle (TASK 12 & TASK 15)', () => {
       await expect(page.getByRole('button', { name: /\[BRIEFING\]/i })).toBeVisible();
     });
 
-    test('Enter on START SESSION button starts exactly one session', async ({ page }) => {
+    test('Enter on START SESSION button dismisses briefing and activates session', async ({ page }) => {
       await page.goto('/');
 
       const briefingModal = page.getByRole('dialog', { name: /Mission Briefing & Exercise Control/i });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   expandFormation,
   computeFormationOffsets,
@@ -7,6 +7,7 @@ import {
 } from '@/director/formations';
 import { generateScenario } from '@/director/generator';
 import { validateDetailed, validate } from '@/director/validate';
+import * as novelty from '@/director/novelty';
 import { isNovel, computeCosineSimilarity } from '@/director/novelty';
 import { SimEngine } from '@/sim/engine';
 import { reconstructAarReplayState } from '@/ui/aar/aarReplayData';
@@ -316,22 +317,22 @@ describe('OPTIONAL TASK 12 — Procedural Scenario Formations', () => {
     });
 
     it('retains and returns the last valid candidate when novelty is exhausted instead of throwing', () => {
-      const blockingKinds = ['LINE_ABREAST', 'V_WEDGE', 'STACK', 'DECOY_LEAD'] as const;
-      const historyFeatures = blockingKinds.map((k) =>
-        generateFormationScenario({ seed: 100, formationKind: k, difficulty: 0.3 }).features
-      );
-
-      expect(() => {
+      const isNovelSpy = vi.spyOn(novelty, 'isNovel').mockReturnValue(false);
+      try {
         const fallbackSpec = generateFormationScenario({
           seed: 5555,
           difficulty: 0.3,
-          historyFeatures,
+          historyFeatures: [[...new Array(33).fill(1)]],
         });
+        expect(isNovelSpy).toHaveBeenCalled();
+        expect(isNovelSpy.mock.results.every((r) => r.value === false)).toBe(true);
         expect(fallbackSpec).toBeDefined();
         expect(fallbackSpec.formations).toBeDefined();
         expect(fallbackSpec.formations?.length).toBeGreaterThan(0);
         expect(validateDetailed(fallbackSpec).valid).toBe(true);
-      }).not.toThrow();
+      } finally {
+        isNovelSpy.mockRestore();
+      }
     });
   });
 
@@ -410,23 +411,24 @@ describe('OPTIONAL TASK 12 — Procedural Scenario Formations', () => {
     });
 
     it('returns last valid candidate with formations intact when novelty is exhausted in generateScenario', () => {
-      const initial = generateScenario('TRAINEE-FORMATION', 1, 0.4, [], 0, {
-        useFormations: true,
-        formationKind: 'V_WEDGE',
-        spacingM: 100,
-      });
+      const isNovelSpy = vi.spyOn(novelty, 'isNovel').mockReturnValue(false);
+      try {
+        const spec = generateScenario('TRAINEE-FORMATION', 1, 0.4, [[...new Array(33).fill(1)]], 0, {
+          useFormations: true,
+          formationKind: 'V_WEDGE',
+          spacingM: 100,
+        });
 
-      const spec = generateScenario('TRAINEE-FORMATION', 1, 0.4, [initial.features], 0, {
-        useFormations: true,
-        formationKind: 'V_WEDGE',
-        spacingM: 100,
-      });
-
-      expect(spec.formations).toBeDefined();
-      expect(spec.formations).toHaveLength(1);
-      expect(spec.formations![0].kind).toBe('V_WEDGE');
-      expect(spec.threats.length).toBeGreaterThanOrEqual(2);
-      expect(validate(spec)).toBe(true);
+        expect(isNovelSpy).toHaveBeenCalled();
+        expect(isNovelSpy.mock.results.every((r) => r.value === false)).toBe(true);
+        expect(spec.formations).toBeDefined();
+        expect(spec.formations).toHaveLength(1);
+        expect(spec.formations![0].kind).toBe('V_WEDGE');
+        expect(spec.threats.length).toBeGreaterThanOrEqual(2);
+        expect(validateDetailed(spec).valid).toBe(true);
+      } finally {
+        isNovelSpy.mockRestore();
+      }
     });
   });
 });

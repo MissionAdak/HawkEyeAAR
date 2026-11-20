@@ -458,13 +458,18 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       const coverage3d = new Coverage3D();
       expect(coverage3d.group.children).toHaveLength(3); // radarGroup, eoirGroup, rfGroup
 
-      // Count child meshes and initial state
+      // Count child meshes and initial state, tracking geometry identities
       let initialMeshCount = 0;
+      const initialGeometries: THREE.BufferGeometry[] = [];
       coverage3d.group.traverse((obj) => {
         if (obj instanceof Coverage3D || obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
           initialMeshCount += 1;
         }
+        if ((obj instanceof THREE.Mesh || obj instanceof THREE.Line) && obj.geometry) {
+          initialGeometries.push(obj.geometry);
+        }
       });
+      expect(initialGeometries.length).toBeGreaterThan(0);
 
       // Simulate 100 consecutive frames modulating parameters
       for (let f = 0; f < 100; f++) {
@@ -493,6 +498,15 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
           visible: true,
         });
       }
+
+      // Verify that geometry identities are reused without reallocations
+      const postUpdateGeometries: THREE.BufferGeometry[] = [];
+      coverage3d.group.traverse((obj) => {
+        if ((obj instanceof THREE.Mesh || obj instanceof THREE.Line) && obj.geometry) {
+          postUpdateGeometries.push(obj.geometry);
+        }
+      });
+      expect(postUpdateGeometries).toEqual(initialGeometries);
 
       // Verify that mesh count remains strictly invariant (zero allocation leak)
       let postUpdateMeshCount = 0;
@@ -1061,6 +1075,17 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       // Canvas center picks T-LOW
       expect(renderer.pickTrackAt(260, 260)).toBe('T-LOW');
 
+      // Project T-HIGH's position to canvas coordinates and verify pick
+      const tHighRecord = renderer.getScene3D().getTrackRecord('T-HIGH');
+      expect(tHighRecord).toBeDefined();
+      const tHighWorldPos = new THREE.Vector3();
+      tHighRecord!.aircraftGroup.getWorldPosition(tHighWorldPos);
+      const projected = tHighWorldPos.clone().project(renderer.getCamera());
+      const canvasX = ((projected.x + 1) / 2) * canvas.width;
+      const canvasY = ((-projected.y + 1) / 2) * canvas.height;
+
+      expect(renderer.pickTrackAt(canvasX, canvasY)).toBe('T-HIGH');
+
       renderer.dispose();
     });
 
@@ -1490,14 +1515,21 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
         zones: (demo1Json as unknown as ScenarioSpec).zones,
       });
 
-      // Rapidly switch environments 5 times (simulating operator switching scenarios in modal)
-      const presets = ['DEMO-1', 'DEMO-2', 'SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1'];
+      // Verify disposal of prior resources on scenario switch
+      const initialEnv = scene3d.getEnvironmentManager();
+      const disposeSpy = vi.spyOn(initialEnv, 'dispose');
+      const descDemo2 = getScenarioEnvironmentDescriptor('DEMO-2');
+      scene3d.setEnvironment(descDemo2);
+      expect(disposeSpy).toHaveBeenCalledTimes(1);
+
+      // Rapidly switch remaining environments (simulating operator switching scenarios in modal)
+      const presets = ['SWARM-1', 'SPECTRUM-1', 'PROCEDURAL-1'];
       for (const p of presets) {
         const desc = getScenarioEnvironmentDescriptor(p);
         scene3d.setEnvironment(desc);
       }
 
-      expect(scene3d.scene.children).toHaveLength(8); // Invariant maintained throughout
+      expect(scene3d.scene.children).toHaveLength(8); // Scene size invariant retained as separate check
 
       scene3d.dispose();
       expect(scene3d.scene.children).toHaveLength(0);

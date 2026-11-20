@@ -14,6 +14,18 @@ interface ClusterMeshRecord {
   fillMesh: THREE.Mesh;
   edgeLines: THREE.LineSegments;
   labelSprite: THREE.Sprite;
+  lastHull2D: { x: number; y: number }[];
+  lastZMinM: number;
+  lastZMaxM: number;
+  lastLabel: string;
+}
+
+function isHullEqual(a: { x: number; y: number }[], b: { x: number; y: number }[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].x !== b[i].x || a[i].y !== b[i].y) return false;
+  }
+  return true;
 }
 
 export class ClusterOverlay3D {
@@ -142,15 +154,15 @@ export class ClusterOverlay3D {
       const key = cluster.clusterId;
       presentClusterIds.add(key);
 
-      const { fillGeo, edgeGeo } = this.buildExtrudedPrism(
-        cluster.hull2D,
-        cluster.zMinM,
-        cluster.zMaxM
-      );
-
       let record = this.clusterMeshMap.get(key);
 
       if (!record) {
+        const { fillGeo, edgeGeo } = this.buildExtrudedPrism(
+          cluster.hull2D,
+          cluster.zMinM,
+          cluster.zMaxM
+        );
+
         const group = new THREE.Group();
         const fillMesh = new THREE.Mesh(fillGeo, this.sharedFillMaterial);
         fillMesh.renderOrder = 1;
@@ -176,17 +188,42 @@ export class ClusterOverlay3D {
           fillMesh,
           edgeLines,
           labelSprite,
+          lastHull2D: cluster.hull2D.map((p) => ({ x: p.x, y: p.y })),
+          lastZMinM: cluster.zMinM,
+          lastZMaxM: cluster.zMaxM,
+          lastLabel: cluster.label,
         };
         this.clusterMeshMap.set(key, record);
       } else {
-        record.fillMesh.geometry.dispose();
-        record.fillMesh.geometry = fillGeo;
+        // Retain existing geometry when hull and altitude bounds are unchanged
+        const geometryChanged =
+          record.lastZMinM !== cluster.zMinM ||
+          record.lastZMaxM !== cluster.zMaxM ||
+          !isHullEqual(record.lastHull2D, cluster.hull2D);
 
-        record.edgeLines.geometry.dispose();
-        record.edgeLines.geometry = edgeGeo;
+        if (geometryChanged) {
+          const { fillGeo, edgeGeo } = this.buildExtrudedPrism(
+            cluster.hull2D,
+            cluster.zMinM,
+            cluster.zMaxM
+          );
+          record.fillMesh.geometry.dispose();
+          record.fillMesh.geometry = fillGeo;
 
-        record.labelSprite.material.map?.dispose();
-        record.labelSprite.material.map = this.createLabelTexture(cluster.label);
+          record.edgeLines.geometry.dispose();
+          record.edgeLines.geometry = edgeGeo;
+
+          record.lastHull2D = cluster.hull2D.map((p) => ({ x: p.x, y: p.y }));
+          record.lastZMinM = cluster.zMinM;
+          record.lastZMaxM = cluster.zMaxM;
+        }
+
+        // Cache cluster.label before replacing texture; skip replacement if label unchanged
+        if (record.lastLabel !== cluster.label) {
+          record.labelSprite.material.map?.dispose();
+          record.labelSprite.material.map = this.createLabelTexture(cluster.label);
+          record.lastLabel = cluster.label;
+        }
       }
 
       // Position label sprite at centroid above the envelope
