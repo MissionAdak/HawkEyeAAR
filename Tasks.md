@@ -561,5 +561,14 @@ Files: `tests/e2e/task18_trackerEstimation.spec.ts`, `MEMORY.md`, `Tasks.md`
 - [x] PNR Release Window Closed Assertion: Verified `RELEASE BLOCKED — RELEASE WINDOW CLOSED` and strict `~\d+\.\d{2} km` format matching `OperatorTrackView.estRangeM`.
 - [x] Verified Git Baseline & Release Parity: Recorded authentic feature SHA `32054cb724dc36008c58a71933e61926413a7c62` and deployed production build to `gh-pages`.
 
+### TASK-18-06D — Non-Circular Ground-Truth vs Operator-Estimate Verification & Final Documentation Closure · P0 · B/D · 1.0 h
+Files: `src/testBridge/drishtiTestBridge.ts`, `tests/e2e/task18_trackerEstimation.spec.ts`, `tests/unit/store.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] Separate Truth and Estimate Controls: Reverted circular `est.estRangeM = Math.hypot(pos.x, pos.y)` in `positionTrack()` so `positionTrack()` strictly controls Domain A ground truth. Introduced `overrideTrackEstimate()` in `DrishtiTestBridge` (whitelisted exclusively in `__DRISHTI_E2E_BUILD__`) for explicit, independent control of Domain C estimate state.
+- [x] Deliberately Different Numerical Fixture: Established Ground Truth at $(300, 300, 50) \implies 424.264\text{ m} \to 0.42\text{ km}$ and Operator Estimate at $470.0\text{ m} \to 0.47\text{ km}$. Pre-asserted numerical divergence before DOM querying.
+- [x] Track Table Non-Circular Verification: Verified `[data-testid="track-range"]` renders `0.47` (estimate) and differs from `0.42` (truth) at 2-decimal display precision.
+- [x] PNR Feedback Non-Circular Verification: Verified toast renders `Point of No Return exceeded (~0.47 km...)` and omits truth `~0.42 km`, while simulation gating enforces PNR hard-block based on ground truth range ($424.264\text{ m} \le 500\text{ m}$).
+- [x] Complete Regression Gate: 494/494 unit/integration tests and 44/44 Playwright E2E tests passing 100% green. Production deployment verified unchanged at `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`.
+
+
 
 

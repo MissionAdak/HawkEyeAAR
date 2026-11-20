@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { engineInstance, useSessionStore } from '@/store/sessionStore';
+import { engineInstance, useSessionStore, clockInstance } from '@/store/sessionStore';
 import demo1Spec from '@/director/bundled/demo1.json';
 import type { ScenarioSpec } from '@/sim/types';
 
 describe('Zustand sessionStore & InputQueue Facade', () => {
   beforeEach(() => {
+    clockInstance.reset();
     engineInstance.load(demo1Spec as unknown as ScenarioSpec);
   });
 

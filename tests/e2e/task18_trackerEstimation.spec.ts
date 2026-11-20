@@ -115,50 +115,52 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     await expect(targetRow).toBeVisible();
     await targetRow.click();
 
-    // Verify rendered track row values match estimated values from the test bridge (not ground truth)
-    const initialOpTrack = await page.evaluate((tNo) => {
+    // Phase B1 & B2: Independently control authoritative truth and operator estimate
+    // Ground Truth: position (300, 300, 50) -> truth horizontal range 424.264 m -> 0.42 km
+    // Operator Estimate: independently controlled estimate range 470.0 m -> 0.47 km
+    // Both ranges are below the 500 m PNR boundary, but their two-decimal displays differ (0.42 km vs 0.47 km)
+    await page.evaluate((tNo) => {
       const win = window as unknown as WindowWithDrishti;
-      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+      // 1. Set authoritative Domain A simulation ground truth
+      win.__DRISHTI_TEST__?.positionTrack(tNo!, { x: 300, y: 300, z: 50 });
+      // 2. Independently set Domain C operator track estimate
+      win.__DRISHTI_TEST__?.overrideTrackEstimate(tNo!, {
+        estPos: { x: 332.34, y: 332.34, z: 50 },
+        estVel: { x: 0, y: 0, z: 0 },
+        estRangeM: 470.0,
+        estBearingDeg: 45,
+        estSpeedMps: 12,
+        uncertaintyM: 20,
+        isCoasting: false,
+      });
     }, targetNo);
-    expect(initialOpTrack).toBeDefined();
 
-    const renderedRangeElem = targetRow.locator('[data-testid="track-range"]');
-    const renderedSpeedElem = targetRow.locator('[data-testid="track-speed"]');
-    await expect(renderedRangeElem).toBeVisible();
-    await expect(renderedSpeedElem).toBeVisible();
-
-    const renderedRange = (await renderedRangeElem.innerText()).trim();
-    const renderedSpeed = (await renderedSpeedElem.innerText()).trim();
-
-    expect(renderedRange).toBe((initialOpTrack!.estRangeM / 1000).toFixed(2));
-    expect(renderedSpeed).toBe(String(initialOpTrack!.estSpeedMps));
-
-    // Ensure raw ground truth coordinates or unestimated values do not appear in track row
+    // Read authoritative truth position through the E2E-only truth fixture
     const truthData = await page.evaluate((tNo) => {
       const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getTrackList().find((t) => t.trackNo === tNo);
     }, targetNo);
     expect(truthData).toBeDefined();
-    const truthRawRangeM = Math.hypot(truthData!.pos.x, truthData!.pos.y);
-    expect(renderedRange).not.toBe(truthRawRangeM.toFixed(4));
-    expect(renderedRange).not.toBe(String(truthRawRangeM));
 
-    // B1 & B3: Perform controlled test-target truth-position change (into PNR boundary < 500m)
-    await page.evaluate((tNo) => {
+    // Read the corresponding OperatorTrackView estimate
+    const opTrack = await page.evaluate((tNo) => {
       const win = window as unknown as WindowWithDrishti;
-      win.__DRISHTI_TEST__?.positionTrack(tNo!, { x: 300, y: 300, z: 50 });
+      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
     }, targetNo);
+    expect(opTrack).toBeDefined();
 
-    // Wait until track estimator processes the position update
-    await expect.poll(async () => {
-      return await page.evaluate((tNo) => {
-        const win = window as unknown as WindowWithDrishti;
-        const op = win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
-        return op && op.estRangeM < 600;
-      }, targetNo);
-    }, { timeout: 5000 }).toBe(true);
+    const truthRawRangeM = Math.hypot(truthData!.pos.x, truthData!.pos.y);
+    const truthRangeKmStr = (truthRawRangeM / 1000).toFixed(2); // "0.42"
+    const estRangeKmStr = (opTrack!.estRangeM / 1000).toFixed(2); // "0.47"
 
-    // Re-inspect Event Log after controlled position change
+    // Numerical divergence check prior to DOM assertions: prove non-circular independent estimation
+    expect(truthRawRangeM).toBeLessThan(500);
+    expect(opTrack!.estRangeM).toBeLessThan(500);
+    expect(estRangeKmStr).not.toBe(truthRangeKmStr);
+    expect(truthRangeKmStr).toBe('0.42');
+    expect(estRangeKmStr).toBe('0.47');
+
+    // Stage 2: Re-inspect Event Log after controlled position and estimator changes
     eventLogText = await eventLog.innerText();
     for (const token of forbiddenTokens) {
       expect(eventLogText).not.toContain(token);
@@ -170,42 +172,57 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     expect(eventLogText).not.toContain('droneType');
     expect(eventLogText).not.toContain('valueInr');
 
-    // Trigger effector release block on the repositioned track
+    // Phase C: Track Table DOM Proof
+    const renderedRangeElem = targetRow.locator('[data-testid="track-range"]');
+    const renderedSpeedElem = targetRow.locator('[data-testid="track-speed"]');
+    await expect(renderedRangeElem).toBeVisible();
+    await expect(renderedSpeedElem).toBeVisible();
+
+    await expect(renderedRangeElem).toHaveText(estRangeKmStr, { timeout: 5000 });
+    await expect(renderedSpeedElem).toHaveText(String(opTrack!.estSpeedMps), { timeout: 5000 });
+
+    const renderedRange = (await renderedRangeElem.innerText()).trim();
+    const renderedSpeed = (await renderedSpeedElem.innerText()).trim();
+
+    // Assert that displayed range matches the estimate and differs from truth at UI precision
+    expect(renderedRange).toBe(estRangeKmStr); // Matches estimate: "0.47"
+    expect(renderedRange).not.toBe(truthRangeKmStr); // Differs from truth: "0.47" !== "0.42"
+    expect(renderedSpeed).toBe(String(opTrack!.estSpeedMps)); // Matches estimated speed: "12"
+
+    // Ensure raw ground truth coordinates or unnormalized values do not appear in track row
+    expect(renderedRange).not.toBe(truthRawRangeM.toFixed(4));
+    expect(renderedRange).not.toBe(String(truthRawRangeM));
+
+    // Phase D: PNR Feedback DOM Proof
+    // Trigger effector release block via UI-driven keyboard command on selected track
     await targetRow.click();
     await page.keyboard.press('f');
 
-    // B3: Verify Operator Feedback Toast in DOM
     const toast = page.getByTestId('operator-feedback-toast');
     await expect(toast).toBeVisible({ timeout: 5000 });
     const toastText = await toast.innerText();
 
-    // Verify expected PNR-specific feedback and release-window-closed condition
+    // Confirm intended PNR rejection branch executed
     expect(toastText).toContain('RELEASE BLOCKED — RELEASE WINDOW CLOSED');
     expect(toastText).toContain('Point of No Return exceeded');
 
-    // Verify estimated telemetry using strict numeric format (e.g. ~0.42 km)
+    // Confirm strict format ~X.XX km
     expect(toastText).toMatch(/~\d+\.\d{2}\s*km/);
 
-    // Compare displayed estimate with the safe estimated value from the E2E bridge
-    const pnrOpTrack = await page.evaluate((tNo) => {
-      const win = window as unknown as WindowWithDrishti;
-      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
-    }, targetNo);
-    expect(pnrOpTrack).toBeDefined();
-    const expectedToastEst = `~${(pnrOpTrack!.estRangeM / 1000).toFixed(2)} km`;
-    expect(toastText).toContain(expectedToastEst);
-
-    // Verify exact truth range (Math.hypot(300, 300) = 424.264m) is NOT rendered as operator's measurement
-    const exactTruthDist = Math.hypot(300, 300);
-    expect(toastText).not.toContain(`${exactTruthDist.toFixed(3)} km`);
-    expect(toastText).not.toContain(`${exactTruthDist.toFixed(1)}m`);
+    // Confirm toast displays the estimated value (~0.47 km), NOT the truth-derived value (~0.42 km)
+    const expectedToastEst = `~${estRangeKmStr} km`;
+    const forbiddenToastTruth = `~${truthRangeKmStr} km`;
+    expect(toastText).toContain(expectedToastEst); // Contains "~0.47 km"
+    expect(toastText).not.toContain(forbiddenToastTruth); // Does NOT contain "~0.42 km"
+    expect(toastText).not.toContain(`${truthRawRangeM.toFixed(3)} km`);
+    expect(toastText).not.toContain(`${truthRawRangeM.toFixed(1)}m`);
     expect(toastText).not.toContain('424.26m');
 
     for (const token of forbiddenTokens) {
       expect(toastText).not.toContain(token);
     }
 
-    // Re-inspect Event Log after release-block action
+    // Stage 3: Re-inspect Event Log after release-block action
     eventLogText = await eventLog.innerText();
     for (const token of forbiddenTokens) {
       expect(eventLogText).not.toContain(token);
@@ -218,6 +235,12 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     });
     expect(finalAudit?.hasLeaks).toBe(false);
     expect(finalAudit?.leakedProperties).toEqual([]);
+
+    // Clear overrides to restore normal tracker behavior
+    await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      win.__DRISHTI_TEST__?.clearOverrides();
+    });
 
     await saveShot(page, 'task18_01_zero_truth_leakage_audit.png');
   });

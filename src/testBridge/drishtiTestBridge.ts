@@ -26,6 +26,16 @@ export interface DrishtiPresentationRecord {
   isCoasting?: boolean;
 }
 
+export interface TrackEstimateOverride {
+  estPos?: { x: number; y: number; z: number };
+  estVel?: { x: number; y: number; z: number };
+  estRangeM?: number;
+  estBearingDeg?: number;
+  estSpeedMps?: number;
+  uncertaintyM?: number;
+  isCoasting?: boolean;
+}
+
 export interface DrishtiTestBridge {
   isReady: () => boolean;
   getTrackList: () => Array<{ trackNo: string; pos: { x: number; y: number; z: number }; masked?: boolean }>;
@@ -69,6 +79,7 @@ export interface DrishtiTestBridge {
   setProducerHealthOverride: (health: Record<string, unknown> | null | undefined) => boolean;
   setSimTimeOverride: (timeOverride: number | 'MISSING' | 'INVALID' | null) => boolean;
   injectObservationOverride: (trackNo: string, obs: Partial<ApprovedSensorObservation> | null) => boolean;
+  overrideTrackEstimate: (trackNo: string, estimate: TrackEstimateOverride | null) => boolean;
   clearOverrides: () => void;
 }
 
@@ -99,6 +110,48 @@ export function installDrishtiTestBridge(
   let producerHealthOverride: Record<string, unknown> | null = null;
   let simTimeOverride: number | 'MISSING' | 'INVALID' | null = null;
   const observationOverrides = new Map<string, Partial<ApprovedSensorObservation> | null>();
+  const estimateOverrides = new Map<string, TrackEstimateOverride>();
+
+  const origGetTrackEstimate = engine.tracker.getTrackEstimate.bind(engine.tracker);
+  const origGetOperatorTracks = engine.tracker.getOperatorTracks.bind(engine.tracker);
+
+  engine.tracker.getTrackEstimate = (tNo: string) => {
+    const est = origGetTrackEstimate(tNo);
+    if (!est) return undefined;
+    const ovr = estimateOverrides.get(tNo);
+    if (ovr) {
+      return {
+        ...est,
+        ...(ovr.estPos ? { estPos: { ...ovr.estPos } } : {}),
+        ...(ovr.estVel ? { estVel: { ...ovr.estVel } } : {}),
+        ...(ovr.estRangeM !== undefined ? { estRangeM: ovr.estRangeM } : {}),
+        ...(ovr.estBearingDeg !== undefined ? { estBearingDeg: ovr.estBearingDeg } : {}),
+        ...(ovr.estSpeedMps !== undefined ? { estSpeedMps: ovr.estSpeedMps } : {}),
+        ...(ovr.uncertaintyM !== undefined ? { uncertaintyM: ovr.uncertaintyM } : {}),
+        ...(ovr.isCoasting !== undefined ? { isCoasting: ovr.isCoasting } : {}),
+      };
+    }
+    return est;
+  };
+
+  engine.tracker.getOperatorTracks = () => {
+    const tracks = origGetOperatorTracks();
+    if (estimateOverrides.size === 0) return tracks;
+    return tracks.map((t) => {
+      const ovr = estimateOverrides.get(t.trackNo);
+      if (!ovr) return t;
+      return {
+        ...t,
+        estPos: ovr.estPos ? { ...ovr.estPos } : t.estPos,
+        estVel: ovr.estVel ? { ...ovr.estVel } : t.estVel,
+        estRangeM: ovr.estRangeM ?? t.estRangeM,
+        estBearingDeg: ovr.estBearingDeg ?? t.estBearingDeg,
+        estSpeedMps: ovr.estSpeedMps ?? t.estSpeedMps,
+        uncertaintyM: ovr.uncertaintyM ?? t.uncertaintyM,
+        isCoasting: ovr.isCoasting ?? t.isCoasting,
+      };
+    });
+  };
 
   const bridge: DrishtiTestBridge = {
     isReady(): boolean {
@@ -140,18 +193,6 @@ export function installDrishtiTestBridge(
       entity.prev = { x: pos.x, y: pos.y, z: pos.z };
       entity.vel = { x: 0, y: 0, z: 0 };
       entity.masked = false;
-
-      // Synchronize tracker estimate in E2E test harness to avoid innovation gate outlier rejection on test teleports
-      const est = engine.tracker.getTrackEstimate(trackNo);
-      if (est) {
-        est.estPos = { x: pos.x, y: pos.y, z: pos.z };
-        est.prevEstPos = { x: pos.x, y: pos.y, z: pos.z };
-        est.estRangeM = Math.hypot(pos.x, pos.y);
-        est.estBearingDeg = Math.round((Math.atan2(pos.x, pos.y) * 180) / Math.PI + 360) % 360;
-        est.uncertaintyM = 20;
-        est.isCoasting = false;
-        est.coastingSinceMs = null;
-      }
 
       const r3d = getRenderer3D();
       if (r3d) {
@@ -264,12 +305,34 @@ export function installDrishtiTestBridge(
       return true;
     },
 
+    overrideTrackEstimate(trackNo: string, override: TrackEstimateOverride | null): boolean {
+      if (!trackNo || typeof trackNo !== 'string') return false;
+      if (override === null) {
+        estimateOverrides.delete(trackNo);
+      } else {
+        estimateOverrides.set(trackNo, override);
+        const est = origGetTrackEstimate(trackNo);
+        if (est) {
+          if (override.estPos) est.estPos = { ...override.estPos };
+          if (override.estVel) est.estVel = { ...override.estVel };
+          if (override.estRangeM !== undefined) est.estRangeM = override.estRangeM;
+          if (override.estBearingDeg !== undefined) est.estBearingDeg = override.estBearingDeg;
+          if (override.estSpeedMps !== undefined) est.estSpeedMps = override.estSpeedMps;
+          if (override.uncertaintyM !== undefined) est.uncertaintyM = override.uncertaintyM;
+          if (override.isCoasting !== undefined) est.isCoasting = override.isCoasting;
+        }
+      }
+      useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
+      return true;
+    },
+
     clearOverrides(): void {
       sensorHealthOverride = null;
       hasProducerHealthOverride = false;
       producerHealthOverride = null;
       simTimeOverride = null;
       observationOverrides.clear();
+      estimateOverrides.clear();
     },
 
     getPresentationState(trackNo?: string): {
@@ -615,6 +678,8 @@ export function installDrishtiTestBridge(
 
   return () => {
     if (window.__DRISHTI_TEST__ === bridge) {
+      engine.tracker.getTrackEstimate = origGetTrackEstimate;
+      engine.tracker.getOperatorTracks = origGetOperatorTracks;
       window.__DRISHTI_TEST__ = null;
     }
   };
