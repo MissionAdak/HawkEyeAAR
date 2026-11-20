@@ -8,7 +8,7 @@
 3. §5 — add a bug-log row for every bug fixed, with its regression test; add a new `T-xx` trap when you discover one.
 4. Use the sprint hour marker (`H12`, `H26`, …) as the timestamp. Never delete history; append.
 
-Last updated: **TASK 19-A** (Acceptance Evidence Remediation & Final Verification; feature branch `feature/optional-threejs-3d` at commit `46738414f93df52143214d72d9e959f5a280f0aa`, deployment HEAD `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4` preserved; all 42 Vitest test files with 526 unit tests passing 100%; full Playwright E2E suite with 46 tests passing across all 9 test suites; unkeyed SHA-256 canonical export checksum verified; 2D/3D safe projection boundary confirmed with zero ground-truth exposure; 38 legacy screenshots restored to commit `24563753f962ab229e3387a7eac1d0c0bcd94d54`).
+Last updated: **TASK 19-A** (Acceptance Evidence Remediation & Final Verification; feature branch `feature/optional-threejs-3d` at commit `da774fdad9833a40d35ec32f7528eafda7a37aec`, deployment HEAD `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4` preserved; all 42 Vitest test files with 526 unit tests passing 100%; full Playwright E2E suite with 46 tests passing across all 9 test suites; unkeyed SHA-256 canonical export checksum verified; 2D/3D safe projection boundary confirmed with zero ground-truth exposure; 38 legacy screenshots restored to commit `24563753f962ab229e3387a7eac1d0c0bcd94d54`).
 
 ---
 
