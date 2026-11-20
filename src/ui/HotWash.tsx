@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useSessionStore, engineInstance } from '@/store/sessionStore';
+import { useSessionStore, engineInstance, getActiveRecorder } from '@/store/sessionStore';
+import { exportSessionJson, exportSessionCsv } from '@/db/io';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
@@ -72,7 +73,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+    <div data-testid="aar-modal" className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none">
       <div className="w-[960px] max-h-[90vh] bg-carbon-900 border border-line flex flex-col font-mono text-xs overflow-hidden">
         {/* Modal Header */}
         <div className="h-[42px] px-4 border-b border-line bg-carbon-800/80 flex items-center justify-between">
@@ -442,6 +443,28 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
           </div>
 
           <div className="flex gap-2 items-center">
+            <button
+              onClick={() => {
+                const sessionUid = getActiveRecorder()?.getSessionUid() ?? metrics.sessionUid;
+                void exportSessionJson(sessionUid);
+              }}
+              data-testid="aar-export-json-btn"
+              className="px-2.5 py-1 font-display font-semibold text-[11px] border border-line hover:border-phosphor text-text-dim hover:text-phosphor transition-colors"
+              title="Export AAR Session JSON with SHA-256 Checksum"
+            >
+              [X] EXPORT JSON
+            </button>
+            <button
+              onClick={() => {
+                const sessionUid = getActiveRecorder()?.getSessionUid() ?? metrics.sessionUid;
+                void exportSessionCsv(sessionUid);
+              }}
+              data-testid="aar-export-csv-btn"
+              className="px-2.5 py-1 font-display font-semibold text-[11px] border border-line hover:border-phosphor text-text-dim hover:text-phosphor transition-colors"
+              title="Export AAR Session CSV"
+            >
+              [C] EXPORT CSV
+            </button>
             <button
               onClick={() => {
                 onClose();

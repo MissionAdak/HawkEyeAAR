@@ -1,5 +1,6 @@
 
 import { db, type StoredSimEvent } from './dexie';
+import { getRecordedEventsForSession, addFallbackEventsForTest } from './recorder';
 import type { SimEvent, SimEventType } from '@/sim/types';
 
 const FORMAT = 'drishti-aar-events';
@@ -111,6 +112,9 @@ function downloadFile(
   filename: string,
   mimeType: string,
 ): void {
+  if (typeof document === 'undefined' || typeof URL?.createObjectURL !== 'function') {
+    return;
+  }
   const blob = new Blob([contents], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -122,13 +126,10 @@ function downloadFile(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function exportSessionJson(
+export async function createSessionJsonPayload(
   sessionUid: string,
-): Promise<void> {
-  const stored = await db.events
-    .where('sessionUid')
-    .equals(sessionUid)
-    .sortBy('seq');
+): Promise<AARTransferPayload> {
+  const stored = await getRecordedEventsForSession(sessionUid);
 
   const events: SimEvent[] = stored.map((event) => ({
     seq: event.seq,
@@ -142,7 +143,7 @@ export async function exportSessionJson(
 
   const checksum = await sha256(stableJson({ sessionUid, events }));
 
-  const transfer: AARTransferPayload = {
+  return {
     format: FORMAT,
     version: VERSION,
     sessionUid,
@@ -151,6 +152,12 @@ export async function exportSessionJson(
     events,
     sha256: checksum,
   };
+}
+
+export async function exportSessionJson(
+  sessionUid: string,
+): Promise<void> {
+  const transfer = await createSessionJsonPayload(sessionUid);
 
   downloadFile(
     JSON.stringify(transfer, null, 2),
@@ -171,13 +178,10 @@ function csvCell(value: unknown): string {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-export async function exportSessionCsv(
+export async function createSessionCsvString(
   sessionUid: string,
-): Promise<void> {
-  const events = await db.events
-    .where('sessionUid')
-    .equals(sessionUid)
-    .sortBy('seq');
+): Promise<string> {
+  const events = await getRecordedEventsForSession(sessionUid);
 
   const headers = [
     'sessionUid', 'seq', 'tMs', 'tRawMs', 'type',
@@ -195,10 +199,16 @@ export async function exportSessionCsv(
     stableJson(event.payload),
   ]);
 
-  const csv = [
+  return [
     headers.map(csvCell).join(','),
     ...rows.map((row) => row.map(csvCell).join(',')),
   ].join('\r\n');
+}
+
+export async function exportSessionCsv(
+  sessionUid: string,
+): Promise<void> {
+  const csv = await createSessionCsvString(sessionUid);
 
   downloadFile(
     `\uFEFF${csv}`,
@@ -263,10 +273,12 @@ export async function importSessionJson(
     uniqueKeys.add(key);
   }
 
-  const existing = await db.events
-    .where('sessionUid')
-    .equals(raw.sessionUid)
-    .toArray();
+  const existing = typeof indexedDB === 'undefined'
+    ? await getRecordedEventsForSession(raw.sessionUid)
+    : await db.events
+        .where('sessionUid')
+        .equals(raw.sessionUid)
+        .toArray();
 
   const existingBySeq = new Map(
     existing.map((event) => [eventKey(event), event]),
@@ -303,17 +315,21 @@ export async function importSessionJson(
 
   // Validate conflicts before writing. Use a transaction so the import
   // is atomic if a database write fails.
-  await db.transaction('rw', db.events, async () => {
-    for (
-      let index = 0;
-      index < pending.length;
-      index += IMPORT_BATCH_SIZE
-    ) {
-      await db.events.bulkAdd(
-        pending.slice(index, index + IMPORT_BATCH_SIZE),
-      );
-    }
-  });
+  if (typeof indexedDB === 'undefined') {
+    addFallbackEventsForTest(pending);
+  } else {
+    await db.transaction('rw', db.events, async () => {
+      for (
+        let index = 0;
+        index < pending.length;
+        index += IMPORT_BATCH_SIZE
+      ) {
+        await db.events.bulkAdd(
+          pending.slice(index, index + IMPORT_BATCH_SIZE),
+        );
+      }
+    });
+  }
 return {
   imported: pending.length,
   duplicates,

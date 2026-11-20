@@ -361,6 +361,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     engineInstance.events = [];
     engineInstance.tickIndex = 0;
     engineInstance.selectedTrackNo = null;
+    engineInstance.tracker.clear();
+    engineInstance.rfMeasurements = [];
+    activeRecorder = null;
     clockInstance.reset();
     set({
       sessionStatus: 'READY',

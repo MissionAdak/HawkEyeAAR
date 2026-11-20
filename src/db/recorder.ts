@@ -127,6 +127,10 @@ export function clearFallbackEventsForTest(): void {
   inMemoryFallbackEvents.length = 0;
 }
 
+export function addFallbackEventsForTest(events: StoredSimEvent[]): void {
+  inMemoryFallbackEvents.push(...events);
+}
+
 export function setMockPersistenceFailureForTest(fail: boolean): void {
   mockPersistenceFailure = fail;
 }

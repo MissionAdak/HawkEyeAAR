@@ -8,7 +8,7 @@
 3. §5 — add a bug-log row for every bug fixed, with its regression test; add a new `T-xx` trap when you discover one.
 4. Use the sprint hour marker (`H12`, `H26`, …) as the timestamp. Never delete history; append.
 
-Last updated: **TASK 18-06E** (Test Override State Restoration & Final Task 18 Closure; feature branch `feature/optional-threejs-3d`, starting feature HEAD `4be60f7e1501d6bc0808e8fe447527e341b0ebd5`, deployment HEAD `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`; all 39 test files with 495 unit/golden tests passing; full Playwright E2E suite with 44 tests passing across all 8 test suites).
+Last updated: **TASK 19** (End-to-End Scenario Integrity, Deterministic Replay & Training Validation; feature branch `feature/optional-threejs-3d`, deployment HEAD `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4` preserved; all 42 Vitest test files with 518 tests passing; full Playwright E2E suite with 46 tests passing across all 9 test suites).
 
 ---
 
@@ -84,6 +84,7 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 - [x] TASK 18-06C — Final DOM Acceptance Hardening, Git Reference Reconciliation & Release Parity [VERIFIED]
 - [x] TASK 18-06D — Non-Circular Ground-Truth vs Operator-Estimate Verification & Final Documentation Closure [VERIFIED; 494 unit tests, 44 Playwright E2E tests passing 100% green]
 - [x] TASK 18-06E — Test Override State Restoration & Final Task 18 Closure [VERIFIED; pure overlay test bridge, unmutated underlying estimator, input validation, clean clearOverrides restoration, prototype recovery upon uninstallation, dedicated lifecycle test suite, and verified post-clear E2E restoration; all 39 test files with 495 unit tests and 44 Playwright E2E tests passing 100% green]
+- [x] TASK 19 — End-to-End Scenario Integrity, Deterministic Replay & Training Validation [VERIFIED; complete scenario lifecycle across all 8 catalog scenarios, 2-in-3 track initiation, Alpha-Beta track estimation, urban terrain masking, chaos sensor degradation/recovery, ROE release gating, PNR hard-block, scoring integer boundaries 49/50/69/70, 6x8 confusion matrix, bit-identical seed determinism, 2D/3D presentation layer isolation, variable frame pacing invariance (30/60/144 Hz), event-sourced replay, JSON/CSV exports with SHA-256 verification and tampering rejection, HotWash export buttons; all 42 Vitest test files with 518 tests and 46 Playwright E2E tests across 9 suites passing 100% green]
 
 ### 2.3 Known technical debt & architectural limitations
 

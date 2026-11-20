@@ -215,7 +215,7 @@ export function installDrishtiTestBridge(
 
     getTrackList(): Array<{ trackNo: string; pos: { x: number; y: number; z: number }; masked?: boolean }> {
       return engine.curr
-        .filter((e) => e.trackNo && e.lifecycle === 'ACTIVE')
+        .filter((e) => e.trackNo && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED'))
         .map((e) => ({
           trackNo: e.trackNo!,
           pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
