@@ -26,6 +26,11 @@ describe('Target 3D Models & Ground-Truth Protection (Task 17 Phase 1)', () => {
       'FRIENDLY',
       'BIRD',
       'UNKNOWN',
+      'LOITERING_MUNITION',
+      'RADAR_SYMBOL',
+      'UNKNOWN_AIRFRAME',
+      'OBSERVED_MULTIROTOR',
+      'OBSERVED_FIXED_WING',
     ];
 
     it.each(categories)('generates robust 3D model for category %s', (cat) => {

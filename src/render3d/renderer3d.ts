@@ -8,11 +8,13 @@ import type {
   SensorCoverageState,
   EffectorVisualOptions,
   EnvironmentObjectInfo,
+  TargetDisplayMode,
 } from './types';
 import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent } from '@/sim/types';
 import { attachContextLossHandler } from './capability';
 import { toThree } from './coords';
 import { getScenarioEnvironmentDescriptor } from './environment';
+import type { SensorObservationContext } from './targets';
 
 export interface Renderer3DOptions extends Scene3DOptions {
   onContextLost?: () => void;
@@ -49,6 +51,8 @@ export class Renderer3D {
   private showLos: boolean = true;
   private showClusters: boolean = true;
   private showTrainingAid: boolean = false;
+  private targetDisplayMode: TargetDisplayMode = 'AUTO';
+  private activeSensor: SensorMode = 'RADAR';
   private readonly options: Renderer3DOptions;
 
   public setTrackProvider(fn: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null }): void {
@@ -100,6 +104,22 @@ export class Renderer3D {
 
   public setOnSelectEnvironment(fn: (info: EnvironmentObjectInfo | null) => void): void {
     this.onSelectEnvironmentCallback = fn;
+  }
+
+  public setTargetDisplayMode(mode: TargetDisplayMode): void {
+    this.targetDisplayMode = mode;
+  }
+
+  public getTargetDisplayMode(): TargetDisplayMode {
+    return this.targetDisplayMode;
+  }
+
+  public setActiveSensor(sensor: SensorMode): void {
+    this.activeSensor = sensor;
+  }
+
+  public getActiveSensor(): SensorMode {
+    return this.activeSensor;
   }
 
   public get dragging(): boolean {
@@ -432,7 +452,16 @@ export class Renderer3D {
    */
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
     this.selectedTrackNo = selectedTrackNo;
-    this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height);
+    const observationContext: SensorObservationContext = {
+      activeSensor: this.activeSensor,
+      displayMode: this.targetDisplayMode,
+      weather: this.scene3d.getEnvironmentManager().isFogActive()
+        ? 'FOG'
+        : (this.scene3d.getEnvironmentManager().getDescriptor().weather ?? 'CLEAR'),
+      isNight: this.scene3d.getEnvironmentManager().isNightTime(),
+      mode: this.options.mode,
+    };
+    this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height, observationContext);
   }
 
   /**

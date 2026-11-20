@@ -199,19 +199,44 @@ export function createAircraftHitProxyGeometry(): THREE.BufferGeometry {
 
 /**
  * Computes the distance-dependent / screen-space scale factor for an aircraft at targetDistance
- * so that its apparent screen-space silhouette stays within [24, 40] CSS pixels across all zoom levels.
+ * so that its apparent screen-space silhouette stays readable across all zoom levels.
+ *
+ * Implements tiered bounded scaling (Task 17.2 §9):
+ * 1. Close inspection (< 600m): bounded [2.5, 25] to prevent enormous ballooning at close zoom.
+ * 2. Normal tactical (600m - 3500m): bounded [12, 75] for recognizable silhouettes.
+ * 3. Overview (> 3500m): bounded [25, 130] so contacts remain distinct at 1366x768 viewports.
  */
 export function calculateScreenSpaceScale(
   cameraFovDeg: number,
   targetDistanceM: number,
   viewportHeightPx: number = 520,
-  targetPixelSize: number = TARGET_PIXEL_SIZE
+  targetPixelSize: number = TARGET_PIXEL_SIZE,
+  tiered: boolean = false
 ): number {
   const fovRad = (cameraFovDeg * Math.PI) / 180;
   const metersPerPixel = (2 * targetDistanceM * Math.tan(fovRad / 2)) / Math.max(1, viewportHeightPx);
   const targetWorldSize = targetPixelSize * metersPerPixel;
-  const scale = targetWorldSize / BASE_WINGSPAN_M;
-  return Math.max(MIN_AIRCRAFT_SCALE, Math.min(MAX_AIRCRAFT_SCALE, scale));
+  const rawScale = targetWorldSize / BASE_WINGSPAN_M;
+
+  if (tiered) {
+    let minScale = MIN_AIRCRAFT_SCALE;
+    let maxScale = MAX_AIRCRAFT_SCALE;
+
+    if (targetDistanceM < 600) {
+      minScale = 2.5;
+      maxScale = 25;
+    } else if (targetDistanceM <= 3500) {
+      minScale = 12;
+      maxScale = 75;
+    } else {
+      minScale = 25;
+      maxScale = 130;
+    }
+
+    return Math.max(minScale, Math.min(maxScale, rawScale));
+  }
+
+  return Math.max(MIN_AIRCRAFT_SCALE, Math.min(MAX_AIRCRAFT_SCALE, rawScale));
 }
 
 /**

@@ -12,10 +12,11 @@ import { MissionBriefing } from './MissionBriefing';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EnvironmentInspector } from './EnvironmentInspector';
 import { OperatorFeedbackToast } from './OperatorFeedbackToast';
+import { TargetRecognitionModal } from './TargetRecognitionModal';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
-import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo } from '@/render3d/types';
+import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo, TargetDisplayMode } from '@/render3d/types';
 import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
@@ -43,6 +44,7 @@ function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null):
       ghostSigmaM: e.ghostSigmaM,
       isSelected: e.trackNo === selectedTrackNo,
       lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+      observedAirframe: e.droneType,
     }));
 }
 
@@ -94,6 +96,7 @@ interface ThreeDViewportControlsProps {
   showClusters: boolean;
   showTrainingAid: boolean;
   showCrossSection: boolean;
+  targetDisplayMode: TargetDisplayMode;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   onCameraPreset: (p: CameraPreset) => void;
   onToggleEnvelopes: () => void;
@@ -101,6 +104,8 @@ interface ThreeDViewportControlsProps {
   onToggleClusters: () => void;
   onToggleTrainingAid: () => void;
   onToggleCrossSection: () => void;
+  onTargetDisplayMode: (m: TargetDisplayMode) => void;
+  onOpenRecogModal: () => void;
 }
 
 const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
@@ -110,6 +115,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
   showClusters,
   showTrainingAid,
   showCrossSection,
+  targetDisplayMode,
   mode,
   onCameraPreset,
   onToggleEnvelopes,
@@ -117,6 +123,8 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
   onToggleClusters,
   onToggleTrainingAid,
   onToggleCrossSection,
+  onTargetDisplayMode,
+  onOpenRecogModal,
 }) => {
   return (
     <>
@@ -133,6 +141,45 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
           {preset === 'POST' ? 'POST' : `[${preset[0]}] ${preset}`}
         </button>
       ))}
+
+      {(['AUTO', 'RADAR', 'AIRFRAME'] as const).map((dm) => (
+        <button
+          key={dm}
+          onClick={() => onTargetDisplayMode(dm)}
+          title={
+            dm === 'AUTO'
+              ? 'Sensor-Auto Target Display (Adapts to Active Sensor & Optical Environment)'
+              : dm === 'RADAR'
+              ? 'Force Radar Contact Symbols'
+              : 'Observed Airframe Silhouettes (Permitted only when optically observed)'
+          }
+          className={`px-2 py-0.5 border transition-colors ${
+            targetDisplayMode === dm
+              ? 'border-amber text-amber bg-amber/20 font-bold'
+              : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+          }`}
+        >
+          {dm === 'AUTO' ? 'TGT:AUTO' : dm === 'RADAR' ? 'TGT:RADAR' : 'TGT:AIR'}
+        </button>
+      ))}
+
+      {mode === 'EVAL' ? (
+        <button
+          disabled
+          title="Target Recognition Guide locked during EVALUATION exercise (Rule F5)"
+          className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+        >
+          RECOG (EVAL LOCK)
+        </button>
+      ) : (
+        <button
+          onClick={onOpenRecogModal}
+          title="Open C-UAS Target Recognition Manual & Threat Taxonomy [M]"
+          className="px-2 py-0.5 border border-amber/70 text-amber bg-carbon-900/80 hover:bg-amber hover:text-carbon-950 font-bold transition-colors"
+        >
+          RECOG GUIDE
+        </button>
+      )}
 
       <button
         onClick={onToggleEnvelopes}
@@ -217,6 +264,7 @@ interface TacticalViewportTabsProps {
   showClusters: boolean;
   showTrainingAid: boolean;
   showCrossSection: boolean;
+  targetDisplayMode: TargetDisplayMode;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   currentScenarioId: string;
   onOpenScenarioModal: () => void;
@@ -227,6 +275,8 @@ interface TacticalViewportTabsProps {
   onToggleClusters: () => void;
   onToggleTrainingAid: () => void;
   onToggleCrossSection: () => void;
+  onTargetDisplayMode: (m: TargetDisplayMode) => void;
+  onOpenRecogModal: () => void;
   onToggleViewMode: () => void;
   onEnterVr: () => void;
 }
@@ -240,6 +290,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   showClusters,
   showTrainingAid,
   showCrossSection,
+  targetDisplayMode,
   mode,
   currentScenarioId,
   onOpenScenarioModal,
@@ -250,6 +301,8 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   onToggleClusters,
   onToggleTrainingAid,
   onToggleCrossSection,
+  onTargetDisplayMode,
+  onOpenRecogModal,
   onToggleViewMode,
   onEnterVr,
 }) => {
@@ -277,6 +330,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
           showClusters={showClusters}
           showTrainingAid={showTrainingAid}
           showCrossSection={showCrossSection}
+          targetDisplayMode={targetDisplayMode}
           mode={mode}
           onCameraPreset={onCameraPreset}
           onToggleEnvelopes={onToggleEnvelopes}
@@ -284,6 +338,8 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
           onToggleClusters={onToggleClusters}
           onToggleTrainingAid={onToggleTrainingAid}
           onToggleCrossSection={onToggleCrossSection}
+          onTargetDisplayMode={onTargetDisplayMode}
+          onOpenRecogModal={onOpenRecogModal}
         />
       )}
 
@@ -361,6 +417,9 @@ export const Console: React.FC = () => {
     setShowTrainingAid((prev) => !prev);
   };
 
+  const [targetDisplayMode, setTargetDisplayMode] = useState<TargetDisplayMode>('AUTO');
+  const [isRecogModalOpen, setIsRecogModalOpen] = useState<boolean>(false);
+
   useEffect(() => {
     renderer3dRef.current?.setShowLos(showLos);
   }, [showLos]);
@@ -374,6 +433,10 @@ export const Console: React.FC = () => {
     engineInstance.trainingAidActive = showTrainingAid;
   }, [showTrainingAid]);
 
+  useEffect(() => {
+    renderer3dRef.current?.setTargetDisplayMode(targetDisplayMode);
+  }, [targetDisplayMode]);
+
   const toggleCrossSection = () => {
     if (engineInstance.mode === 'EVAL') {
       return;
@@ -382,6 +445,11 @@ export const Console: React.FC = () => {
   };
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
+
+  useEffect(() => {
+    renderer3dRef.current?.setActiveSensor(activeSensor);
+  }, [activeSensor]);
+
   const recentEvents = useSessionStore((s) => s.ui.recentEvents);
   const setSensor = useSessionStore((s) => s.setSensor);
   const designate = useSessionStore((s) => s.designate);
@@ -548,6 +616,8 @@ export const Console: React.FC = () => {
     r3d.setShowLos(showLos);
     r3d.setShowClusters(showClusters);
     r3d.setLowFidelity(lowFi);
+    r3d.setTargetDisplayMode(targetDisplayMode);
+    r3d.setActiveSensor(activeSensor);
     renderer3dRef.current = r3d;
     if (typeof window !== 'undefined') {
       (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
@@ -785,6 +855,7 @@ export const Console: React.FC = () => {
               showClusters={showClusters}
               showTrainingAid={showTrainingAid}
               showCrossSection={showCrossSection}
+              targetDisplayMode={targetDisplayMode}
               mode={engineInstance.mode}
               currentScenarioId={currentScenarioId}
               onOpenScenarioModal={openScenarioModal}
@@ -795,6 +866,8 @@ export const Console: React.FC = () => {
               onToggleClusters={toggleClusters}
               onToggleTrainingAid={toggleTrainingAid}
               onToggleCrossSection={toggleCrossSection}
+              onTargetDisplayMode={setTargetDisplayMode}
+              onOpenRecogModal={() => setIsRecogModalOpen(true)}
               onToggleViewMode={toggleViewMode}
               onEnterVr={handleOpenVr}
             />
@@ -962,6 +1035,9 @@ export const Console: React.FC = () => {
 
       {/* 12. Intelligent Operator Tactical Feedback HUD Toast */}
       <OperatorFeedbackToast />
+
+      {/* 13. C-UAS Target Recognition Manual & Threat Taxonomy Modal */}
+      {isRecogModalOpen && <TargetRecognitionModal onClose={() => setIsRecogModalOpen(false)} />}
     </div>
   );
 };

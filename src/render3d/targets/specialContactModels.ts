@@ -168,3 +168,114 @@ export function buildUnknownContactModel(palette: TargetModelPalette): BuiltTarg
     disposables: { geometries, materials },
   };
 }
+
+/**
+ * 4. Tactical Radar Contact Symbol (RADAR_SYMBOL).
+ * Features:
+ * - High-contrast tactical radar diamond reticle with central echo pip.
+ * - Altitude drop stem anchor.
+ * - Clear screen-space hit target.
+ * - Used when RADAR is active and no visual observation supports an optical model.
+ */
+export function buildRadarContactSymbolModel(palette: TargetModelPalette): BuiltTargetModel {
+  const group = new THREE.Group();
+  group.name = 'Target_Radar_Symbol';
+  const geometries: THREE.BufferGeometry[] = [];
+  const materials: THREE.Material[] = [];
+
+  // Outer diamond reticle
+  const diamondPts = [
+     0.0, 0.0, -1.5,
+     1.5, 0.0,  0.0,
+     1.5, 0.0,  0.0,
+     0.0, 0.0,  1.5,
+     0.0, 0.0,  1.5,
+    -1.5, 0.0,  0.0,
+    -1.5, 0.0,  0.0,
+     0.0, 0.0, -1.5,
+  ];
+  const diamondGeom = new THREE.BufferGeometry();
+  diamondGeom.setAttribute('position', new THREE.Float32BufferAttribute(diamondPts, 3));
+  geometries.push(diamondGeom);
+  const bodyMesh = new THREE.LineSegments(diamondGeom, palette.accent as unknown as THREE.Material) as unknown as THREE.Mesh;
+  group.add(bodyMesh);
+
+  // Center radar return blip / pip
+  const pipGeom = new THREE.SphereGeometry(0.42, 8, 6);
+  geometries.push(pipGeom);
+  const accentMesh = new THREE.Mesh(pipGeom, palette.accent);
+  group.add(accentMesh);
+
+  // Outer radar range / velocity heading tick
+  const tickPts = [0.0, 0.0, -1.5, 0.0, 0.0, -2.6];
+  const tickGeom = new THREE.BufferGeometry();
+  tickGeom.setAttribute('position', new THREE.Float32BufferAttribute(tickPts, 3));
+  geometries.push(tickGeom);
+  const tickLine = new THREE.Line(tickGeom, palette.accent);
+  group.add(tickLine);
+
+  // Generous hit proxy (3.2m radius) for effortless raycast picking
+  const hitGeom = new THREE.SphereGeometry(3.2, 8, 6);
+  geometries.push(hitGeom);
+  const hitProxy = new THREE.Mesh(hitGeom, palette.hitProxy);
+  group.add(hitProxy);
+
+  return {
+    category: 'RADAR_SYMBOL',
+    group,
+    bodyMesh,
+    accentMesh,
+    hitProxy,
+    disposables: { geometries, materials },
+  };
+}
+
+/**
+ * 5. Generic Unresolved Air-Contact Silhouette (UNKNOWN_AIRFRAME).
+ * Features:
+ * - Sleek generic aerodynamic lifting body with stubby delta wings.
+ * - Used during partial visual observation (e.g. distant EO/IR or degraded fog)
+ *   where an airborne craft is visually confirmed but subtype remains unresolved.
+ */
+export function buildUnresolvedAirframeModel(palette: TargetModelPalette): BuiltTargetModel {
+  const group = new THREE.Group();
+  group.name = 'Target_Unresolved_Airframe';
+  const geometries: THREE.BufferGeometry[] = [];
+  const materials: THREE.Material[] = [];
+
+  // Fuselage pod
+  const podGeom = new THREE.ConeGeometry(0.35, 1.8, 6);
+  podGeom.rotateX(-Math.PI / 2);
+  geometries.push(podGeom);
+  const bodyMesh = new THREE.Mesh(podGeom, palette.body);
+  group.add(bodyMesh);
+
+  // Stubby wings
+  const wingGeom = new THREE.BoxGeometry(2.2, 0.06, 0.5);
+  geometries.push(wingGeom);
+  const wingMesh = new THREE.Mesh(wingGeom, palette.body);
+  wingMesh.position.set(0, 0.02, 0.1);
+  group.add(wingMesh);
+
+  // Nose optical sensor bubble (accent)
+  const noseGeom = new THREE.SphereGeometry(0.18, 6, 6);
+  geometries.push(noseGeom);
+  const accentMesh = new THREE.Mesh(noseGeom, palette.accent);
+  accentMesh.position.set(0, 0, -0.92);
+  group.add(accentMesh);
+
+  // Hit Proxy
+  const hitGeom = new THREE.SphereGeometry(2.8, 8, 6);
+  geometries.push(hitGeom);
+  const hitProxy = new THREE.Mesh(hitGeom, palette.hitProxy);
+  group.add(hitProxy);
+
+  return {
+    category: 'UNKNOWN_AIRFRAME',
+    group,
+    bodyMesh,
+    accentMesh,
+    hitProxy,
+    disposables: { geometries, materials },
+  };
+}

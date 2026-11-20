@@ -16,7 +16,12 @@ export type TargetModelCategory =
   | 'SWARM_ELEMENT'
   | 'CIVIL_UAS'
   | 'FRIENDLY'
-  | 'BIRD';
+  | 'BIRD'
+  | 'LOITERING_MUNITION'
+  | 'RADAR_SYMBOL'
+  | 'UNKNOWN_AIRFRAME'
+  | 'OBSERVED_MULTIROTOR'
+  | 'OBSERVED_FIXED_WING';
 
 export interface BuiltTargetModel {
   category: TargetModelCategory;

@@ -17,7 +17,7 @@ import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent } from '@/si
 import { EnvironmentManager, getScenarioEnvironmentDescriptor } from './environment';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
 import { TargetModelFactory, resolveTargetModelCategory } from './targets';
-import type { TargetModelCategory, BuiltTargetModel } from './targets';
+import type { TargetModelCategory, BuiltTargetModel, SensorObservationContext } from './targets';
 import { EngagementEffectManager } from './effects';
 import type { EngagementEffectContext } from './effects';
 import { RadarSweep3D } from './radarSweep3d';
@@ -49,6 +49,7 @@ export interface TrackMeshRecord {
   lastHeadingRad: number;
   currentCategory?: TargetModelCategory;
   targetModelInstance?: BuiltTargetModel;
+  currentLabelText?: string;
 }
 
 export class Scene3D {
@@ -476,6 +477,12 @@ export class Scene3D {
   }
 
   private applyTrackSymbology(record: TrackMeshRecord, traineeLabel: TrackClass | null): void {
+    // If contact is RADAR_SYMBOL, maintain tactical blip amber color
+    if (record.currentCategory === 'RADAR_SYMBOL') {
+      record.accentMesh.material = this.sharedMaterials.unknown;
+      return;
+    }
+
     if (traineeLabel === 'FRIENDLY') {
       record.accentMesh.material = this.sharedMaterials.friend;
     } else if (traineeLabel === 'CIVIL_UAS') {
@@ -488,6 +495,62 @@ export class Scene3D {
       record.accentMesh.material = this.sharedMaterials.threat;
     } else {
       record.accentMesh.material = this.sharedMaterials.unknown;
+    }
+  }
+
+  private updateLabelSprite(record: TrackMeshRecord, track: SafeTrackView): void {
+    const label = track.traineeLabel;
+    let labelTag = 'NON';
+    let colorHex = '#FFCC00';
+
+    if (label === 'FRIENDLY') {
+      labelTag = 'FRIEND';
+      colorHex = '#00CCFF';
+    } else if (label === 'CIVIL_UAS') {
+      labelTag = 'CIVIL';
+      colorHex = '#00FF66';
+    } else if (label === 'BIRD') {
+      labelTag = 'BIRD';
+      colorHex = '#8A99A8';
+    } else if (
+      label === 'HOSTILE_ATTACK' ||
+      label === 'HOSTILE_ISR' ||
+      label === 'SWARM_ELEMENT'
+    ) {
+      labelTag = label === 'HOSTILE_ATTACK' ? 'H-ATK' : label === 'HOSTILE_ISR' ? 'H-ISR' : 'SWARM';
+      colorHex = '#FF3333';
+    }
+
+    const text = `${track.trackNo} [${labelTag}]`;
+    if (record.currentLabelText === text) {
+      return;
+    }
+    record.currentLabelText = text;
+
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = 'rgba(13, 17, 23, 0.85)';
+        ctx.fillRect(0, 0, 128, 32);
+        ctx.strokeStyle = colorHex;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, 126, 30);
+        ctx.font = 'bold 15px monospace';
+        ctx.fillStyle = colorHex;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 64, 16);
+      }
+      const newTexture = new THREE.CanvasTexture(canvas);
+      newTexture.minFilter = THREE.LinearFilter;
+      if (record.labelSprite.material.map) {
+        record.labelSprite.material.map.dispose();
+      }
+      record.labelSprite.material.map = newTexture;
+      record.labelSprite.material.needsUpdate = true;
     }
   }
 
@@ -529,19 +592,22 @@ export class Scene3D {
     tracks: SafeTrackView[],
     selectedTrackNo: string | null,
     camera?: THREE.Camera,
-    viewportHeight: number = 520
+    viewportHeight: number = 520,
+    observationContext?: SensorObservationContext
   ): void {
     const activeTrackNos = new Set<string>();
 
     for (const track of tracks) {
       activeTrackNos.add(track.trackNo);
-      const targetCategory = resolveTargetModelCategory(track);
+      const targetCategory = resolveTargetModelCategory(track, {
+        context: observationContext,
+      });
       let record = this.trackMeshMap.get(track.trackNo);
 
       if (!record) {
         record = this.getOrCreateTrackRecord(track.trackNo, targetCategory);
       } else if (record.currentCategory !== targetCategory) {
-        // Trainee classification changed -> swap procedural model
+        // Observation / classification state changed -> swap procedural model
         if (record.targetModelInstance) {
           record.aircraftGroup.remove(record.targetModelInstance.group);
         }
@@ -570,7 +636,7 @@ export class Scene3D {
       } else if (camera) {
         distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
       }
-      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, 32);
+      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, 32, true);
 
       // Derive orientation from safe velocity vector with stable fallback
       const { headingRad, pitchRad } = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
@@ -578,8 +644,9 @@ export class Scene3D {
       record.aircraftGroup.rotation.set(pitchRad, -headingRad, 0, 'YXZ');
       record.aircraftGroup.scale.set(scale, scale, scale);
 
-      // Symbology on accent mesh
+      // Symbology on accent mesh & separate label badge
       this.applyTrackSymbology(record, track.traineeLabel);
+      this.updateLabelSprite(record, track);
 
       const isSelected = track.trackNo === selectedTrackNo || track.isSelected;
       if (record.selectionBox) {

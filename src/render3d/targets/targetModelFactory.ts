@@ -6,7 +6,14 @@ import {
   buildSwarmElementModel,
   buildCivilUasModel,
 } from './multirotorModels';
-import { buildFriendlyUasModel, buildBirdModel, buildUnknownContactModel } from './specialContactModels';
+import {
+  buildFriendlyUasModel,
+  buildBirdModel,
+  buildUnknownContactModel,
+  buildRadarContactSymbolModel,
+  buildUnresolvedAirframeModel,
+} from './specialContactModels';
+import { buildLoiteringMunitionModel } from './fixedWingModels';
 
 // Tactical NATO-inspired colors (Rule R3.4)
 const COLOR_THREAT = 0xff3b30;    // Hostile crimson
@@ -74,6 +81,29 @@ export class TargetModelFactory {
         const accent = this.getMaterial('accent_bird', () => new THREE.MeshBasicMaterial({ color: 0x48525e }));
         return { body, accent, hitProxy: this.hitProxyMaterial };
       }
+      case 'LOITERING_MUNITION':
+      case 'OBSERVED_FIXED_WING': {
+        const body = this.getMaterial('body_fixedwing', () => new THREE.MeshLambertMaterial({ color: 0x1e2329 }));
+        const accent = this.getMaterial('accent_fixedwing', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
+        const rotors = this.getMaterial('rotors_fixedwing', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 }));
+        return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
+      }
+      case 'OBSERVED_MULTIROTOR': {
+        const body = this.getMaterial('body_observed_multi', () => new THREE.MeshLambertMaterial({ color: 0x22272e }));
+        const accent = this.getMaterial('accent_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
+        const rotors = this.getMaterial('rotors_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.3 }));
+        return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
+      }
+      case 'RADAR_SYMBOL': {
+        const body = this.getMaterial('body_radar_symbol', () => new THREE.MeshBasicMaterial({ color: COLOR_UNKNOWN }));
+        const accent = this.getMaterial('accent_radar_symbol', () => new THREE.MeshBasicMaterial({ color: COLOR_UNKNOWN }));
+        return { body, accent, hitProxy: this.hitProxyMaterial };
+      }
+      case 'UNKNOWN_AIRFRAME': {
+        const body = this.getMaterial('body_unresolved', () => new THREE.MeshLambertMaterial({ color: 0x363d47 }));
+        const accent = this.getMaterial('accent_unresolved', () => new THREE.MeshBasicMaterial({ color: 0x8a99a8 }));
+        return { body, accent, hitProxy: this.hitProxyMaterial };
+      }
       case 'UNKNOWN':
       default: {
         const body = this.getMaterial('body_unknown', () => new THREE.MeshLambertMaterial({ color: COLOR_BODY_DARK }));
@@ -110,6 +140,19 @@ export class TargetModelFactory {
       case 'BIRD':
         model = buildBirdModel(palette);
         break;
+      case 'LOITERING_MUNITION':
+      case 'OBSERVED_FIXED_WING':
+        model = buildLoiteringMunitionModel(palette);
+        break;
+      case 'OBSERVED_MULTIROTOR':
+        model = buildReconQuadModel(palette);
+        break;
+      case 'RADAR_SYMBOL':
+        model = buildRadarContactSymbolModel(palette);
+        break;
+      case 'UNKNOWN_AIRFRAME':
+        model = buildUnresolvedAirframeModel(palette);
+        break;
       case 'UNKNOWN':
       default:
         model = buildUnknownContactModel(palette);
@@ -117,6 +160,7 @@ export class TargetModelFactory {
     }
 
     // Tag pickable meshes with trackNo for raycaster hit-testing
+    model.category = category;
     model.bodyMesh.userData = { trackNo, targetCategory: category };
     model.accentMesh.userData = { trackNo, targetCategory: category };
     model.hitProxy.userData = { trackNo, targetCategory: category };
