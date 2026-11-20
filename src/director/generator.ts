@@ -2,7 +2,7 @@ import type { ScenarioSpec, ThreatSpawn, ZoneSpec, FormationKind, FormationGroup
 import { mulberry32, hash32, streamSeed } from '@/sim/rng';
 import { validate } from './validate';
 import { isNovel } from './novelty';
-import { expandFormation } from './formations';
+import { expandFormation, resolveFormationSpacing } from './formations';
 import demo1Json from './bundled/demo1.json';
 
 export interface GenerateScenarioOptions {
@@ -63,20 +63,14 @@ function buildScenarioFormations(
   const kind: FormationKind = options.formationKind ?? 'V_WEDGE';
   const formCount = Math.min(threats.length, 4);
   const baseThreat = threats[0];
+  const spacingM = resolveFormationSpacing(kind, options.spacingM);
   const expanded = expandFormation({
     groupId: `GRP-${seed}`,
     kind,
     count: formCount,
-    spacingM: options.spacingM,
+    spacingM,
     baseSpawn: baseThreat,
   });
-
-  let defaultSpacingM = 100;
-  if (kind === 'STACK') {
-    defaultSpacingM = 60;
-  } else if (kind === 'DECOY_LEAD') {
-    defaultSpacingM = 150;
-  }
 
   return {
     finalThreats: expanded,
@@ -86,7 +80,7 @@ function buildScenarioFormations(
         kind,
         leaderId: baseThreat.id,
         memberIds: expanded.map((t) => t.id),
-        spacingM: options.spacingM ?? defaultSpacingM,
+        spacingM,
       },
     ],
   };

@@ -1,4 +1,34 @@
 import { test, expect } from '@playwright/test';
+import zlib from 'node:zlib';
+
+/**
+ * Validates that a captured PNG screenshot contains non-blank (non-zero/varied) pixel data,
+ * preventing silent black-screen or unrendered viewport regressions.
+ */
+function assertNonBlankPng(pngBuffer: Buffer): void {
+  let pos = 8;
+  const idatChunks: Buffer[] = [];
+  while (pos < pngBuffer.length) {
+    const len = pngBuffer.readUInt32BE(pos);
+    const type = pngBuffer.toString('ascii', pos + 4, pos + 8);
+    if (type === 'IDAT') {
+      idatChunks.push(pngBuffer.subarray(pos + 8, pos + 8 + len));
+    }
+    pos += 12 + len;
+  }
+  expect(idatChunks.length).toBeGreaterThan(0);
+  const decompressed = zlib.inflateSync(Buffer.concat(idatChunks));
+  let nonZeroCount = 0;
+  for (let i = 0; i < decompressed.length; i++) {
+    if (decompressed[i] !== 0) {
+      nonZeroCount++;
+      if (nonZeroCount > 200) {
+        break;
+      }
+    }
+  }
+  expect(nonZeroCount).toBeGreaterThan(200);
+}
 
 test.describe('3D Tactical Environment and Viewport Functionality', () => {
   test('3D view renders, navigates, selects targets, and supports controls without blanking', async ({ page }) => {
@@ -23,6 +53,7 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
 
     // Ensure 3D canvas is visible
     const canvas3d = page.locator('canvas.cursor-grab');
+    const radarFrame = page.locator('.radar-frame');
     await expect(canvas3d).toBeVisible();
 
     // Verify Readout shows 3D CAM: OBLIQUE
@@ -78,6 +109,10 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
       // Dismiss modal via ESC
       await page.keyboard.press('Escape');
       await expect(modalHeader).not.toBeVisible();
+
+      // Assert rendered output is nonblank after cross-section dismissal
+      const postDismissShot = await radarFrame.screenshot();
+      assertNonBlankPng(postDismissShot);
     }
 
     // 6. Test Toggle Controls (Weapons, LOS, Clusters, Aid)
@@ -112,9 +147,9 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
     await toggle3DBtn.click();
     await expect(canvas3d).toBeVisible();
 
-    // Take screenshot of final healthy 3D viewport
-    const radarFrame = page.locator('.radar-frame');
-    await radarFrame.screenshot({ path: 'test-results/3d-view-healthy.png' });
+    // Assert rendered output is nonblank again after returning to 3D; keep screenshot as artifact
+    const finalShot = await radarFrame.screenshot({ path: 'test-results/3d-view-healthy.png' });
+    assertNonBlankPng(finalShot);
 
     // Assert zero uncaught page errors
     expect(pageErrors).toEqual([]);

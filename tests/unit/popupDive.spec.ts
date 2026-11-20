@@ -225,27 +225,34 @@ describe('OPTIONAL TASK 13 — Notional POP_UP_DIVE Trajectory Profile', () => {
     });
 
     it('guarantees bitwise deterministic simulation replay for same seed', () => {
-      const spec = generatePopUpDiveScenario({ seed: 9999, difficulty: 0.3 });
+      // 1. Generate two scenarios independently with identical seed 9999 and assert exact equality
+      const spec1 = generatePopUpDiveScenario({ seed: 9999, difficulty: 0.3 });
+      const spec2 = generatePopUpDiveScenario({ seed: 9999, difficulty: 0.3 });
+      expect(spec1).toEqual(spec2);
 
-      const runEngine = () => {
+      // 2. Fixed-spec engine comparison running through all profile phase transitions (approach, climb, terminal dive)
+      const runEngine = (specToRun: ScenarioSpec = spec1) => {
         const engine = new SimEngine();
-        engine.load(spec);
-        for (let i = 0; i < 400; i++) {
+        engine.load(specToRun);
+        // Step through approach (0-1400), climb (1400-1574), and terminal dive (1574-2020)
+        for (let i = 0; i < 2050; i++) {
           engine.step();
         }
         return {
           pos: { ...engine.curr[0].pos },
           vel: { ...engine.curr[0].vel },
+          lifecycle: engine.curr[0].lifecycle,
           eventsCount: engine.events.length,
           events: engine.events.map((e) => ({ ...e })),
         };
       };
 
-      const run1 = runEngine();
-      const run2 = runEngine();
+      const run1 = runEngine(spec1);
+      const run2 = runEngine(spec2);
 
       expect(run1.pos).toEqual(run2.pos);
       expect(run1.vel).toEqual(run2.vel);
+      expect(run1.lifecycle).toBe(run2.lifecycle);
       expect(run1.eventsCount).toBe(run2.eventsCount);
       expect(run1.events).toEqual(run2.events);
     });

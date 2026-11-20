@@ -849,17 +849,29 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
 
     it('property-tests 100% agreement between calculateModelledLos and canonical evaluateMasking over seeded grid', () => {
       const zones = [testUrbanZone, testRidgeZone];
-      // Deterministic pseudo-random sequence (LCG)
-      let seed = 42;
-      const nextU = () => {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        return seed / 4294967296;
-      };
+      // Deterministic pseudo-random sequence (LCG class with independent instance state)
+      class LcgPrng {
+        private seed: number;
+        constructor(seed: number) {
+          this.seed = seed >>> 0;
+        }
+        next(): number {
+          this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
+          return this.seed / 4294967296;
+        }
+      }
+
+      // Verify that two independent instances initialized with 42 produce matching successive outputs
+      const rng1 = new LcgPrng(42);
+      const rng2 = new LcgPrng(42);
+      for (let i = 0; i < 20; i++) {
+        expect(rng1.next()).toBe(rng2.next());
+      }
 
       for (let i = 0; i < 100; i++) {
-        const x = (nextU() - 0.5) * 6000;
-        const y = (nextU() - 0.5) * 6000;
-        const z = 10 + nextU() * 150;
+        const x = (rng1.next() - 0.5) * 6000;
+        const y = (rng1.next() - 0.5) * 6000;
+        const z = 10 + rng1.next() * 150;
         const target = { trackNo: `T-RND-${i}`, pos: { x, y, z } };
 
         const canonical = evaluateMasking(target.pos, zones);

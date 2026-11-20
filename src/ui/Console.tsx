@@ -343,24 +343,12 @@ export const Console: React.FC = () => {
   const [showLos, setShowLos] = useState<boolean>(true);
   const showLosRef = useRef<boolean>(true);
   showLosRef.current = showLos;
-  const toggleLos = () => {
-    setShowLos((prev) => {
-      const next = !prev;
-      renderer3dRef.current?.setShowLos(next);
-      return next;
-    });
-  };
+  const toggleLos = () => setShowLos((prev) => !prev);
 
   const [showClusters, setShowClusters] = useState<boolean>(true);
   const showClustersRef = useRef<boolean>(true);
   showClustersRef.current = showClusters;
-  const toggleClusters = () => {
-    setShowClusters((prev) => {
-      const next = !prev;
-      renderer3dRef.current?.setShowClusters(next);
-      return next;
-    });
-  };
+  const toggleClusters = () => setShowClusters((prev) => !prev);
 
   const [showTrainingAid, setShowTrainingAid] = useState<boolean>(false);
   const [showCrossSection, setShowCrossSection] = useState<boolean>(false);
@@ -370,13 +358,21 @@ export const Console: React.FC = () => {
     if (engineInstance.mode === 'EVAL') {
       return;
     }
-    setShowTrainingAid((prev) => {
-      const next = !prev;
-      renderer3dRef.current?.setShowTrainingAid(next);
-      engineInstance.trainingAidActive = next;
-      return next;
-    });
+    setShowTrainingAid((prev) => !prev);
   };
+
+  useEffect(() => {
+    renderer3dRef.current?.setShowLos(showLos);
+  }, [showLos]);
+
+  useEffect(() => {
+    renderer3dRef.current?.setShowClusters(showClusters);
+  }, [showClusters]);
+
+  useEffect(() => {
+    renderer3dRef.current?.setShowTrainingAid(showTrainingAid);
+    engineInstance.trainingAidActive = showTrainingAid;
+  }, [showTrainingAid]);
 
   const toggleCrossSection = () => {
     if (engineInstance.mode === 'EVAL') {
@@ -442,6 +438,123 @@ export const Console: React.FC = () => {
     };
   }, []);
 
+  const initRenderer3D = async (): Promise<Renderer3D | null> => {
+    if (renderer3dRef.current) {
+      return renderer3dRef.current;
+    }
+    if (!canvas3dRef.current) {
+      return null;
+    }
+
+    const {
+      Renderer3D,
+      checkWebGL2Support,
+      calculateRadarCoverage,
+      calculateEoirCoverage,
+      calculateRfCoverage,
+      getScenarioEnvironmentDescriptor,
+    } = await import('@/render3d');
+
+    const cap = checkWebGL2Support();
+    if (!cap.supported) {
+      setWebGlError(cap.reason || 'WebGL2 not supported');
+      return null;
+    }
+
+    canvas3dRef.current.width = 520;
+    canvas3dRef.current.height = 520;
+
+    const r3d = new Renderer3D(canvas3dRef.current, {
+      maxRangeM: CONFIG.thresholds.radarMaxRangeM,
+      rMinM: CONFIG.thresholds.rMinM,
+      zones: engineInstance.spec?.zones || [],
+      mode: engineInstance.mode,
+      showTrainingAid,
+      environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
+      onSelectTrack: (trackNo: string) => {
+        setSelectedEnvObject(null);
+        designate(trackNo, 'CLICK');
+      },
+      onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
+        setSelectedEnvObject(info);
+      },
+      onContextLost: () => {
+        xrManagerRef.current?.exitVR();
+        renderer3dRef.current?.stop();
+        setViewMode('2D');
+        setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
+      },
+    });
+
+    r3d.setSimTimeProvider(() => ({
+      simMs: engineInstance.tickIndex * 50,
+      chaosList: engineInstance.spec?.chaos,
+    }));
+
+    r3d.setEventsProvider(() => engineInstance.events);
+
+    r3d.setTrackProvider(() => ({
+      tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
+      selectedTrackNo: engineInstance.selectedTrackNo,
+    }));
+
+    r3d.setCoverageProvider(() => {
+      const currentSimMs = engineInstance.tickIndex * 50;
+      return {
+        radar: calculateRadarCoverage({
+          sensorHealth: engineInstance.sensorHealth.RADAR,
+          chaosList: engineInstance.spec?.chaos,
+          tMs: currentSimMs,
+        }),
+        eoir: calculateEoirCoverage({
+          azimuthDeg: engineInstance.eoirAzimuthDeg,
+          isNight: engineInstance.spec?.dayNight === 'NIGHT',
+          sensorHealth: engineInstance.sensorHealth.EOIR,
+          chaosList: engineInstance.spec?.chaos,
+          tMs: currentSimMs,
+        }),
+        rf: calculateRfCoverage({
+          sensorHealth: engineInstance.sensorHealth.RF,
+          chaosList: engineInstance.spec?.chaos,
+          tMs: currentSimMs,
+        }),
+        activeSensor: useSessionStore.getState().ui.activeSensor,
+        visible: true,
+      };
+    });
+
+    r3d.setEffectorProvider(() => {
+      const currentSimMs = engineInstance.tickIndex * 50;
+      const selectedEntity = engineInstance.selectedTrackNo
+        ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
+        : null;
+
+      return {
+        activeEffector: useSessionStore.getState().ui.activeEffector,
+        selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
+          ? {
+              trackNo: selectedEntity.trackNo!,
+              pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
+              q: selectedEntity.q,
+            }
+          : null,
+        sensorHealth: engineInstance.sensorHealth,
+        chaosList: engineInstance.spec?.chaos,
+        tMs: currentSimMs,
+        visible: showEnvelopesRef.current,
+      };
+    });
+
+    r3d.setShowLos(showLos);
+    r3d.setShowClusters(showClusters);
+    r3d.setLowFidelity(lowFi);
+    renderer3dRef.current = r3d;
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
+    }
+    return r3d;
+  };
+
   // Toggle 2D / 3D Tactical View with WebGL2 probe and graceful fallback
   const toggleViewMode = async () => {
     if (viewMode === '3D') {
@@ -452,115 +565,12 @@ export const Console: React.FC = () => {
     }
 
     try {
-      const {
-        Renderer3D,
-        checkWebGL2Support,
-        calculateRadarCoverage,
-        calculateEoirCoverage,
-        calculateRfCoverage,
-        getScenarioEnvironmentDescriptor,
-      } = await import('@/render3d');
-      const cap = checkWebGL2Support();
-      if (!cap.supported) {
-        setWebGlError(cap.reason || 'WebGL2 not supported');
+      const r3d = await initRenderer3D();
+      if (!r3d) {
         return;
       }
 
-      if (!renderer3dRef.current && canvas3dRef.current) {
-        canvas3dRef.current.width = 520;
-        canvas3dRef.current.height = 520;
-
-        const r3d = new Renderer3D(canvas3dRef.current, {
-          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
-          rMinM: CONFIG.thresholds.rMinM,
-          zones: engineInstance.spec?.zones || [],
-          mode: engineInstance.mode,
-          showTrainingAid: showTrainingAidRef.current,
-          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
-          onSelectTrack: (trackNo: string) => {
-            setSelectedEnvObject(null);
-            designate(trackNo, 'CLICK');
-          },
-          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
-            setSelectedEnvObject(info);
-          },
-          onContextLost: () => {
-            xrManagerRef.current?.exitVR();
-            renderer3dRef.current?.stop();
-            setViewMode('2D');
-            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
-          },
-        });
-
-        r3d.setSimTimeProvider(() => ({
-          simMs: engineInstance.tickIndex * 50,
-          chaosList: engineInstance.spec?.chaos,
-        }));
-
-        r3d.setEventsProvider(() => engineInstance.events);
-
-        r3d.setTrackProvider(() => ({
-          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
-          selectedTrackNo: engineInstance.selectedTrackNo,
-        }));
-
-        r3d.setCoverageProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          return {
-            radar: calculateRadarCoverage({
-              sensorHealth: engineInstance.sensorHealth.RADAR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            eoir: calculateEoirCoverage({
-              azimuthDeg: engineInstance.eoirAzimuthDeg,
-              isNight: engineInstance.spec?.dayNight === 'NIGHT',
-              sensorHealth: engineInstance.sensorHealth.EOIR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            rf: calculateRfCoverage({
-              sensorHealth: engineInstance.sensorHealth.RF,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            activeSensor: useSessionStore.getState().ui.activeSensor,
-            visible: true,
-          };
-        });
-
-        r3d.setEffectorProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          const selectedEntity = engineInstance.selectedTrackNo
-            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
-            : null;
-
-          return {
-            activeEffector: useSessionStore.getState().ui.activeEffector,
-            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
-              ? {
-                  trackNo: selectedEntity.trackNo!,
-                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
-                  q: selectedEntity.q,
-                }
-              : null,
-            sensorHealth: engineInstance.sensorHealth,
-            chaosList: engineInstance.spec?.chaos,
-            tMs: currentSimMs,
-            visible: showEnvelopesRef.current,
-          };
-        });
-
-        r3d.setShowLos(showLosRef.current);
-        r3d.setShowClusters(showClustersRef.current);
-        r3d.setLowFidelity(lowFi);
-        renderer3dRef.current = r3d;
-        if (typeof window !== 'undefined') {
-          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
-        }
-      }
-
-      renderer3dRef.current?.start();
+      r3d.start();
       setViewMode('3D');
       setWebGlError(null);
     } catch (err) {
@@ -581,12 +591,6 @@ export const Console: React.FC = () => {
       const {
         checkWebXRSupport,
         WebXRManager,
-        Renderer3D,
-        checkWebGL2Support,
-        calculateRadarCoverage,
-        calculateEoirCoverage,
-        calculateRfCoverage,
-        getScenarioEnvironmentDescriptor,
       } = await import('@/render3d');
 
       const cap = await checkWebXRSupport();
@@ -595,120 +599,24 @@ export const Console: React.FC = () => {
         return;
       }
 
-      const glCap = checkWebGL2Support();
-      if (!glCap.supported) {
-        setWebGlError(glCap.reason || 'WebGL2 not supported');
+      const r3d = await initRenderer3D();
+      if (!r3d) {
         return;
       }
 
-      // Ensure 3D renderer is instantiated
-      if (!renderer3dRef.current && canvas3dRef.current) {
-        canvas3dRef.current.width = 520;
-        canvas3dRef.current.height = 520;
-
-        const r3d = new Renderer3D(canvas3dRef.current, {
-          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
-          rMinM: CONFIG.thresholds.rMinM,
-          zones: engineInstance.spec?.zones || [],
-          mode: engineInstance.mode,
-          showTrainingAid: showTrainingAidRef.current,
-          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
-          onSelectTrack: (trackNo: string) => {
-            setSelectedEnvObject(null);
-            designate(trackNo, 'CLICK');
-          },
-          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
-            setSelectedEnvObject(info);
-          },
-          onContextLost: () => {
-            xrManagerRef.current?.exitVR();
-            renderer3dRef.current?.stop();
-            setViewMode('2D');
-            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
-          },
-        });
-
-        r3d.setSimTimeProvider(() => ({
-          simMs: engineInstance.tickIndex * 50,
-          chaosList: engineInstance.spec?.chaos,
-        }));
-
-        r3d.setEventsProvider(() => engineInstance.events);
-
-        r3d.setTrackProvider(() => ({
-          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
-          selectedTrackNo: engineInstance.selectedTrackNo,
-        }));
-
-        r3d.setCoverageProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          return {
-            radar: calculateRadarCoverage({
-              sensorHealth: engineInstance.sensorHealth.RADAR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            eoir: calculateEoirCoverage({
-              azimuthDeg: engineInstance.eoirAzimuthDeg,
-              isNight: engineInstance.spec?.dayNight === 'NIGHT',
-              sensorHealth: engineInstance.sensorHealth.EOIR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            rf: calculateRfCoverage({
-              sensorHealth: engineInstance.sensorHealth.RF,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            activeSensor: useSessionStore.getState().ui.activeSensor,
-            visible: true,
-          };
-        });
-
-        r3d.setEffectorProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          const selectedEntity = engineInstance.selectedTrackNo
-            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
-            : null;
-
-          return {
-            activeEffector: useSessionStore.getState().ui.activeEffector,
-            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
-              ? {
-                  trackNo: selectedEntity.trackNo!,
-                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
-                  q: selectedEntity.q,
-                }
-              : null,
-            sensorHealth: engineInstance.sensorHealth,
-            chaosList: engineInstance.spec?.chaos,
-            tMs: currentSimMs,
-            visible: showEnvelopesRef.current,
-          };
-        });
-
-        r3d.setShowLos(showLosRef.current);
-        r3d.setShowClusters(showClustersRef.current);
-        r3d.setLowFidelity(lowFi);
-        renderer3dRef.current = r3d;
-        if (typeof window !== 'undefined') {
-          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
-        }
-      }
-
-      if (renderer3dRef.current && rendererRef.current) {
+      if (rendererRef.current) {
         setViewMode('3D');
-        renderer3dRef.current.start();
+        r3d.start();
 
         const xrMgr = new WebXRManager(
-          renderer3dRef.current.getThreeRenderer(),
-          renderer3dRef.current.getScene3D().scene,
+          r3d.getThreeRenderer(),
+          r3d.getScene3D().scene,
           rendererRef.current,
           () => {
             xrMgr.dispose();
             xrManagerRef.current = null;
           },
-          renderer3dRef.current.getCamera()
+          r3d.getCamera()
         );
         xrManagerRef.current = xrMgr;
         const res = await xrMgr.enterVR();
