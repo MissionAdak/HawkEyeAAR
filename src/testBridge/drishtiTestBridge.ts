@@ -141,6 +141,18 @@ export function installDrishtiTestBridge(
       entity.vel = { x: 0, y: 0, z: 0 };
       entity.masked = false;
 
+      // Synchronize tracker estimate in E2E test harness to avoid innovation gate outlier rejection on test teleports
+      const est = engine.tracker.getTrackEstimate(trackNo);
+      if (est) {
+        est.estPos = { x: pos.x, y: pos.y, z: pos.z };
+        est.prevEstPos = { x: pos.x, y: pos.y, z: pos.z };
+        est.estRangeM = Math.hypot(pos.x, pos.y);
+        est.estBearingDeg = Math.round((Math.atan2(pos.x, pos.y) * 180) / Math.PI + 360) % 360;
+        est.uncertaintyM = 20;
+        est.isCoasting = false;
+        est.coastingSinceMs = null;
+      }
+
       const r3d = getRenderer3D();
       if (r3d) {
         const trackData = r3d.getCurrentTracks();

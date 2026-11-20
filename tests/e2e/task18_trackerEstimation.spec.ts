@@ -72,59 +72,152 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     }, { timeout: 10000 }).toBe(true);
 
     // Perform audit across all operator-facing paths (SafeTrackView, OperatorTrackView, UiTrackRow)
-    const audit = await page.evaluate(() => {
+    const initialAudit = await page.evaluate(() => {
       const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.inspectOperatorFacingData();
     });
 
-    expect(audit).toBeDefined();
-    expect(audit?.hasLeaks).toBe(false);
-    expect(audit?.leakedProperties).toEqual([]);
+    expect(initialAudit).toBeDefined();
+    expect(initialAudit?.hasLeaks).toBe(false);
+    expect(initialAudit?.leakedProperties).toEqual([]);
 
-    // 1. Audit DOM Event Log: Assert that live DOM text does not contain secret truth class tokens or uncommitted ground truth
+    // Canonical taxonomy and secret drone model tokens that must never appear in live operator displays
+    const forbiddenTokens = [
+      'HOSTILE_ATTACK',
+      'HOSTILE_ISR',
+      'SWARM_ELEMENT',
+      'CIVIL_UAS',
+      'FPV_ATTACK',
+      'RECON_QUAD',
+      'LOITERING_MUNITION',
+      'FRIENDLY_UAS',
+      'SWARM_ELEMENT_FW',
+      'OBSERVED_HOSTILE',
+    ];
+
+    // B1: Initial Event Log Inspection
     const eventLog = page.locator('#event-log, [data-testid="event-log"]');
     await expect(eventLog).toBeVisible({ timeout: 5000 });
-    const eventLogText = await eventLog.innerText();
-    const forbiddenTokens = ['FPV_ATTACK', 'SWARM_ELEMENT_FW', 'RECON_QUAD', 'LOITERING_MUNITION'];
+    let eventLogText = await eventLog.innerText();
     for (const token of forbiddenTokens) {
       expect(eventLogText).not.toContain(token);
     }
 
-    // 2. Audit Track Table DOM: Headers and estimated value formatting
-    const trackTable = page.getByTestId('track-table');
-    await expect(trackTable).toBeVisible({ timeout: 5000 });
-    const tableText = await trackTable.innerText();
-    expect(tableText).toMatch(/~RNG/);
-    expect(tableText).toMatch(/~SPD/);
-    for (const token of forbiddenTokens) {
-      expect(tableText).not.toContain(token);
-    }
-
-    // 3. Trigger effector release block and verify operator feedback toast in the DOM
+    // B2: Select the track in the Track Table and inspect rendered estimates vs safe OperatorTrackView
     const targetNo = await page.evaluate(() => {
       const win = window as unknown as WindowWithDrishti;
-      const tNo = win.__DRISHTI_TEST__?.getTrackList()[0]?.trackNo;
-      if (tNo) {
-        win.__DRISHTI_TEST__?.positionTrack(tNo, { x: 300, y: 300, z: 50 });
-      }
-      return tNo;
+      return win.__DRISHTI_TEST__?.getTrackList()[0]?.trackNo;
     });
     expect(targetNo).toBeDefined();
 
-    // Select track and trigger fire (target inside PNR boundary < 500m is hard-blocked)
-    const trackRow = page.locator('[data-testid="track-table"] button').first();
-    await trackRow.click();
+    // Select the EXACT track row in Track Table
+    const targetRow = page.locator('[data-testid="track-table"] button').filter({ hasText: targetNo! }).first();
+    await expect(targetRow).toBeVisible();
+    await targetRow.click();
+
+    // Verify rendered track row values match estimated values from the test bridge (not ground truth)
+    const initialOpTrack = await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+    }, targetNo);
+    expect(initialOpTrack).toBeDefined();
+
+    const renderedRangeElem = targetRow.locator('[data-testid="track-range"]');
+    const renderedSpeedElem = targetRow.locator('[data-testid="track-speed"]');
+    await expect(renderedRangeElem).toBeVisible();
+    await expect(renderedSpeedElem).toBeVisible();
+
+    const renderedRange = (await renderedRangeElem.innerText()).trim();
+    const renderedSpeed = (await renderedSpeedElem.innerText()).trim();
+
+    expect(renderedRange).toBe((initialOpTrack!.estRangeM / 1000).toFixed(2));
+    expect(renderedSpeed).toBe(String(initialOpTrack!.estSpeedMps));
+
+    // Ensure raw ground truth coordinates or unestimated values do not appear in track row
+    const truthData = await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getTrackList().find((t) => t.trackNo === tNo);
+    }, targetNo);
+    expect(truthData).toBeDefined();
+    const truthRawRangeM = Math.hypot(truthData!.pos.x, truthData!.pos.y);
+    expect(renderedRange).not.toBe(truthRawRangeM.toFixed(4));
+    expect(renderedRange).not.toBe(String(truthRawRangeM));
+
+    // B1 & B3: Perform controlled test-target truth-position change (into PNR boundary < 500m)
+    await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      win.__DRISHTI_TEST__?.positionTrack(tNo!, { x: 300, y: 300, z: 50 });
+    }, targetNo);
+
+    // Wait until track estimator processes the position update
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const win = window as unknown as WindowWithDrishti;
+        const op = win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+        return op && op.estRangeM < 600;
+      }, targetNo);
+    }, { timeout: 5000 }).toBe(true);
+
+    // Re-inspect Event Log after controlled position change
+    eventLogText = await eventLog.innerText();
+    for (const token of forbiddenTokens) {
+      expect(eventLogText).not.toContain(token);
+    }
+    // Verify no raw target coordinates or hidden truth payload appear in Event Log
+    expect(eventLogText).not.toContain('x: 300');
+    expect(eventLogText).not.toContain('y: 300');
+    expect(eventLogText).not.toContain('trueClass');
+    expect(eventLogText).not.toContain('droneType');
+    expect(eventLogText).not.toContain('valueInr');
+
+    // Trigger effector release block on the repositioned track
+    await targetRow.click();
     await page.keyboard.press('f');
 
+    // B3: Verify Operator Feedback Toast in DOM
     const toast = page.getByTestId('operator-feedback-toast');
     await expect(toast).toBeVisible({ timeout: 5000 });
     const toastText = await toast.innerText();
-    // Visible toast must contain estimated telemetry (~ or km) and NOT raw un-estimated truth coordinates or secret tokens
-    expect(toastText).toMatch(/RELEASE BLOCKED/i);
-    expect(toastText).toMatch(/~|km/i);
+
+    // Verify expected PNR-specific feedback and release-window-closed condition
+    expect(toastText).toContain('RELEASE BLOCKED — RELEASE WINDOW CLOSED');
+    expect(toastText).toContain('Point of No Return exceeded');
+
+    // Verify estimated telemetry using strict numeric format (e.g. ~0.42 km)
+    expect(toastText).toMatch(/~\d+\.\d{2}\s*km/);
+
+    // Compare displayed estimate with the safe estimated value from the E2E bridge
+    const pnrOpTrack = await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+    }, targetNo);
+    expect(pnrOpTrack).toBeDefined();
+    const expectedToastEst = `~${(pnrOpTrack!.estRangeM / 1000).toFixed(2)} km`;
+    expect(toastText).toContain(expectedToastEst);
+
+    // Verify exact truth range (Math.hypot(300, 300) = 424.264m) is NOT rendered as operator's measurement
+    const exactTruthDist = Math.hypot(300, 300);
+    expect(toastText).not.toContain(`${exactTruthDist.toFixed(3)} km`);
+    expect(toastText).not.toContain(`${exactTruthDist.toFixed(1)}m`);
+    expect(toastText).not.toContain('424.26m');
+
     for (const token of forbiddenTokens) {
       expect(toastText).not.toContain(token);
     }
+
+    // Re-inspect Event Log after release-block action
+    eventLogText = await eventLog.innerText();
+    for (const token of forbiddenTokens) {
+      expect(eventLogText).not.toContain(token);
+    }
+
+    // Final audit across all operator-facing paths after all mutations
+    const finalAudit = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.inspectOperatorFacingData();
+    });
+    expect(finalAudit?.hasLeaks).toBe(false);
+    expect(finalAudit?.leakedProperties).toEqual([]);
 
     await saveShot(page, 'task18_01_zero_truth_leakage_audit.png');
   });

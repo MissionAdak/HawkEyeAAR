@@ -547,5 +547,19 @@ Files: `src/sim/engine.ts`, `src/sim/operatorFeedback.ts`, `src/render3d/rendere
 - [x] RF Bearing-Only Verification: Added Playwright test verifying RF strobes provide bearing-only measurements (`measuredBearingDeg`, `bearingUncertaintyDeg`), never fabricate range/Cartesian coordinates, and suppress output when RF sensor is `OUT`.
 - [x] Static Information Boundary Expansion: Added unit tests in `tests/unit/guards.spec.ts` guarding against `TrackEntity` in `src/render3d`, verifying 3D event provider uses `getOperatorEvents()`, confirming feedback uses tracker estimates, and enforcing `__DRISHTI_E2E_BUILD__` guards.
 
+### TASK-18-06B — Full E2E Regression Gate & Final Project Documentation Reconciliation · P0 · B/D · 1.5 h
+Files: `src/ui/EventLog.tsx`, `src/ui/TrackTable.tsx`, `src/sim/engine.ts`, `src/sim/operatorFeedback.ts`, `src/store/sessionStore.ts`, `tests/e2e/task17_3_sensorObservation.spec.ts`, `tests/e2e/task18_trackerEstimation.spec.ts`, `MEMORY.md`
+- [x] Full Playwright E2E Suite Execution: Executed complete Playwright suite across all 8 files in `tests/e2e/`, discovering 44 tests.
+- [x] Test H Timing Fix: Replaced transient polling condition with stable `/^OBSERVED_/` match before capturing `initialRecord`.
+- [x] Test 04 Category Parity: Added `UNKNOWN_AIRFRAME` to `allowedCategories` in optical viewport test.
+- [x] PNR Violation & Inactive Target Alignment: Aligned `sessionStore.ts` and `engine.ts` to issue `PNR_VIOLATION` with Domain C `rangeM: est?.estRangeM` when targets breach the PNR boundary.
+
+### TASK-18-06C — Final DOM Acceptance Hardening, Git Reference Reconciliation & Release Parity · P0 · B/D · 1.0 h
+Files: `tests/e2e/task18_trackerEstimation.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] Multi-Stage Event Log DOM Inspection: Pre-mutation, post-reposition, and post-fire inspection against all canonical `TrueClass` and `DroneType` tokens and raw coordinates.
+- [x] Track Table Value-Level Assertion: Row-specific comparison of `[data-testid="track-range"]` and `[data-testid="track-speed"]` against safe `OperatorTrackView` from test bridge with rounding validation.
+- [x] PNR Release Window Closed Assertion: Verified `RELEASE BLOCKED — RELEASE WINDOW CLOSED` and strict `~\d+\.\d{2} km` format matching `OperatorTrackView.estRangeM`.
+- [x] Verified Git Baseline & Release Parity: Recorded authentic feature SHA `32054cb724dc36008c58a71933e61926413a7c62` and deployed production build to `gh-pages`.
+
 
 

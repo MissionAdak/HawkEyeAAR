@@ -8,7 +8,7 @@
 3. §5 — add a bug-log row for every bug fixed, with its regression test; add a new `T-xx` trap when you discover one.
 4. Use the sprint hour marker (`H12`, `H26`, …) as the timestamp. Never delete history; append.
 
-Last updated: **TASK 18-06B** (TASK 18 closeout & complete E2E regression gate; all 38 test files with 494 unit/golden tests passing; full Playwright E2E suite with 44 tests passing across all 8 test suites).
+Last updated: **TASK 18-06C** (Final DOM acceptance hardening, verified feature HEAD 32054cb..., deployment HEAD 9b2a708...; all 38 test files with 494 unit/golden tests passing; full Playwright E2E suite with 44 tests passing across all 8 test suites).
 
 ---
 
@@ -66,7 +66,7 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 | Hardening, e2e, demo content | **Done** | Air-gap E2E, zero-overflow layout, trainee interaction, bundle 0.85 MB < 2 MB limit |
 | Optional Three.js 3D Feature Pack (Track X3D) | **Done** | Lazy-loaded 3D tactical viewport (`render3d` chunk 510 kB, 0B in main chunk), model-faithful sensor domes, effector envelopes, evaluateMasking LOS explanation, cluster hulls, TRAIN-only RCS aid/elevation cross-section, post-session AAR 3D replay & engagement inspector. VR marked experimental |
 | 3D Tactical Environment & Weather (TASK 16) | **Done** | 6 deterministic environment presets (`URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL`), procedural buildings & radar installations, instanced vegetation (2 draw calls), dynamic weather & rain driven strictly by `simMs` without Math.random, 6-DOF camera navigation (orbit, pan, cursor zoom, angle clamps, double-click focus, Home reset), dual-domain picking with Environment Inspector panel (zero ground-truth leak), and Mission Briefing tactical atmosphere card. Verified by 51 unit tests and 21 E2E tests |
-| Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18, 18-06A & 18-06B) | **Done** | Decoupled ground truth from operator views into 3 strict domains (Domain A: SimEngine truth; Domain B: synthetic measurements with keyed Gaussian noise; Domain C: Alpha-Beta tracker and OperatorTrackView/SafeTrackView/UiTrackRow/OperatorEventView). Residual operator feedback range leaks eliminated, live event stream sanitized, and DOM information-boundary assertions verified. Full Playwright E2E suite (44 tests) and all 38 unit test files (494 tests) pass 100% cleanly |
+| Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18, 18-06A, 18-06B & 18-06C) | **Done** | Decoupled ground truth from operator views into 3 strict domains (Domain A: SimEngine truth; Domain B: synthetic measurements with keyed Gaussian noise; Domain C: Alpha-Beta tracker and OperatorTrackView/SafeTrackView/UiTrackRow/OperatorEventView). Residual operator feedback range leaks eliminated, live event stream sanitized, and conclusive DOM information-boundary assertions verified. Full Playwright E2E suite (44 tests) and all 38 unit test files (494 tests) pass 100% cleanly |
 | Optional WebXR VR Renderer (Task 14) | **Experimental Prototype (Unverified)** | Implemented `FrameDriver` (`windowDriver`, `xrDriver`), `WebXRManager`, `WebXRTableTop` (1:10,000 scale, 4x Z-scale), `WebXRPanel` (EVAL aids lock), edge-triggered controller handler with 20 Hz tick quantisation, comfort modal advisory, and seamless fallback. Status: `experimental, unverified` due to absence of physical headset testing |
 
 ### 2.2 Phase checkpoints
@@ -81,6 +81,7 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 - [x] Task 14 — Optional WebXR VR Renderer prototype with FrameDriver handoff, tick continuity, deterministic input quantization, truth gating parity, table-top view, comfort advisory, and safe teardown [PROTOTYPE PASSING ALL TESTS; STATUS: EXPERIMENTAL, UNVERIFIED]
 - [x] TASK 16 — DRISHTI-CUAS 3D Tactical Environment, Realistic Weather, Camera Navigation & Object Inspection [VERIFIED; 29 unit test files (342 tests) and 21 Playwright E2E tests passing]
 - [x] TASK 18-06B — Complete E2E regression gate (44/44 Playwright tests passing across all 8 suites) & project documentation reconciliation [VERIFIED]
+- [x] TASK 18-06C — Final DOM Acceptance Hardening, Git Reference Reconciliation & Release Parity [VERIFIED]
 
 ### 2.3 Known technical debt & architectural limitations
 
