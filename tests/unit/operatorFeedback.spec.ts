@@ -4,6 +4,9 @@ import {
   shouldThrottleFeedback,
   type OperatorFeedback,
 } from '@/sim/operatorFeedback';
+import { SimEngine } from '@/sim/engine';
+import demo1Json from '@/director/bundled/demo1.json';
+import type { ScenarioSpec } from '@/sim/types';
 
 describe('Intelligent Tactical Operator Feedback (Task 17 Phase 6)', () => {
   it('generates structured feedback for Q_MIN_VIOLATION with actual vs required metrics', () => {
@@ -40,8 +43,32 @@ describe('Intelligent Tactical Operator Feedback (Task 17 Phase 6)', () => {
     expect(fb.severity).toBe('ERROR');
     expect(fb.reasonCode).toBe('PNR_VIOLATION');
     expect(fb.title).toContain('RELEASE WINDOW CLOSED');
-    expect(fb.measured?.actual).toBe('0.35 km');
+    expect(fb.measured?.actual).toBe('~0.35 km');
     expect(fb.measured?.required).toContain('0.50 km');
+  });
+
+  it('omits measured range telemetry completely when no estimate exists rather than falling back to ground truth', () => {
+    const fbPnr = createOperatorFeedback({
+      category: 'RELEASE_BLOCKED',
+      reasonCode: 'PNR_VIOLATION',
+      timestampMs: 6000,
+      trackNo: 'TRK-NO-EST',
+      effectorId: 'MISSILE',
+      rangeM: undefined,
+    });
+    expect(fbPnr.measured).toBeUndefined();
+    expect(fbPnr.explanation).toContain('no-release boundary');
+
+    const fbEnvelope = createOperatorFeedback({
+      category: 'RELEASE_BLOCKED',
+      reasonCode: 'OUT_OF_ENVELOPE',
+      timestampMs: 7000,
+      trackNo: 'TRK-NO-EST',
+      effectorId: 'GUN',
+      rangeM: undefined,
+    });
+    expect(fbEnvelope.measured).toBeUndefined();
+    expect(fbEnvelope.explanation).toContain('outside effective engagement envelope');
   });
 
   it('generates structured feedback for OUT_OF_ENVELOPE', () => {
@@ -148,5 +175,55 @@ describe('Intelligent Tactical Operator Feedback (Task 17 Phase 6)', () => {
     // Same track, same reason after 2.0s -> do not throttle
     const notThrottledTimePassed = shouldThrottleFeedback('TRK-01', 'Q_MIN_VIOLATION', 7500, recent);
     expect(notThrottledTimePassed).toBe(false);
+  });
+
+  it('engine handleFire uses estimated range rather than exact target range for operator feedback', () => {
+    const engine = new SimEngine();
+    engine.load(demo1Json as unknown as ScenarioSpec);
+
+    // Step until a track is active
+    for (let i = 0; i < 20; i++) {
+      engine.step();
+    }
+
+    const track = engine.curr.find((e) => e.trackNo && e.lifecycle === 'ACTIVE');
+    expect(track).toBeDefined();
+    const trackNo = track!.trackNo!;
+
+    // Artificially close the track step to trigger PNR_VIOLATION on fire
+    track!.step = 'CLOSED';
+
+    // Set up a distinct estimate: exact ground truth vs estimated position/range
+    const trueRange = Math.hypot(track!.pos.x, track!.pos.y);
+    const est = engine.tracker.getTrackEstimate(trackNo);
+    expect(est).toBeDefined();
+    // Offset estimated position so derived range differs from trueRange
+    est!.estPos.x += 300;
+    est!.estRangeM = Number(Math.hypot(est!.estPos.x, est!.estPos.y).toFixed(1));
+    const expectedEstRange = est!.estRangeM;
+    const expectedKmStr = (expectedEstRange / 1000).toFixed(2);
+    const trueKmStr = (trueRange / 1000).toFixed(2);
+    expect(expectedKmStr).not.toBe(trueKmStr);
+
+    let emittedFeedback: OperatorFeedback | null = null;
+    engine.onFeedback = (fb) => {
+      emittedFeedback = fb;
+    };
+
+    // Issue FIRE action directly
+    engine.inputQueue.push({
+      tRawMs: 1500,
+      applyTick: engine.tickIndex,
+      action: { type: 'FIRE', trackNo },
+    });
+    engine.step();
+
+    expect(emittedFeedback).toBeDefined();
+    const fb = emittedFeedback as unknown as OperatorFeedback;
+    expect(fb.reasonCode).toBe('PNR_VIOLATION');
+    expect(fb.explanation).toContain(expectedKmStr);
+    expect(fb.explanation).not.toContain(trueKmStr);
+    expect(fb.measured?.actual).toContain(expectedKmStr);
+    expect(fb.measured?.actual).not.toContain(trueKmStr);
   });
 });

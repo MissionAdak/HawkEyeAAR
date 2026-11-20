@@ -33,6 +33,29 @@ import type { RfMeasurement } from './measurementTypes';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
+export const OPERATOR_FACING_EVENT_TYPES: ReadonlySet<SimEventType> = new Set([
+  'SIM_START',
+  'DETECT',
+  'TRACK_INIT',
+  'MASKED',
+  'REACQUIRE',
+  'DESIGNATE',
+  'SENSOR_SWITCH',
+  'CLASSIFY',
+  'ENGAGE',
+  'ENGAGE_RESULT',
+  'RELEASE_BLOCKED',
+  'ASSESS',
+  'CHAOS_ON',
+  'CHAOS_OFF',
+  'ROE_VIOLATION',
+  'FLAG',
+  'LEAK',
+  'SESSION_PAUSE',
+  'SESSION_RESUME',
+  'SESSION_END',
+]);
+
 /**
  * Combines baseline sensor health with environmental degradation using strict severity precedence:
  * OK < DEG < OUT
@@ -890,6 +913,7 @@ export class SimEngine {
     }
     if (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED') {
       const reason = target.lifecycle !== 'ACTIVE' ? 'INACTIVE_TARGET' : 'PNR_VIOLATION';
+      const est = this.tracker.getTrackEstimate(action.trackNo);
       this.appendEvent(
         'RELEASE_BLOCKED',
         { reason, effector: this.activeEffector, rangeM: Math.hypot(target.pos.x, target.pos.y) },
@@ -904,7 +928,7 @@ export class SimEngine {
           timestampMs: currentSimMs,
           trackNo: action.trackNo,
           effectorId: this.activeEffector,
-          rangeM: Math.hypot(target.pos.x, target.pos.y),
+          rangeM: est?.estRangeM,
         })
       );
       return;
@@ -925,7 +949,7 @@ export class SimEngine {
 
     const rangeM = Math.hypot(target.pos.x, target.pos.y);
     const est = this.tracker.getTrackEstimate(action.trackNo);
-    const operatorRangeM = est ? est.estRangeM : rangeM;
+    const operatorRangeM = est?.estRangeM;
     const zones = this.spec?.zones || [];
     const isJammingActive = this.sensorHealth.RF === 'OUT';
     const isFogActive = this.sensorHealth.EOIR === 'DEG';
@@ -1127,10 +1151,14 @@ export class SimEngine {
 
   /**
    * Returns a sanitized stream of recent events projected for the operator interface (Domain C).
-   * Strictly filters out raw ground-truth secrets (trueClass, targetPos, pk, u, monetary values).
+   * Strictly filters out raw ground-truth secrets (trueClass, targetPos, pk, u, monetary values)
+   * and excludes internal keyframes (SNAPSHOT, SPAWN, TRIGGER) to prevent event displacement.
    */
   public getOperatorEvents(): OperatorEventView[] {
-    return this.events.slice(-8).map((ev) => this.toOperatorEventView(ev));
+    return this.events
+      .filter((ev) => OPERATOR_FACING_EVENT_TYPES.has(ev.type))
+      .slice(-8)
+      .map((ev) => this.toOperatorEventView(ev));
   }
 
   private toOperatorEventView(ev: SimEvent): OperatorEventView {
@@ -1147,6 +1175,8 @@ export class SimEngine {
     if (typeof ev.payload.reason === 'string') safePayload.reason = ev.payload.reason;
     if (typeof ev.payload.mode === 'string') safePayload.mode = ev.payload.mode;
     if (typeof ev.payload.type === 'string') safePayload.type = ev.payload.type;
+    if (typeof ev.payload.via === 'string') safePayload.via = ev.payload.via;
+    if (typeof ev.payload.label === 'string') safePayload.label = ev.payload.label;
     if (estRangeM !== undefined) safePayload.rangeKm = Number((estRangeM / 1000).toFixed(2));
 
     return {

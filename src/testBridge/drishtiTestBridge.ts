@@ -4,6 +4,7 @@ import type { SensorMode, TrackClass, ChaosSpec } from '@/sim/types';
 import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
 import type { ApprovedSensorObservation } from '@/render3d/types';
 import { evaluateSensorObservation } from '@/sim/sensorObservation';
+import { useSessionStore } from '@/store/sessionStore';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -18,6 +19,11 @@ export interface DrishtiPresentationRecord {
     sensorHealth: string;
     sensorAvailability: boolean;
   } | null;
+  estRangeM?: number;
+  estBearingDeg?: number;
+  estSpeedMs?: number;
+  uncertaintyM?: number;
+  isCoasting?: boolean;
 }
 
 export interface DrishtiTestBridge {
@@ -40,6 +46,10 @@ export interface DrishtiTestBridge {
     leakedProperties: string[];
   };
   getOperatorTracks: () => import('@/sim/trackerTypes').OperatorTrackView[];
+  getRfMeasurements: () => import('@/sim/measurementTypes').RfMeasurement[];
+  advanceToSessionEnd: () => boolean;
+  isSessionEnded: () => boolean;
+  getSessionStatus: () => string;
   getRecordedSnapshots: () => Array<{
     tMs: number;
     entities: Array<{
@@ -257,7 +267,32 @@ export function installDrishtiTestBridge(
     } {
       const r3d = getRenderer3D();
       if (!r3d) {
-        return { trackCount: 0, allAreRadarSymbols: false, tracks: [] };
+        const opTracks = engine.getOperatorTracks();
+        const candidateTracks = trackNo ? opTracks.filter((t) => t.trackNo === trackNo) : opTracks;
+        return {
+          trackCount: candidateTracks.length,
+          allAreRadarSymbols: true,
+          tracks: candidateTracks.map((t) => ({
+            trackNo: t.trackNo,
+            currentCategory: (t.sensorObservation?.signature ? `OBSERVED_${t.sensorObservation.signature}` : 'RADAR_SYMBOL') as TargetModelCategory,
+            observation: t.sensorObservation
+              ? {
+                  sensorSource: t.sensorObservation.sensorSource,
+                  timestampMs: t.sensorObservation.timestampMs,
+                  confidence: t.sensorObservation.confidence,
+                  resolutionLevel: t.sensorObservation.resolutionLevel,
+                  visibilityState: t.sensorObservation.visibilityState,
+                  sensorHealth: t.sensorObservation.sensorHealth,
+                  sensorAvailability: t.sensorObservation.sensorAvailability,
+                }
+              : null,
+            estRangeM: t.estRangeM,
+            estBearingDeg: t.estBearingDeg,
+            estSpeedMs: t.estSpeedMps,
+            uncertaintyM: t.uncertaintyM,
+            isCoasting: t.isCoasting,
+          })),
+        };
       }
 
       const trackData = r3d.getCurrentTracks();
@@ -344,6 +379,7 @@ export function installDrishtiTestBridge(
       const records: DrishtiPresentationRecord[] = candidateTracks.map((t) => {
         const rec = scene3d.getTrackRecord(t.trackNo);
         const obs = t.sensorObservation;
+        const opTrack = engine.getOperatorTracks().find((ot) => ot.trackNo === t.trackNo);
         return {
           trackNo: t.trackNo,
           currentCategory: rec?.currentCategory ?? 'UNKNOWN',
@@ -359,6 +395,11 @@ export function installDrishtiTestBridge(
                 sensorAvailability: obs.sensorAvailability,
               }
             : null,
+          estRangeM: opTrack?.estRangeM ?? obs?.estimatedRangeM,
+          estBearingDeg: opTrack?.estBearingDeg,
+          estSpeedMs: opTrack?.estSpeedMps,
+          uncertaintyM: opTrack?.uncertaintyM,
+          isCoasting: opTrack?.isCoasting,
         };
       });
 
@@ -396,6 +437,15 @@ export function installDrishtiTestBridge(
         'spawnTMs',
         'truePos',
         'trueVelocity',
+        'targetPos',
+        'pk',
+        'u',
+        'prob',
+        'killProb',
+        'spawnSchedule',
+        'threatComposition',
+        'formation',
+        'plannedSpawns',
       ];
 
       const r3d = getRenderer3D();
@@ -415,6 +465,25 @@ export function installDrishtiTestBridge(
               }
               if (t.vel === rawEntity.vel) {
                 leaked.push(`SafeTrackView.${t.trackNo}.velReferenceIdentity`);
+              }
+            }
+          }
+        }
+
+        if (typeof r3d.getEventsProviderInput === 'function') {
+          const live3dEvents = r3d.getEventsProviderInput();
+          for (const ev of live3dEvents) {
+            for (const prop of forbiddenProps) {
+              if (prop in ev || Object.prototype.hasOwnProperty.call(ev, prop)) {
+                leaked.push(`live3dEvents.${(ev as { id?: string }).id}.${prop}`);
+              }
+            }
+            const p = (ev as { payload?: Record<string, unknown> }).payload;
+            if (p) {
+              for (const prop of forbiddenProps) {
+                if (prop in p || Object.prototype.hasOwnProperty.call(p, prop)) {
+                  leaked.push(`live3dEvents.${(ev as { id?: string }).id}.payload.${prop}`);
+                }
               }
             }
           }
@@ -450,6 +519,33 @@ export function installDrishtiTestBridge(
         }
       }
 
+      // Inspect active operator feedback and feedback history
+      const store = useSessionStore.getState();
+      const feedbacks = [
+        ...(store.activeFeedback ? [store.activeFeedback] : []),
+        ...(store.feedbackList || []),
+      ];
+      for (const fb of feedbacks) {
+        for (const prop of forbiddenProps) {
+          if (prop in fb || Object.prototype.hasOwnProperty.call(fb, prop)) {
+            leaked.push(`feedback.${fb.id}.${prop}`);
+          }
+        }
+        if (fb.trackNo) {
+          const raw = engine.curr.find((e) => e.trackNo === fb.trackNo);
+          const est = engine.tracker.getTrackEstimate(fb.trackNo);
+          if (raw && est && Math.abs(est.estRangeM - Math.hypot(raw.pos.x, raw.pos.y)) > 15) {
+            const rawKmStr = (Math.hypot(raw.pos.x, raw.pos.y) / 1000).toFixed(2);
+            if (fb.explanation && fb.explanation.includes(`${rawKmStr} km`)) {
+              leaked.push(`feedback.${fb.id}.exactRangeInExplanation`);
+            }
+            if (fb.measured && String(fb.measured.actual).includes(`${rawKmStr} km`)) {
+              leaked.push(`feedback.${fb.id}.exactRangeInMeasured`);
+            }
+          }
+        }
+      }
+
       return {
         hasLeaks: leaked.length > 0,
         leakedProperties: leaked,
@@ -458,6 +554,28 @@ export function installDrishtiTestBridge(
 
     getOperatorTracks(): import('@/sim/trackerTypes').OperatorTrackView[] {
       return engine.getOperatorTracks();
+    },
+
+    getRfMeasurements(): import('@/sim/measurementTypes').RfMeasurement[] {
+      return engine.rfMeasurements || [];
+    },
+
+    advanceToSessionEnd(): boolean {
+      if (!engine.spec) return false;
+      const targetTicks = Math.ceil(engine.spec.durationMs / 50);
+      while (engine.tickIndex <= targetTicks && !engine.sessionEnded) {
+        engine.step();
+      }
+      useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
+      return engine.sessionEnded;
+    },
+
+    isSessionEnded(): boolean {
+      return engine.sessionEnded;
+    },
+
+    getSessionStatus(): string {
+      return useSessionStore.getState().sessionStatus;
     },
 
     getRecordedSnapshots() {

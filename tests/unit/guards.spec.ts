@@ -163,6 +163,7 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
       const liveDirs = [
         path.resolve('src/ui'),
         path.resolve('src/render'),
+        path.resolve('src/render3d'),
       ];
 
       const bannedImportRegex = /import\s+(?:type\s+)?(?:\{[^}]*\bTrackEntity\b[^}]*\}|\bTrackEntity\b)\s+from/s;
@@ -171,7 +172,7 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
         const files = getAllSourceFiles(dir);
         for (const file of files) {
           // Explicit allowlist: only post-session AAR review components may inspect ground truth entities
-          if (file.includes('src/ui/aar') || file.includes('src\\ui\\aar')) {
+          if (file.includes('src/ui/aar') || file.includes('src\\ui\\aar') || file.includes('aarScene3d')) {
             continue;
           }
 
@@ -183,6 +184,29 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
           ).toBe(false);
         }
       }
+    });
+
+    it('verifies Console.tsx passes getOperatorEvents() to 3D event provider instead of raw sim events', () => {
+      const consoleFile = path.resolve('src/ui/Console.tsx');
+      const content = fs.readFileSync(consoleFile, 'utf-8');
+      expect(content).toContain('r3d.setEventsProvider(() => engineInstance.getOperatorEvents());');
+      expect(content).not.toContain('r3d.setEventsProvider(() => engineInstance.events);');
+    });
+
+    it('verifies handleFire in engine.ts derives operator feedback range from tracker estimates instead of Math.hypot', () => {
+      const engineFile = path.resolve('src/sim/engine.ts');
+      const content = fs.readFileSync(engineFile, 'utf-8');
+
+      // Ensure handleFire does not pass Math.hypot as rangeM to createOperatorFeedback
+      expect(content).not.toMatch(/createOperatorFeedback\([^)]*Math\.hypot/s);
+      // Ensure handleFire uses est?.estRangeM
+      expect(content).toContain('const operatorRangeM = est?.estRangeM;');
+    });
+
+    it('verifies production debug globals are strictly guarded by __DRISHTI_E2E_BUILD__', () => {
+      const bridgeFile = path.resolve('src/testBridge/drishtiTestBridge.ts');
+      const content = fs.readFileSync(bridgeFile, 'utf-8');
+      expect(content).toContain("typeof __DRISHTI_E2E_BUILD__ === 'undefined' || !__DRISHTI_E2E_BUILD__");
     });
   });
 });

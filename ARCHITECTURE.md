@@ -888,6 +888,18 @@ export interface OperatorTrackView {
 }
 ```
 
+#### Live 3D Event Provider vs Post-Session AAR Replay
+
+1. **Live Session (Domain C Projections):**
+   - The live 3D tactical viewport and console HUD receive sanitized events via `engineInstance.getOperatorEvents()`.
+   - Internal 250ms keyframes (`SNAPSHOT`), entity creation (`SPAWN`), and scenario triggers (`TRIGGER`) are completely filtered out of live operator visibility.
+   - Event payloads are sanitized to `OperatorEventView` to eliminate reference identity and prevent leaking ground-truth entity coordinates, true classes, or secrets.
+   - Operator feedback toasts (`OperatorFeedbackToast.tsx`) derive weapon engagement telemetry strictly from tracker estimates (`estRangeM`), suppressing exact range disclosure on release blocks (`INACTIVE_TARGET`, `OUT_OF_ENVELOPE`).
+
+2. **Post-Session AAR Replay (Domain A + Domain C Dual Path):**
+   - After session completion (`SESSION_END`), `aarReplayData.ts` and the AAR Replay component display both ground truth (`pos.x`, `pos.y`, `pos.z`, `trueClass`) alongside tracker estimates (`estX`, `estY`, `estZ`, `estUncertM`).
+   - This provides comprehensive after-action review, estimation error comparison, and trainee classification debriefing without compromising operational fidelity during live play.
+
 > [!NOTE]
 > **Resolution of Live Tracker Blocker (OQ-09):** All operator displays (2D radar PPI, EO/IR HUD overlay, RF direction finder, Track Directory table `~RNG`/`~SPD`, and 3D viewport airframes/symbols) derive positions and kinematics strictly from `TrackEstimator` estimates. The authoritative ground truth remains isolated in `SimEngine` for combat resolution and post-session AAR debriefing.
 

@@ -538,5 +538,14 @@ Files: `src/sim/types.ts`, `src/sim/engine.ts`, `src/sim/tracker.ts`, `src/sim/s
 - [x] Total 2D Cartesian Position Uncertainty: Modeled range and cross-range azimuth dispersion ($\sigma_{\text{pos}} = \sqrt{\sigma_{\text{range}}^2 + (R \cdot \sigma_{\text{az}})^2}$) ensuring stable innovation gating across 0–5 km.
 - [x] Architectural Information-Boundary Guard: Added static test in `tests/unit/guards.spec.ts` enforcing zero imports of `TrackEntity` across all files in `src/render/` and `src/ui/` (with strict allowlist only for post-session `src/ui/aar/*`).
 
+### TASK-18-06A — Residual Operator Feedback, Event Stream & Acceptance Closure · P0 · B/D · 1.5 h
+Files: `src/sim/engine.ts`, `src/sim/operatorFeedback.ts`, `src/render3d/renderer3d.ts`, `src/testBridge/drishtiTestBridge.ts`, `tests/unit/operatorFeedback.spec.ts`, `tests/unit/operatorEvents.spec.ts`, `tests/unit/guards.spec.ts`, `tests/e2e/task18_trackerEstimation.spec.ts`, `Rules.md`, `ARCHITECTURE.md`, `Tasks.md`, `MEMORY.md`
+- [x] Residual Operator Feedback Range Leak Elimination: In `src/sim/engine.ts` `handleFire()`, replaced exact distance `Math.hypot(target.pos.x, target.pos.y)` with estimated range `est?.estRangeM` and updated `src/sim/operatorFeedback.ts` to format `~X.XX km` or omit `measured` entirely when no track estimate exists.
+- [x] Live Event Stream Sanitization: In `src/sim/engine.ts`, excluded internal keyframe `SNAPSHOT`, `SPAWN`, and `TRIGGER` events via `OPERATOR_FACING_EVENT_TYPES` whitelist, preventing operator HUD log displacement and detaching raw payloads.
+- [x] Comprehensive Test Bridge Zero-Leakage Audit: In `src/testBridge/drishtiTestBridge.ts`, expanded `inspectOperatorFacingData()` to audit `OperatorTrackView`, `SafeTrackView`, `UiTrackRow`, `recentEvents`, live 3D event provider input, active feedback toast, and DOM event log lines.
+- [x] Deterministic AAR Replay Verification: Advanced simulation to genuine `SESSION_END` (`advanceToSessionEnd()`, status `COMPLETED`), verifying post-session AAR synchronized replay preserves both ground truth and estimated track coordinates.
+- [x] RF Bearing-Only Verification: Added Playwright test verifying RF strobes provide bearing-only measurements (`measuredBearingDeg`, `bearingUncertaintyDeg`), never fabricate range/Cartesian coordinates, and suppress output when RF sensor is `OUT`.
+- [x] Static Information Boundary Expansion: Added unit tests in `tests/unit/guards.spec.ts` guarding against `TrackEntity` in `src/render3d`, verifying 3D event provider uses `getOperatorEvents()`, confirming feedback uses tracker estimates, and enforcing `__DRISHTI_E2E_BUILD__` guards.
+
 
 

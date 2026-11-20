@@ -175,7 +175,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
   });
 
   test('04. EO/IR Viewport Uses Estimated Range and Neutral Airframe Morphology', async ({ page }) => {
-    await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/', false);
+    await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/', true);
 
     // Wait until tracks exist
     await expect.poll(async () => {
@@ -204,22 +204,39 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
       await trackRow.click();
     }
 
-    await page.waitForTimeout(1000);
+    // Position target within clear optical reach (< 1000m)
+    await page.evaluate((trk) => {
+      const win = window as unknown as WindowWithDrishti;
+      win.__DRISHTI_TEST__?.positionTrack(trk!, { x: 800, y: 800, z: 100 });
+    }, targetNo);
 
-    // Verify presentation state observation (if resolved) uses neutral morphology
+    // Wait until observation is resolved via expect.poll
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const win = window as unknown as WindowWithDrishti;
+        const state = win.__DRISHTI_TEST__?.getPresentationState(tNo);
+        return state?.tracks.find((t) => t.trackNo === tNo)?.observation !== undefined;
+      }, targetNo);
+    }, { timeout: 10000, intervals: [200, 500] }).toBe(true);
+
+    // Verify presentation state observation uses neutral morphology and estimated range HUD
     const state = await page.evaluate((tNo) => {
       const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getPresentationState(tNo);
     }, targetNo);
 
     expect(state).toBeDefined();
-    if (state?.tracks[0]?.observation) {
-      const allowedCategories = ['RADAR_SYMBOL', 'OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD', 'UNRESOLVED_AIRFRAME'];
-      expect(allowedCategories).toContain(state.tracks[0].currentCategory);
-      // Strictly verify no tactical classification in category
-      expect(state.tracks[0].currentCategory).not.toBe('HOSTILE_ATTACK');
-      expect(state.tracks[0].currentCategory).not.toBe('HOSTILE_ISR');
-    }
+    const selTrack = state?.tracks.find((t) => t.trackNo === targetNo);
+    expect(selTrack).toBeDefined();
+    expect(selTrack?.estRangeM).toBeGreaterThan(0);
+    expect(selTrack?.observation).toBeDefined();
+
+    const allowedCategories = ['RADAR_SYMBOL', 'OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD', 'UNRESOLVED_AIRFRAME'];
+    expect(allowedCategories).toContain(selTrack!.currentCategory);
+    // Strictly verify no tactical classification in category or morphology
+    expect(selTrack!.currentCategory).not.toBe('HOSTILE_ATTACK');
+    expect(selTrack!.currentCategory).not.toBe('HOSTILE_ISR');
+    expect(selTrack!.currentCategory).not.toBe('SWARM_ELEMENT');
 
     await saveShot(page, 'task18_04_eoir_estimated_range_and_neutral_morphology.png');
   });
@@ -246,15 +263,33 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
   test('06. Post-Session AAR Preserves Truth-vs-Estimate Comparison', async ({ page }) => {
     await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/', false);
 
-    await page.waitForTimeout(1500);
+    // Deterministically advance to genuine SESSION_END via test bridge
+    const finishAdvancement = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.advanceToSessionEnd();
+    });
+    expect(finishAdvancement).toBe(true);
 
-    // Open AAR debrief via TopBar button
-    const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
-    await expect(aarBtn).toBeVisible({ timeout: 5000 });
-    await aarBtn.click();
+    const isEnded = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.isSessionEnded();
+    });
+    expect(isEnded).toBe(true);
 
-    // Wait for AAR modal
+    const sessionStatus = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getSessionStatus();
+    });
+    expect(sessionStatus).toBe('COMPLETED');
+
+    // Wait for AAR modal (either already auto-opened upon session completion, or open via TopBar button)
     const aarModal = page.locator('[data-testid="aar-modal"], div.fixed.inset-0').first();
+    if (!(await aarModal.isVisible())) {
+      const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
+      if (await aarBtn.isVisible()) {
+        await aarBtn.click({ force: true });
+      }
+    }
     await expect(aarModal).toBeVisible({ timeout: 5000 });
 
     // Require REPLAY tab and switch to it
@@ -313,5 +348,68 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     expect(globals.hasSimEngine).toBe(false);
 
     await saveShot(page, 'task18_07_production_airgap_and_isolation.png');
+  });
+
+  test('08. RF Direction-Finding Strobes Render Bearing-Only Measurements without Range', async ({ page }) => {
+    await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/', false);
+
+    // Switch sensor to RF
+    const rfBtn = page.getByRole('button', { name: /^\[3\] RF$/i });
+    if (await rfBtn.isVisible()) {
+      await rfBtn.click();
+    }
+
+    // Wait until RF measurements are present via test bridge
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        const win = window as unknown as WindowWithDrishti;
+        const rf = win.__DRISHTI_TEST__?.getRfMeasurements();
+        return rf && rf.length > 0;
+      });
+    }, { timeout: 10000, intervals: [200, 500] }).toBe(true);
+
+    const rfMeasurements = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getRfMeasurements() ?? [];
+    });
+
+    expect(rfMeasurements.length).toBeGreaterThan(0);
+    for (const meas of rfMeasurements) {
+      expect(typeof meas.measuredBearingDeg).toBe('number');
+      expect(typeof meas.bearingUncertaintyDeg).toBe('number');
+      expect(meas.bearingUncertaintyDeg).toBeGreaterThan(0);
+
+      // Strictly verify no range or Cartesian fabrication
+      const rawMeas = meas as unknown as Record<string, unknown>;
+      expect(rawMeas.x).toBeUndefined();
+      expect(rawMeas.y).toBeUndefined();
+      expect(rawMeas.z).toBeUndefined();
+      expect(rawMeas.rangeM).toBeUndefined();
+      expect(rawMeas.trueClass).toBeUndefined();
+    }
+
+    // Cut RF to OUT via test bridge
+    const cutSuccess = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.setSensorCondition({ sensor: 'RF', health: 'OUT' });
+    });
+    expect(cutSuccess).toBe(true);
+
+    // Poll until RF measurements are suppressed (0 measurements when sensor is OUT)
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        const win = window as unknown as WindowWithDrishti;
+        const rf = win.__DRISHTI_TEST__?.getRfMeasurements();
+        return rf ? rf.length : -1;
+      });
+    }, { timeout: 10000, intervals: [200, 500] }).toBe(0);
+
+    const postCutRf = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getRfMeasurements() ?? [];
+    });
+    expect(postCutRf.length).toBe(0);
+
+    await saveShot(page, 'task18_08_rf_bearing_only_measurements.png');
   });
 });

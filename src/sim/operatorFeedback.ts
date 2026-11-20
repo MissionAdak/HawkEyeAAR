@@ -74,23 +74,29 @@ export function createOperatorFeedback(params: {
     }
 
     case 'PNR_VIOLATION': {
-      const actualRange = rangeM ?? 0;
       const rMin = CONFIG.thresholds.rMinM ?? 500;
+      const hasEstimatedRange = typeof rangeM === 'number';
       return {
         id,
         timestampMs,
         category: 'RELEASE_BLOCKED',
         severity: 'ERROR',
         title: 'RELEASE BLOCKED — RELEASE WINDOW CLOSED',
-        explanation: `Target range (${(actualRange / 1000).toFixed(2)} km) has breached the no-release boundary (${(rMin / 1000).toFixed(2)} km). Point of No Return exceeded.`,
+        explanation: hasEstimatedRange
+          ? `Target estimated range (~${(rangeM / 1000).toFixed(2)} km) has breached the no-release boundary (${(rMin / 1000).toFixed(2)} km). Point of No Return exceeded.`
+          : `Target has breached the no-release boundary (${(rMin / 1000).toFixed(2)} km). Point of No Return exceeded.`,
         trackNo,
         effectorId,
         reasonCode,
-        measured: {
-          actual: `${(actualRange / 1000).toFixed(2)} km`,
-          required: `> ${(rMin / 1000).toFixed(2)} km`,
-          unit: 'Range',
-        },
+        ...(hasEstimatedRange
+          ? {
+              measured: {
+                actual: `~${(rangeM / 1000).toFixed(2)} km`,
+                required: `> ${(rMin / 1000).toFixed(2)} km`,
+                unit: 'Range',
+              },
+            }
+          : {}),
         recommendedAction: 'Engage secondary threats or initiate terminal alert protocols.',
       };
     }
@@ -111,27 +117,33 @@ export function createOperatorFeedback(params: {
     }
 
     case 'OUT_OF_ENVELOPE': {
-      const actualRange = rangeM ?? 0;
       const minM = effConfig?.envelopeMinM ?? 0;
       const maxM = effConfig?.envelopeMaxM ?? 5000;
-      const isTooClose = actualRange < minM;
+      const hasEstimatedRange = typeof rangeM === 'number';
+      const isTooClose = hasEstimatedRange && rangeM < minM;
       return {
         id,
         timestampMs,
         category: 'RELEASE_BLOCKED',
         severity: 'ERROR',
         title: 'RELEASE BLOCKED — OUTSIDE EFFECTOR ENVELOPE',
-        explanation: `Target range (${(actualRange / 1000).toFixed(2)} km) is ${
-          isTooClose ? 'inside minimum arming range' : 'beyond maximum effective range'
-        } for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`,
+        explanation: hasEstimatedRange
+          ? `Target estimated range (~${(rangeM / 1000).toFixed(2)} km) is ${
+              isTooClose ? 'inside minimum arming range' : 'beyond maximum effective range'
+            } for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`
+          : `Target is outside effective engagement envelope for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`,
         trackNo,
         effectorId,
         reasonCode,
-        measured: {
-          actual: `${(actualRange / 1000).toFixed(2)} km`,
-          required: `${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km`,
-          unit: 'Range',
-        },
+        ...(hasEstimatedRange
+          ? {
+              measured: {
+                actual: `~${(rangeM / 1000).toFixed(2)} km`,
+                required: `${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km`,
+                unit: 'Range',
+              },
+            }
+          : {}),
         recommendedAction: isTooClose
           ? 'Switch to close-in kinetic effector (GUN) or RF Soft-Kill.'
           : 'Wait for target to close into envelope or select long-range effector.',

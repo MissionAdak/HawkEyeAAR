@@ -78,6 +78,10 @@ export class Renderer3D {
     this.getEvents = fn;
   }
 
+  public getEventsProviderInput(): (SimEvent | OperatorEventView)[] {
+    return this.getEvents ? this.getEvents() : [];
+  }
+
   public setCoverageProvider(fn: () => SensorCoverageState): void {
     this.getCoverage = fn;
   }
