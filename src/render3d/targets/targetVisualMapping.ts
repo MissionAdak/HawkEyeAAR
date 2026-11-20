@@ -33,8 +33,8 @@ export function resolveTargetModelCategory(
     return resolveTargetPresentation(track, options.context).presentationCategory;
   }
 
-  // If track has observedAirframe, use default sensor-aware presentation
-  if (track.observedAirframe) {
+  // If track has approved sensorObservation, use default sensor-aware presentation
+  if (track.sensorObservation) {
     return resolveTargetPresentation(track, {
       activeSensor: 'EOIR',
       displayMode: 'AUTO',

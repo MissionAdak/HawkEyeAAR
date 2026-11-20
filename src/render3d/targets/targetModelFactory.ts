@@ -16,7 +16,6 @@ import {
 import { buildLoiteringMunitionModel } from './fixedWingModels';
 
 // Tactical NATO-inspired colors (Rule R3.4)
-const COLOR_THREAT = 0xff3b30;    // Hostile crimson
 const COLOR_FRIEND = 0x00f0ff;    // Friendly cyan
 const COLOR_CIVIL = 0x00ff66;     // Civilian green
 const COLOR_UNKNOWN = 0xffb700;   // Amber unclassified
@@ -47,21 +46,21 @@ export class TargetModelFactory {
   public getPaletteForCategory(category: TargetModelCategory): TargetModelPalette {
     switch (category) {
       case 'HOSTILE_ATTACK': {
-        const body = this.getMaterial('body_threat', () => new THREE.MeshLambertMaterial({ color: 0x1d2127 }));
-        const accent = this.getMaterial('accent_threat', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
-        const rotors = this.getMaterial('rotors_threat', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT, transparent: true, opacity: 0.35 }));
+        const body = this.getMaterial('body_fpv', () => new THREE.MeshLambertMaterial({ color: 0x1d2127 }));
+        const accent = this.getMaterial('accent_fpv', () => new THREE.MeshBasicMaterial({ color: 0x3a424d }));
+        const rotors = this.getMaterial('rotors_fpv', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.35 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'HOSTILE_ISR': {
         const body = this.getMaterial('body_isr', () => new THREE.MeshLambertMaterial({ color: 0x242a33 }));
-        const accent = this.getMaterial('accent_isr', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
-        const rotors = this.getMaterial('rotors_isr', () => new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.3 }));
+        const accent = this.getMaterial('accent_isr', () => new THREE.MeshBasicMaterial({ color: 0x48525e }));
+        const rotors = this.getMaterial('rotors_isr', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.3 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'SWARM_ELEMENT': {
         const body = this.getMaterial('body_swarm', () => new THREE.MeshLambertMaterial({ color: 0x181a1e }));
-        const accent = this.getMaterial('accent_swarm', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
-        const rotors = this.getMaterial('rotors_swarm', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT, transparent: true, opacity: 0.4 }));
+        const accent = this.getMaterial('accent_swarm', () => new THREE.MeshBasicMaterial({ color: 0x363d47 }));
+        const rotors = this.getMaterial('rotors_swarm', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.4 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'CIVIL_UAS': {
@@ -84,7 +83,7 @@ export class TargetModelFactory {
       case 'LOITERING_MUNITION':
       case 'OBSERVED_FIXED_WING': {
         const body = this.getMaterial('body_fixedwing', () => new THREE.MeshLambertMaterial({ color: 0x1e2329 }));
-        const accent = this.getMaterial('accent_fixedwing', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
+        const accent = this.getMaterial('accent_fixedwing', () => new THREE.MeshBasicMaterial({ color: 0x3d4652 }));
         const rotors = this.getMaterial('rotors_fixedwing', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }

@@ -20,12 +20,22 @@ import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo, TargetDisplayM
 import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
+import {
+  evaluateSensorObservation,
+  type SensorObservationPipelineContext,
+} from '@/sim/sensorObservation';
 
 /**
- * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3 & D-37).
- * Filters out undetected tracks and excludes all truth properties (trueClass, droneType, valueInr, etc.).
+ * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3, D-37 & Task 17.3 §2).
+ * Filters out undetected tracks and strictly excludes all truth properties:
+ * (trueClass, droneType, valueInr, hidden waypoints, secret composition, seeded kill draws).
+ * Optical airframe signatures are generated via evaluateSensorObservation only when sensor conditions permit.
  */
-function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null): SafeTrackView[] {
+export function projectSafeTracks(
+  curr: TrackEntity[],
+  selectedTrackNo: string | null,
+  sensorContext?: SensorObservationPipelineContext | null
+): SafeTrackView[] {
   return curr
     .filter(
       (e) =>
@@ -44,7 +54,7 @@ function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null):
       ghostSigmaM: e.ghostSigmaM,
       isSelected: e.trackNo === selectedTrackNo,
       lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
-      observedAirframe: e.droneType,
+      sensorObservation: sensorContext ? evaluateSensorObservation(e, sensorContext) : null,
     }));
 }
 
@@ -560,11 +570,27 @@ export const Console: React.FC = () => {
     }));
 
     r3d.setEventsProvider(() => engineInstance.events);
+    r3d.setSensorHealthProvider(() => engineInstance.sensorHealth);
 
-    r3d.setTrackProvider(() => ({
-      tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
-      selectedTrackNo: engineInstance.selectedTrackNo,
-    }));
+    r3d.setTrackProvider(() => {
+      const activeSensor = useSessionStore.getState().ui.activeSensor;
+      const currentSimMs = engineInstance.tickIndex * 50;
+      const envMgr = renderer3dRef.current?.getEnvironmentManager();
+      const weather = envMgr?.isFogActive() ? 'FOG' : (envMgr?.getDescriptor().weather ?? 'CLEAR');
+      const isNight = engineInstance.spec?.dayNight === 'NIGHT' || (envMgr?.isNightTime() ?? false);
+      const sensorContext: SensorObservationPipelineContext = {
+        activeSensor,
+        sensorHealth: engineInstance.sensorHealth,
+        isNight,
+        weather,
+        currentSimMs,
+      };
+
+      return {
+        tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo, sensorContext),
+        selectedTrackNo: engineInstance.selectedTrackNo,
+      };
+    });
 
     r3d.setCoverageProvider(() => {
       const currentSimMs = engineInstance.tickIndex * 50;

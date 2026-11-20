@@ -1,4 +1,4 @@
-import type { SafeTrackView, TargetDisplayMode } from '../types';
+import type { SafeTrackView, TargetDisplayMode, ObservedAirframeSignature } from '../types';
 import type { SensorMode, DroneType } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
 import type { WeatherType } from '../environment/types';
@@ -30,7 +30,13 @@ export interface TargetObservationResult {
 }
 
 /**
- * Optical range constants in clear daylight (metres).
+ * NOTIONAL TRAINING ASSUMPTIONS & VISIBILITY PARAMETERS (Task 17.3 §4, §8):
+ *
+ * 1. Clear Daylight Nominal Optical Recognition Range: 2400 metres.
+ * 2. Maximum Optical Detection Range: 3800 metres.
+ *
+ * CAUTION: These parameters are synthetic training heuristics for simulation education,
+ * NOT physically calibrated military sensor specifications.
  */
 export const CLEAR_OPTICAL_RANGE_M = 2400;
 export const MAX_OPTICAL_RANGE_M = 3800;
@@ -39,39 +45,53 @@ export const MAX_OPTICAL_RANGE_M = 3800;
  * Maps legitimate observable physical airframe type to procedural target model category.
  * Note: This maps physical aircraft geometry, NOT tactical threat intent (trueClass).
  */
-export function mapAirframeToCategory(airframe?: DroneType): TargetModelCategory {
-  switch (airframe) {
+export function mapSignatureToCategory(
+  signature?: ObservedAirframeSignature | DroneType | string
+): TargetModelCategory {
+  switch (signature) {
+    case 'MULTIROTOR_COMPACT':
     case 'FPV_ATTACK':
       return 'HOSTILE_ATTACK';
+    case 'MULTIROTOR_WITH_CAMERA_POD':
     case 'RECON_QUAD':
       return 'HOSTILE_ISR';
     case 'SWARM_ELEMENT':
       return 'SWARM_ELEMENT';
+    case 'FIXED_WING_DELTA':
     case 'LOITERING_MUNITION':
       return 'LOITERING_MUNITION';
+    case 'MULTIROTOR_STANDARD':
     case 'CIVIL_UAS':
       return 'CIVIL_UAS';
     case 'FRIENDLY_UAS':
       return 'FRIENDLY';
+    case 'BIRD_LIKE':
     case 'BIRD':
       return 'BIRD';
+    case 'UNRESOLVED_AIRFRAME':
     default:
       return 'UNKNOWN_AIRFRAME';
   }
 }
 
+export const mapAirframeToCategory = mapSignatureToCategory;
+
 /**
- * Resolves sensor-aware 3D target visual presentation (Task 17.2).
+ * Resolves sensor-aware 3D target visual presentation (Task 17.2, Task 17.3).
  *
  * Rules:
- * 1. RADAR mode / displayMode RADAR: produces RADAR_SYMBOL (high-contrast diamond reticle).
- * 2. EO/IR mode:
- *    - Masked tracks (terrain/buildings): strictly RADAR_SYMBOL / masked state. Never see-through.
- *    - In EVAL mode: omniscient truth view is impossible; observation strictly honors physics.
- *    - Within clear optical range (adjusted for fog/rain/night): resolves physical airframe.
- *    - Between clear range and max optical range (or degraded fog): resolves UNKNOWN_AIRFRAME.
- *    - Beyond max optical range or low track quality: resolves RADAR_SYMBOL.
- * 3. Operator classification (traineeLabel) does NOT alter physical airframe geometry.
+ * 1. RADAR mode / displayMode RADAR: strictly produces RADAR_SYMBOL (high-contrast diamond reticle).
+ *    TGT:AIR preference CANNOT override RADAR selection.
+ * 2. RF mode: strictly produces RADAR_SYMBOL. Optical models are forbidden in RF mode.
+ * 3. EO/IR mode:
+ *    - Sensor offline (eoirOk === false): strictly RADAR_SYMBOL / SENSOR_OFFLINE.
+ *    - Masked tracks (terrain/buildings): strictly RADAR_SYMBOL / MASKED state. Never see-through.
+ *    - Approved sensor observation present:
+ *      * resolution === 'FULL': maps observed signature to physical model category.
+ *      * resolution === 'DEGRADED': resolves UNKNOWN_AIRFRAME.
+ *      * resolution === 'UNRESOLVED': resolves RADAR_SYMBOL.
+ *    - If no observation is available: returns RADAR_SYMBOL.
+ * 4. Operator classification (traineeLabel) does NOT alter physical airframe geometry.
  */
 export function resolveTargetPresentation(
   track: SafeTrackView,
@@ -98,8 +118,8 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 2. Active sensor is RADAR or RF in AUTO mode
-  if (displayMode === 'AUTO' && (activeSensor === 'RADAR' || activeSensor === 'RF')) {
+  // 2. Active sensor is RADAR or RF (Task 17.3 §6: AIRFRAME preference cannot override RADAR or RF!)
+  if (activeSensor === 'RADAR' || activeSensor === 'RF') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
@@ -109,7 +129,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 3. Sensor Health Check for EO/IR
+  // 3. Sensor Health Check for EO/IR (Task 17.3 §7)
   if (activeSensor === 'EOIR' && !sensorHealth.eoirOk) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -121,7 +141,7 @@ export function resolveTargetPresentation(
   }
 
   // 4. Line-of-sight & terrain masking check
-  // Optical sensors cannot see through buildings or terrain!
+  // Optical sensors cannot see through buildings or terrain! (Task 17.3 §8)
   if (track.masked) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -132,7 +152,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // In EVAL mode, prevent omniscient truth override (Rule F5 & §7)
+  // In EVAL mode, prevent omniscient truth override (Rule F5 & Task 17.3 §6)
   if (mode === 'EVAL' && displayMode === 'AIRFRAME' && activeSensor !== 'EOIR') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -143,7 +163,72 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 5. Optical distance propagation & atmospheric attenuation
+  // 5. Approved Sensor Observation Dispatch (Task 17.3 §3, §4)
+  if (track.sensorObservation) {
+    const obs = track.sensorObservation;
+    const signature = obs.signature ?? obs.observedSignature ?? 'UNRESOLVED_AIRFRAME';
+    const resolution = obs.resolutionLevel ?? obs.resolution ?? 'UNRESOLVED';
+    const sensorOk = obs.sensorAvailability ?? obs.sensorHealthOk ?? true;
+    const rangeM = obs.estimatedRangeM ?? 0;
+
+    if (!sensorOk) {
+      return {
+        presentationCategory: 'RADAR_SYMBOL',
+        isVisuallyResolved: false,
+        observationState: 'SENSOR_OFFLINE',
+        opticalConfidence: 0,
+        reason: 'EO/IR sensor offline in observation',
+      };
+    }
+    if (obs.visibilityState === 'MASKED') {
+      return {
+        presentationCategory: 'RADAR_SYMBOL',
+        isVisuallyResolved: false,
+        observationState: 'MASKED',
+        opticalConfidence: 0,
+        reason: 'Contact masked by terrain or structure',
+      };
+    }
+    if (resolution === 'FULL') {
+      const category = mapSignatureToCategory(signature);
+      return {
+        presentationCategory: category,
+        isVisuallyResolved: true,
+        observationState: 'CLEAR_OPTICAL',
+        opticalConfidence: obs.confidence,
+        reason: `Sensor observation resolved signature ${signature} (${Math.round(rangeM)}m)`,
+      };
+    }
+    if (resolution === 'DEGRADED') {
+      return {
+        presentationCategory: 'UNKNOWN_AIRFRAME',
+        isVisuallyResolved: false,
+        observationState: 'DEGRADED_OPTICAL',
+        opticalConfidence: obs.confidence,
+        reason: `Sensor observation degraded by ${obs.visibilityState} (${Math.round(rangeM)}m)`,
+      };
+    }
+    return {
+      presentationCategory: 'RADAR_SYMBOL',
+      isVisuallyResolved: false,
+      observationState: 'OUT_OF_RANGE',
+      opticalConfidence: obs.confidence,
+      reason: `Contact at ${Math.round(rangeM)}m exceeds sensor optical resolution`,
+    };
+  }
+
+  // If sensorObservation is explicitly null, sensor conditions forbade an observation
+  if (track.sensorObservation === null) {
+    return {
+      presentationCategory: 'RADAR_SYMBOL',
+      isVisuallyResolved: false,
+      observationState: 'OUT_OF_RANGE',
+      opticalConfidence: 0,
+      reason: 'No approved optical sensor observation available',
+    };
+  }
+
+  // 6. Fallback evaluation when sensorObservation is undefined (direct test fixtures)
   const dx = track.pos.x - sensorPos.x;
   const dy = track.pos.y - sensorPos.y;
   const dz = track.pos.z - sensorPos.z;
@@ -166,7 +251,7 @@ export function resolveTargetPresentation(
   const clearThreshold = CLEAR_OPTICAL_RANGE_M * weatherFactor * lightingFactor;
   const maxThreshold = MAX_OPTICAL_RANGE_M * weatherMaxFactor * (isNight ? 0.75 : 1.0);
 
-  // 6. Track quality factor
+  // Track quality factor
   if (track.q < 0.20) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -177,7 +262,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 7. Distance threshold resolution
+  // Distance threshold resolution
   if (distM > maxThreshold) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -189,7 +274,6 @@ export function resolveTargetPresentation(
   }
 
   if (distM > clearThreshold) {
-    // Partially resolved: craft is visually confirmed, but specific airframe details unresolved
     const opticalConfidence = Math.max(0.2, Math.min(0.65, 1.0 - (distM - clearThreshold) / (maxThreshold - clearThreshold)));
     return {
       presentationCategory: 'UNKNOWN_AIRFRAME',
@@ -202,7 +286,7 @@ export function resolveTargetPresentation(
 
   // Within clear optical recognition range
   const opticalConfidence = Math.max(0.7, Math.min(1.0, 1.0 - (distM / (clearThreshold * 1.5))));
-  const category = mapAirframeToCategory(track.observedAirframe);
+  const category = mapSignatureToCategory((track as unknown as { observedAirframe?: string }).observedAirframe);
 
   return {
     presentationCategory: category,

@@ -1,0 +1,230 @@
+import type { TrackEntity, SensorMode, DroneType } from './types';
+import type {
+  ApprovedSensorObservation,
+  ObservedAirframeSignature,
+} from '@/render3d/types';
+import type { WeatherType } from '@/render3d/environment/types';
+import type { SensorHealthStatus } from './engine';
+
+/**
+ * NOTIONAL TRAINING ASSUMPTIONS & VISIBILITY PARAMETERS (Task 17.3 §4, §8):
+ *
+ * 1. Clear Daylight Nominal Optical Recognition Range: 2400 metres.
+ *    Within this range, an unobstructed optical / thermal camera resolves fine airframe
+ *    geometry (propellers, wings, chassis layout).
+ *
+ * 2. Maximum Optical Detection Range: 3800 metres.
+ *    Beyond this range, an airborne vehicle subtends too few pixels to resolve
+ *    its silhouette, returning to an unresolved blip.
+ *
+ * 3. Atmospheric Attenuation Factors:
+ *    - FOG: optical transmission drops severely. Nominal recognition scale factor: 0.35x (~840m),
+ *      maximum detection factor: 0.48x (~1824m).
+ *    - RAIN: nominal recognition scale factor: 0.65x (~1560m), detection factor: 0.75x (~2850m).
+ *    - NIGHT (Thermal MWIR / LWIR): 0.60x nominal clear optical range (~1440m).
+ *
+ * 4. Line-of-Sight Masking:
+ *    When entity.masked is true (behind terrain, buildings, or ridge), optical line-of-sight
+ *    is blocked; no physical airframe observation is generated.
+ *
+ * 5. Sensor Availability:
+ *    - EO/IR 'OUT': sensor is offline/failed/destroyed. Zero optical observations generated.
+ *    - EO/IR 'DEG': sensor optical lens is clouded or tracking jittered; produces degraded observations.
+ *
+ * CAUTION: These parameters are synthetic training heuristics for simulation education,
+ * NOT physically calibrated military sensor specifications.
+ */
+export const NOMINAL_CLEAR_OPTICAL_RECOGNITION_M = 2400;
+export const NOMINAL_MAX_OPTICAL_DETECTION_M = 3800;
+
+export interface SensorObservationPipelineContext {
+  activeSensor: SensorMode;
+  sensorHealth: Record<SensorMode, SensorHealthStatus>;
+  isNight?: boolean;
+  weather?: WeatherType;
+  currentSimMs: number;
+  sensorPos?: { x: number; y: number; z: number };
+}
+
+/**
+ * Authoritatively maps simulation entity drone types to physical observable appearance signatures.
+ * Invariant (Task 17.3 §3, §5):
+ * Physical appearance signatures represent observable physical airframe geometry ONLY.
+ * They do NOT represent threat intent or tactical classification.
+ */
+export function mapDroneTypeToAirframeSignature(droneType: DroneType): ObservedAirframeSignature {
+  switch (droneType) {
+    case 'FPV_ATTACK':
+    case 'SWARM_ELEMENT':
+      return 'MULTIROTOR_COMPACT';
+    case 'RECON_QUAD':
+      return 'MULTIROTOR_WITH_CAMERA_POD';
+    case 'CIVIL_UAS':
+    case 'FRIENDLY_UAS':
+      return 'MULTIROTOR_STANDARD';
+    case 'LOITERING_MUNITION':
+      return 'FIXED_WING_DELTA';
+    case 'BIRD':
+      return 'BIRD_LIKE';
+    default:
+      return 'UNRESOLVED_AIRFRAME';
+  }
+}
+
+/**
+ * Evaluates legitimate sensor observation for an entity (Task 17.3 §3, §4).
+ * Returns an ApprovedSensorObservation if and only if sensor conditions permit observation.
+ * Returns null when active sensor is RADAR or RF (optical models forbidden in non-EO/IR modes).
+ */
+export function evaluateSensorObservation(
+  entity: TrackEntity,
+  context: SensorObservationPipelineContext
+): ApprovedSensorObservation | null {
+  const {
+    activeSensor,
+    sensorHealth,
+    isNight = false,
+    weather = 'CLEAR',
+    currentSimMs,
+    sensorPos = { x: 0, y: 0, z: 0 },
+  } = context;
+
+  // Rule §3, §6: Optical airframe observations are ONLY generated in EO/IR mode.
+  // In RADAR or RF mode, no optical observation is approved.
+  if (activeSensor !== 'EOIR') {
+    return null;
+  }
+
+  const eoirHealth = sensorHealth.EOIR ?? 'OK';
+
+  // Rule §7: EO/IR offline prevents optical model presentation entirely.
+  if (eoirHealth === 'OUT') {
+    return {
+      signature: 'UNRESOLVED_AIRFRAME',
+      observedSignature: 'UNRESOLVED_AIRFRAME',
+      timestampMs: currentSimMs,
+      sensorSource: 'EOIR',
+      confidence: 0,
+      resolutionLevel: 'UNRESOLVED',
+      resolution: 'UNRESOLVED',
+      visibilityState: 'CLEAR',
+      sensorAvailability: false,
+      sensorHealthOk: false,
+      estimatedRangeM: 0,
+    };
+  }
+
+  // Rule §4, §8: Terrain/building line-of-sight masking strictly occludes optical vision.
+  if (entity.masked) {
+    const distM = Math.hypot(entity.pos.x - sensorPos.x, entity.pos.y - sensorPos.y, entity.pos.z - sensorPos.z);
+    return {
+      signature: 'UNRESOLVED_AIRFRAME',
+      observedSignature: 'UNRESOLVED_AIRFRAME',
+      timestampMs: currentSimMs,
+      sensorSource: 'EOIR',
+      confidence: 0,
+      resolutionLevel: 'UNRESOLVED',
+      resolution: 'UNRESOLVED',
+      visibilityState: 'MASKED',
+      sensorAvailability: true,
+      sensorHealthOk: true,
+      estimatedRangeM: Math.round(distM),
+    };
+  }
+
+  // 3D Distance propagation from defensive sensor origin
+  const dx = entity.pos.x - sensorPos.x;
+  const dy = entity.pos.y - sensorPos.y;
+  const dz = entity.pos.z - sensorPos.z;
+  const distM = Math.hypot(dx, dy, dz);
+
+  // Weather atmospheric attenuation factors
+  let weatherFactor = 1.0;
+  let weatherMaxFactor = 1.0;
+  if (weather === 'FOG') {
+    weatherFactor = 0.35;      // Clear recognition drops to ~840m
+    weatherMaxFactor = 0.48;   // Visual detection drops to ~1824m
+  } else if (weather === 'RAIN') {
+    weatherFactor = 0.65;
+    weatherMaxFactor = 0.75;
+  }
+
+  // Night-time thermal attenuation factor
+  const lightingFactor = isNight ? 0.60 : 1.0;
+
+  const clearThreshold = NOMINAL_CLEAR_OPTICAL_RECOGNITION_M * weatherFactor * lightingFactor;
+  const maxThreshold = NOMINAL_MAX_OPTICAL_DETECTION_M * weatherMaxFactor * (isNight ? 0.75 : 1.0);
+
+  // Severe track quality degradation (coasting/dropped return)
+  if (entity.q < 0.20) {
+    return {
+      signature: 'UNRESOLVED_AIRFRAME',
+      observedSignature: 'UNRESOLVED_AIRFRAME',
+      timestampMs: currentSimMs,
+      sensorSource: 'EOIR',
+      confidence: 0,
+      resolutionLevel: 'UNRESOLVED',
+      resolution: 'UNRESOLVED',
+      visibilityState: 'OUT_OF_RANGE',
+      sensorAvailability: true,
+      sensorHealthOk: true,
+      estimatedRangeM: Math.round(distM),
+    };
+  }
+
+  // Beyond maximum optical reach
+  if (distM > maxThreshold) {
+    return {
+      signature: 'UNRESOLVED_AIRFRAME',
+      observedSignature: 'UNRESOLVED_AIRFRAME',
+      timestampMs: currentSimMs,
+      sensorSource: 'EOIR',
+      confidence: 0.1,
+      resolutionLevel: 'UNRESOLVED',
+      resolution: 'UNRESOLVED',
+      visibilityState: 'OUT_OF_RANGE',
+      sensorAvailability: true,
+      sensorHealthOk: true,
+      estimatedRangeM: Math.round(distM),
+    };
+  }
+
+  // Intermediate distance or degraded sensor: partial visual recognition
+  if (distM > clearThreshold || eoirHealth === 'DEG') {
+    const confidence = Math.max(
+      0.2,
+      Math.min(0.65, 1.0 - (distM - clearThreshold) / Math.max(1, maxThreshold - clearThreshold))
+    );
+    return {
+      signature: 'UNRESOLVED_AIRFRAME',
+      observedSignature: 'UNRESOLVED_AIRFRAME',
+      timestampMs: currentSimMs,
+      sensorSource: 'EOIR',
+      confidence: eoirHealth === 'DEG' ? confidence * 0.7 : confidence,
+      resolutionLevel: 'DEGRADED',
+      resolution: 'DEGRADED',
+      visibilityState: 'DEGRADED',
+      sensorAvailability: true,
+      sensorHealthOk: true,
+      estimatedRangeM: Math.round(distM),
+    };
+  }
+
+  // Clear optical recognition: approved physical airframe observation
+  const confidence = Math.max(0.7, Math.min(1.0, 1.0 - distM / (clearThreshold * 1.5)));
+  const signature = mapDroneTypeToAirframeSignature(entity.droneType);
+
+  return {
+    signature,
+    observedSignature: signature,
+    timestampMs: currentSimMs,
+    sensorSource: 'EOIR',
+    confidence,
+    resolutionLevel: 'FULL',
+    resolution: 'FULL',
+    visibilityState: 'CLEAR',
+    sensorAvailability: true,
+    sensorHealthOk: true,
+    estimatedRangeM: Math.round(distM),
+  };
+}

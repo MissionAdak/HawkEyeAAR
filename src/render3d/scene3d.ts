@@ -477,9 +477,9 @@ export class Scene3D {
   }
 
   private applyTrackSymbology(record: TrackMeshRecord, traineeLabel: TrackClass | null): void {
-    // If contact is RADAR_SYMBOL, maintain tactical blip amber color
-    if (record.currentCategory === 'RADAR_SYMBOL') {
-      record.accentMesh.material = this.sharedMaterials.unknown;
+    // Airframe models preserve authentic physical geometry and neutral materials (Task 17.3 §5)
+    // Operator classification is conveyed via text label badge and selection bracket.
+    if (record.currentCategory !== 'RADAR_SYMBOL') {
       return;
     }
 

@@ -11,6 +11,8 @@ import type {
   TargetDisplayMode,
 } from './types';
 import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent } from '@/sim/types';
+import type { SensorHealthStatus } from '@/sim/engine';
+import { EnvironmentManager } from './environment/environmentManager';
 import { attachContextLossHandler } from './capability';
 import { toThree } from './coords';
 import { getScenarioEnvironmentDescriptor } from './environment';
@@ -47,6 +49,7 @@ export class Renderer3D {
   private getEffectorOptions?: () => EffectorVisualOptions;
   private getSimTime?: () => { simMs: number; chaosList?: ChaosSpec[] };
   private getEvents?: () => SimEvent[];
+  private getSensorHealth?: () => Record<SensorMode, SensorHealthStatus>;
 
   private showLos: boolean = true;
   private showClusters: boolean = true;
@@ -57,6 +60,14 @@ export class Renderer3D {
 
   public setTrackProvider(fn: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null }): void {
     this.getTracks = fn;
+  }
+
+  public setSensorHealthProvider(fn: () => Record<SensorMode, SensorHealthStatus>): void {
+    this.getSensorHealth = fn;
+  }
+
+  public getEnvironmentManager(): EnvironmentManager {
+    return this.scene3d.getEnvironmentManager();
   }
 
   public setEventsProvider(fn: () => SimEvent[]): void {
@@ -452,9 +463,17 @@ export class Renderer3D {
    */
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
     this.selectedTrackNo = selectedTrackNo;
+    const health = this.getSensorHealth ? this.getSensorHealth() : undefined;
     const observationContext: SensorObservationContext = {
       activeSensor: this.activeSensor,
       displayMode: this.targetDisplayMode,
+      sensorHealth: health
+        ? {
+            radarOk: health.RADAR === 'OK',
+            eoirOk: health.EOIR === 'OK',
+            rfOk: health.RF === 'OK',
+          }
+        : { radarOk: true, eoirOk: true, rfOk: true },
       weather: this.scene3d.getEnvironmentManager().isFogActive()
         ? 'FOG'
         : (this.scene3d.getEnvironmentManager().getDescriptor().weather ?? 'CLEAR'),
