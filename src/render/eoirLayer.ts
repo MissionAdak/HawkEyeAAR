@@ -1,6 +1,6 @@
 import { PALETTE } from './palette';
 import { mulberry32 } from '@/sim/rng';
-import type { TrackEntity, ScenarioSpec, Vec3 } from '@/sim/types';
+import type { ScenarioSpec, Vec3 } from '@/sim/types';
 import type { OperatorTrackView } from '@/sim/trackerTypes';
 import type { ApprovedSensorObservation } from '@/render3d/types';
 
@@ -81,8 +81,6 @@ birdSilhouettePath.lineTo(3, 7);
 
 export interface EoirRenderOptions {
   tracks?: OperatorTrackView[];
-  currEntities?: TrackEntity[];
-  prevEntities?: TrackEntity[];
   alpha: number;
   azimuthDeg: number;
   spec: ScenarioSpec | null;
@@ -91,7 +89,6 @@ export interface EoirRenderOptions {
 }
 
 export class EoirLayer {
-  private readonly prevMap: Map<string, TrackEntity> = new Map();
   private noiseCanvas: HTMLCanvasElement | null = null;
 
   constructor() {
@@ -308,31 +305,6 @@ export class EoirLayer {
     return { sx, sy, rangeM, scale };
   }
 
-  private drawTargetBox(
-    ctx: CanvasRenderingContext2D,
-    curr: TrackEntity,
-    proj: { sx: number; sy: number; scale: number; rangeM: number },
-    targetHot: string,
-    isSelected: boolean
-  ): void {
-    const { sx, sy, scale, rangeM } = proj;
-    const boxSize = Math.max(16, 24 * scale);
-
-    ctx.save();
-    ctx.strokeStyle = isSelected ? PALETTE.friend : targetHot;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([2, 2]);
-    ctx.strokeRect(sx - boxSize / 2, sy - boxSize / 2, boxSize, boxSize);
-    ctx.setLineDash([]);
-
-    ctx.font = '9px "JetBrains Mono"';
-    ctx.fillStyle = isSelected ? PALETTE.friend : targetHot;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(`${curr.trackNo ?? 'TRK'} ${Math.round(rangeM)}m`, sx + boxSize / 2 + 3, sy - boxSize / 2);
-    ctx.restore();
-  }
-
   private drawEstimatedTargetBox(
     ctx: CanvasRenderingContext2D,
     track: OperatorTrackView,
@@ -450,72 +422,7 @@ export class EoirLayer {
         const isSelected = track.trackNo === opts.selectedTrackNo;
         this.drawEstimatedTargetBox(ctx, track, proj, targetHot, isSelected);
       }
-      return;
     }
-
-    if (!opts.currEntities) return;
-    this.prevMap.clear();
-    for (const prev of opts.prevEntities ?? []) {
-      this.prevMap.set(prev.id, prev);
-    }
-
-    for (const curr of opts.currEntities) {
-      if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED') continue;
-
-      const prev = this.prevMap.get(curr.id) ?? curr;
-      const lerped: Vec3 = {
-        x: prev.pos.x * (1 - opts.alpha) + curr.pos.x * opts.alpha,
-        y: prev.pos.y * (1 - opts.alpha) + curr.pos.y * opts.alpha,
-        z: prev.pos.z * (1 - opts.alpha) + curr.pos.z * opts.alpha,
-      };
-
-      const proj = this.computeScreenProjection(lerped, opts.azimuthDeg, width, height, pad);
-      if (!proj) continue;
-
-      this.drawSilhouette(ctx, curr, proj.sx, proj.sy, proj.scale, targetHot, isNight);
-
-      const isSelected = curr.trackNo === opts.selectedTrackNo;
-      this.drawTargetBox(ctx, curr, proj, targetHot, isSelected);
-    }
-  }
-
-  private drawSilhouette(
-    ctx: CanvasRenderingContext2D,
-    entity: TrackEntity,
-    sx: number,
-    sy: number,
-    scale: number,
-    targetHot: string,
-    isNight: boolean
-  ): void {
-    ctx.save();
-    ctx.translate(sx, sy);
-
-    const haloGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, 18 * scale);
-    haloGrad.addColorStop(0, isNight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(122, 230, 172, 0.5)');
-    haloGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = haloGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, 18 * scale, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.scale(scale, scale);
-    ctx.fillStyle = targetHot;
-    ctx.strokeStyle = targetHot;
-    ctx.lineWidth = 1.2;
-
-    if (entity.droneType === 'BIRD') {
-      ctx.fill(birdSilhouettePath);
-      ctx.stroke(birdSilhouettePath);
-    } else if (entity.droneType === 'LOITERING_MUNITION') {
-      ctx.fill(fixedWingPath);
-      ctx.stroke(fixedWingPath);
-    } else {
-      ctx.fill(quadcopterPath);
-      ctx.stroke(quadcopterPath);
-    }
-
-    ctx.restore();
   }
 
   private drawFogOverlay(

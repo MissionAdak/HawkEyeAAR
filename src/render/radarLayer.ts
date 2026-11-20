@@ -1,13 +1,11 @@
 import { PALETTE } from './palette';
 import { drawTrackSymbol } from './symbols';
-import type { TrackEntity, ZoneSpec } from '@/sim/types';
+import type { ZoneSpec } from '@/sim/types';
 import type { OperatorTrackView } from '@/sim/trackerTypes';
 
 export interface RadarDynamicOptions {
   sweepAngleRad: number;
   tracks?: OperatorTrackView[];
-  currEntities?: TrackEntity[];
-  prevEntities?: TrackEntity[];
   alpha: number;
   selectedTrackNo: string | null;
   zones?: ZoneSpec[];
@@ -22,7 +20,6 @@ function getAzimuthTickLength(deg: number): number {
 export class RadarLayer {
   private staticCanvas: HTMLCanvasElement | null = null;
   private readonly maxRangeM: number;
-  private readonly prevMap: Map<string, TrackEntity> = new Map();
 
   constructor(maxRangeM: number = 5000) {
     this.maxRangeM = maxRangeM;
@@ -158,8 +155,6 @@ export class RadarLayer {
   ): void {
     const {
       sweepAngleRad,
-      currEntities,
-      prevEntities,
       alpha,
       selectedTrackNo,
       zones = [],
@@ -266,67 +261,6 @@ export class RadarLayer {
           ctx.stroke();
           ctx.restore();
         }
-      }
-      return;
-    }
-
-    // Legacy/fallback path for raw test entities
-    if (!currEntities) return;
-    this.prevMap.clear();
-    for (const prev of prevEntities ?? []) {
-      this.prevMap.set(prev.id, prev);
-    }
-
-    // 5. Render Tracks and Entities with 60 fps lerp
-    for (const curr of currEntities) {
-      if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED' && curr.lifecycle !== 'NEUTRALISED') {
-        continue;
-      }
-
-      // Linear position interpolation between prev and curr ticks
-      const prev = this.prevMap.get(curr.id) ?? curr;
-      const lerpedX = prev.pos.x * (1 - alpha) + curr.pos.x * alpha;
-      const lerpedY = prev.pos.y * (1 - alpha) + curr.pos.y * alpha;
-
-      // Inlined world-to-screen (zero array allocations)
-      const sx = cx + lerpedX * scale;
-      const sy = cy - lerpedY * scale;
-
-      // Scope clipping check
-      const distFromCenter = Math.hypot(sx - cx, sy - cy);
-      if (distFromCenter > radius) {
-        continue;
-      }
-
-      const isSelected = curr.trackNo === selectedTrackNo;
-      const ghostSigmaPx = curr.ghostSigmaM * scale;
-
-      // Draw NATO track symbol (using pooled Path2D templates)
-      drawTrackSymbol(ctx, sx, sy, {
-        label: curr.traineeLabel,
-        isSelected,
-        isCoasting: curr.masked,
-        ghostSigmaPx,
-        trackNo: curr.trackNo,
-        step: curr.step,
-      });
-
-      // Velocity projection vector (10s travel prediction line)
-      const speedSq = curr.vel.x * curr.vel.x + curr.vel.y * curr.vel.y;
-      if (curr.lifecycle === 'ACTIVE' && speedSq > 0.25) {
-        const projX = lerpedX + curr.vel.x * 10;
-        const projY = lerpedY + curr.vel.y * 10;
-        const px = cx + projX * scale;
-        const py = cy - projY * scale;
-
-        ctx.save();
-        ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphorDim;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(px, py);
-        ctx.stroke();
-        ctx.restore();
       }
     }
   }

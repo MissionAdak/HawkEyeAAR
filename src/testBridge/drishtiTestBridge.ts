@@ -39,6 +39,7 @@ export interface DrishtiTestBridge {
     hasLeaks: boolean;
     leakedProperties: string[];
   };
+  getOperatorTracks: () => import('@/sim/trackerTypes').OperatorTrackView[];
   setSensorHealthOverride: (health: Record<string, unknown> | null) => boolean;
   setProducerHealthOverride: (health: Record<string, unknown> | null | undefined) => boolean;
   setSimTimeOverride: (timeOverride: number | 'MISSING' | 'INVALID' | null) => boolean;
@@ -423,10 +424,25 @@ export function installDrishtiTestBridge(
         }
       }
 
+      for (const ev of snapshot.recentEvents) {
+        for (const prop of forbiddenProps) {
+          if (prop in ev || Object.prototype.hasOwnProperty.call(ev, prop)) {
+            leaked.push(`recentEvents.${ev.id}.${prop}`);
+          }
+          if (ev.payload && (prop in ev.payload || Object.prototype.hasOwnProperty.call(ev.payload, prop))) {
+            leaked.push(`recentEvents.${ev.id}.payload.${prop}`);
+          }
+        }
+      }
+
       return {
         hasLeaks: leaked.length > 0,
         leakedProperties: leaked,
       };
+    },
+
+    getOperatorTracks(): import('@/sim/trackerTypes').OperatorTrackView[] {
+      return engine.getOperatorTracks();
     },
   };
 

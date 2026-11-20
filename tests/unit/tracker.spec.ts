@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TrackEstimator } from '@/sim/tracker';
 import type { RadarMeasurement, EoirMeasurement, RfMeasurement } from '@/sim/measurementTypes';
+import { generateRadarMeasurement } from '@/sim/sensorMeasurement';
 
 function mockRadarMeas(
   overrides: Partial<RadarMeasurement> & { trackNo: string; entityId: string; timestampMs: number }
@@ -314,5 +315,187 @@ describe('TASK 18 — TrackEstimator & OperatorTrackView Decoupling', () => {
     tracker.updateWithRf(rfMeas);
     const est = tracker.getTrackEstimate('T-01');
     expect(est?.sensorSources).toContain('RF');
+  });
+
+  describe('TASK 18-06 Integrity & Truth Boundary Hardening', () => {
+    it('strictly isolates estimated altitude from ground-truth entity pos.z on radar updates', () => {
+      const tracker = new TrackEstimator();
+
+      // Entity has arbitrary ground truth altitude
+      const meas = mockRadarMeas({
+        trackNo: 'T-01',
+        entityId: 'E-01',
+        timestampMs: 1000,
+        measuredRangeM: 2000.0,
+        measuredAzimuthDeg: 45.0,
+      });
+
+      // Update radar without ground truth altitude
+      tracker.updateWithRadar(meas);
+      const est = tracker.getTrackEstimate('T-01');
+      expect(est).toBeDefined();
+
+      // Track estimate must use assumed nominal operator altitude (60.0m), NOT ground truth
+      expect(est?.estPos.z).toBe(60.0);
+    });
+
+    it('enforces that RF updates are strictly bearing-only and never alter Cartesian position or range', () => {
+      const tracker = new TrackEstimator();
+      tracker.updateWithRadar(
+        mockRadarMeas({
+          trackNo: 'T-01',
+          entityId: 'E-01',
+          timestampMs: 1000,
+          measuredRangeM: 1500.0,
+          measuredAzimuthDeg: 90.0,
+        })
+      );
+
+      const before = tracker.getTrackEstimate('T-01')!;
+      const beforePos = { ...before.estPos };
+      const beforeRange = before.estRangeM;
+
+      const rfMeas: RfMeasurement = {
+        sensorType: 'RF',
+        trackNo: 'T-01',
+        entityId: 'E-01',
+        timestampMs: 1100,
+        measuredBearingDeg: 180.0, // completely different bearing
+        bearingUncertaintyDeg: 5.0,
+        freqMhz: 5800,
+        signalStrengthDb: -60,
+        sensorHealth: 'OK',
+      };
+
+      tracker.updateWithRf(rfMeas);
+      const after = tracker.getTrackEstimate('T-01')!;
+
+      // Cartesian position and range must remain untouched
+      expect(after.estPos.x).toBe(beforePos.x);
+      expect(after.estPos.y).toBe(beforePos.y);
+      expect(after.estPos.z).toBe(beforePos.z);
+      expect(after.estRangeM).toBe(beforeRange);
+      expect(after.sensorSources).toContain('RF');
+    });
+
+    it('radar outage fail-closed: setting sensorHealth.RADAR to OUT returns null measurement and forces coasting', () => {
+      const dummyEntity: import('@/sim/types').TrackEntity = {
+        id: 'ent-99',
+        trackNo: 'T-99',
+        trueClass: 'HOSTILE_ATTACK',
+        droneType: 'FPV_ATTACK',
+        pos: { x: 1000, y: 1000, z: 50 },
+        prev: { x: 990, y: 1000, z: 50 },
+        vel: { x: 10, y: 0, z: 0 },
+        rcsM2: 0.05,
+        valueInr: 100000,
+        emitsRf: false,
+        remoteId: false,
+        iff: false,
+        profile: 'DIRECT',
+        spawnTMs: 0,
+        lifecycle: 'ACTIVE',
+        traineeLabel: null,
+        step: 'TRACK',
+        q: 0.8,
+        cCls: 0,
+        masked: false,
+        coastingSinceMs: null,
+        ghostSigmaM: 0,
+        hitHistory: [true],
+        tVis: 0,
+        tTrk: 100,
+        tDesig: null,
+        tCls: null,
+        tEng: null,
+        tPnr: null,
+        engagements: 0,
+        weaponUsed: null,
+      };
+
+      // When RADAR is OUT, generateRadarMeasurement MUST return null
+      const measOut = generateRadarMeasurement({
+        entity: dummyEntity,
+        entityIndex: 0,
+        sweepIdx: 1,
+        timestampMs: 1000,
+        scenarioSeed: 42,
+        sensorHealth: 'OUT',
+      });
+      expect(measOut).toBeNull();
+
+      // Tracker coasting test
+      const tracker = new TrackEstimator();
+      const measOk = generateRadarMeasurement({
+        entity: dummyEntity,
+        entityIndex: 0,
+        sweepIdx: 1,
+        timestampMs: 1000,
+        scenarioSeed: 42,
+        sensorHealth: 'OK',
+      })!;
+      tracker.updateWithRadar(measOk);
+
+      const initEst = tracker.getTrackEstimate('T-99')!;
+      expect(initEst.isCoasting).toBe(false);
+      const initUncert = initEst.uncertaintyM;
+
+      // Advance clock without radar measurement past stale timeout (2200ms)
+      tracker.predict(8000);
+      const coastEst = tracker.getTrackEstimate('T-99')!;
+      expect(coastEst.isCoasting).toBe(true);
+      expect(coastEst.uncertaintyM).toBeGreaterThan(initUncert);
+    });
+
+    it('calculates total 2D Cartesian position uncertainty in radar measurements', () => {
+
+      const dummyEntity: import('@/sim/types').TrackEntity = {
+        id: 'ent-01',
+        trackNo: 'T-01',
+        trueClass: 'HOSTILE_ATTACK',
+        droneType: 'FPV_ATTACK',
+        pos: { x: 3000, y: 0, z: 50 },
+        prev: { x: 2990, y: 0, z: 50 },
+        vel: { x: 10, y: 0, z: 0 },
+        rcsM2: 0.05,
+        valueInr: 100000,
+        emitsRf: false,
+        remoteId: false,
+        iff: false,
+        profile: 'DIRECT',
+        spawnTMs: 0,
+        lifecycle: 'ACTIVE',
+        traineeLabel: null,
+        step: 'TRACK',
+        q: 0.8,
+        cCls: 0,
+        masked: false,
+        coastingSinceMs: null,
+        ghostSigmaM: 0,
+        hitHistory: [true],
+        tVis: 0,
+        tTrk: 100,
+        tDesig: null,
+        tCls: null,
+        tEng: null,
+        tPnr: null,
+        engagements: 0,
+        weaponUsed: null,
+      };
+
+      const meas = generateRadarMeasurement({
+        entity: dummyEntity,
+        entityIndex: 0,
+        sweepIdx: 1,
+        timestampMs: 1000,
+        scenarioSeed: 42,
+        sensorHealth: 'OK',
+      })!;
+
+      expect(meas.positionUncertaintyM).toBeDefined();
+      // At 3000m, rangeSigma is 15m, cross-range sigma is 3000 * (0.8 * PI / 180) ~= 41.9m
+      // Total position uncertainty hypot(15, 41.9) ~= 44.5m
+      expect(meas.positionUncertaintyM).toBeGreaterThan(35.0);
+    });
   });
 });

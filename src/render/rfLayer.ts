@@ -1,5 +1,4 @@
 import { PALETTE } from './palette';
-import type { TrackEntity } from '@/sim/types';
 import type { OperatorTrackView } from '@/sim/trackerTypes';
 import type { RfMeasurement } from '@/sim/measurementTypes';
 
@@ -60,8 +59,6 @@ function getCardinalText(deg: number): string {
 export interface RfRenderOptions {
   tracks?: OperatorTrackView[];
   rfMeasurements?: RfMeasurement[];
-  currEntities?: TrackEntity[];
-  prevEntities?: TrackEntity[];
   alpha: number;
   simTimeMs: number;
   isJamming: boolean;
@@ -70,7 +67,6 @@ export interface RfRenderOptions {
 
 export class RfLayer {
   private staticCanvas: HTMLCanvasElement | null = null;
-  private readonly prevMap: Map<string, TrackEntity> = new Map();
 
   // Waterfall Off-Screen Buffer (200 frequency bins x 80 history rows)
   private wfCanvas: HTMLCanvasElement | null = null;
@@ -78,10 +74,6 @@ export class RfLayer {
   private wfImageData: ImageData | null = null;
   private wfU32: Uint32Array | null = null;
   private lastScrollSimMs: number = 0;
-
-  // 4 Hz Direction-Finding Jitter Cache
-  private lastJitterStep: number = -1;
-  private readonly cachedJitters: Map<string, number> = new Map();
 
   constructor() {
     this.initWaterfallBuffer();
@@ -244,29 +236,6 @@ export class RfLayer {
     ctx.fillText('DF CORRELATION: DUAL-CHANNEL IQ', width - 10, height - 8);
   }
 
-  private getEmitterChannel(entity: TrackEntity): { bin: number; tag: 'RID' | 'LINK' } {
-    let hash = 0;
-    for (let i = 0; i < entity.id.length; i++) {
-      const code = entity.id.codePointAt(i) ?? 0;
-      hash = Math.trunc(hash * 31 + code);
-    }
-    const offset = (Math.abs(hash) % 7) - 3;
-
-    if (entity.remoteId) {
-      return { bin: Math.max(5, Math.min(195, 135 + offset)), tag: 'RID' };
-    }
-    if (entity.droneType === 'FPV_ATTACK') {
-      return { bin: Math.max(5, Math.min(195, 180 + offset)), tag: 'LINK' };
-    }
-    if (entity.droneType === 'LOITERING_MUNITION') {
-      return { bin: Math.max(5, Math.min(195, 25 + offset)), tag: 'LINK' };
-    }
-    if (entity.droneType === 'SWARM_ELEMENT') {
-      return { bin: Math.max(5, Math.min(195, 52 + offset)), tag: 'LINK' };
-    }
-    return { bin: Math.max(5, Math.min(195, 125 + offset)), tag: 'LINK' };
-  }
-
   private fillJammingRow(wfU32: Uint32Array, seedTimeMs: number): void {
     for (let b = 0; b < 200; b++) {
       const noise = hash32(seedTimeMs, b) % 100;
@@ -299,17 +268,6 @@ export class RfLayer {
     if (bin < 199) wfU32[bin + 1] = sideColor;
   }
 
-  private fillSignalRow(wfU32: Uint32Array, seedTimeMs: number, currEntities: TrackEntity[]): void {
-    this.fillBackgroundSpeckle(wfU32, seedTimeMs);
-
-    for (const e of currEntities) {
-      if ((e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED') && e.emitsRf) {
-        const { bin, tag } = this.getEmitterChannel(e);
-        this.paintEmitterBin(wfU32, bin, tag);
-      }
-    }
-  }
-
   private freqToBin(freqMhz: number): number {
     const norm = (freqMhz - 400) / (6000 - 400);
     return Math.max(5, Math.min(195, Math.round(norm * 190 + 5)));
@@ -335,8 +293,6 @@ export class RfLayer {
           const tag = m.freqMhz === 2412 ? 'RID' : 'LINK';
           this.paintEmitterBin(this.wfU32, bin, tag);
         }
-      } else if (opts.currEntities) {
-        this.fillSignalRow(this.wfU32, opts.simTimeMs + r * 100, opts.currEntities);
       } else {
         this.fillBackgroundSpeckle(this.wfU32, opts.simTimeMs + r * 100);
       }
@@ -363,17 +319,12 @@ export class RfLayer {
       ctx.drawImage(this.staticCanvas, 0, 0);
     }
 
-    // 2. DF Lines Jitter Update (legacy fallback)
-    if (opts.currEntities) {
-      this.updateJitterCache(opts.currEntities, opts.simTimeMs);
-    }
-
-    // 3. Render DF Lines (if not jamming)
+    // 2. Render DF Lines (if not jamming)
     if (!opts.isJamming) {
       this.drawDfLines(ctx, cx, cy, radius, opts);
     }
 
-    // 4. Waterfall & Emitter Tags
+    // 3. Waterfall & Emitter Tags
     this.updateWaterfall(opts);
 
     const wfTop = height - 120;
@@ -396,24 +347,6 @@ export class RfLayer {
     }
   }
 
-  private updateJitterCache(currEntities: TrackEntity[], simTimeMs: number): void {
-    const step4Hz = Math.floor(simTimeMs / 250);
-    if (step4Hz === this.lastJitterStep) return;
-
-    this.lastJitterStep = step4Hz;
-    this.cachedJitters.clear();
-
-    for (const e of currEntities) {
-      let idHash = 0;
-      for (let j = 0; j < e.id.length; j++) {
-        const code = e.id.codePointAt(j) ?? 0;
-        idHash = Math.trunc(idHash * 31 + code);
-      }
-      const u = hash32(step4Hz, idHash) / 4294967296;
-      this.cachedJitters.set(e.id, u * 10 - 5);
-    }
-  }
-
   private drawDfLines(
     ctx: CanvasRenderingContext2D,
     cx: number,
@@ -421,88 +354,38 @@ export class RfLayer {
     radius: number,
     opts: RfRenderOptions
   ): void {
-    if (opts.rfMeasurements && opts.rfMeasurements.length > 0) {
-      ctx.save();
-      for (const meas of opts.rfMeasurements) {
-        const strobeDeg = meas.measuredBearingDeg;
-        const canvasRad = ((strobeDeg - 90) * Math.PI) / 180;
-        const endX = cx + Math.cos(canvasRad) * radius;
-        const endY = cy + Math.sin(canvasRad) * radius;
-
-        const isSelected = Boolean(meas.trackNo && meas.trackNo === opts.selectedTrackNo);
-        ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphor;
-        ctx.lineWidth = isSelected ? 1.5 : 1;
-
-        // Draw line-of-bearing strobe
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(endX, endY);
-        ctx.stroke();
-
-        // Draw bearing uncertainty fan
-        const uncertRad = (meas.bearingUncertaintyDeg * Math.PI) / 180;
-        ctx.save();
-        ctx.strokeStyle = isSelected ? 'rgba(0, 204, 255, 0.25)' : 'rgba(0, 255, 102, 0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, radius, canvasRad - uncertRad, canvasRad + uncertRad);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
-
-        // Bearing readout
-        ctx.font = '9px "JetBrains Mono"';
-        ctx.fillStyle = isSelected ? PALETTE.friend : PALETTE.phosphor;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        const labelDist = radius - 18;
-        ctx.fillText(
-          `${Math.round(strobeDeg)}°`,
-          cx + Math.cos(canvasRad) * labelDist,
-          cy + Math.sin(canvasRad) * labelDist
-        );
-      }
-      ctx.restore();
-      return;
-    }
-
-    if (!opts.currEntities) return;
-    this.prevMap.clear();
-    for (const prev of opts.prevEntities ?? []) {
-      this.prevMap.set(prev.id, prev);
-    }
+    if (!opts.rfMeasurements || opts.rfMeasurements.length === 0) return;
 
     ctx.save();
-    for (const curr of opts.currEntities) {
-      if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED') continue;
-      if (!curr.emitsRf) continue;
-
-      const prev = this.prevMap.get(curr.id) ?? curr;
-      const lerpedX = prev.pos.x * (1 - opts.alpha) + curr.pos.x * opts.alpha;
-      const lerpedY = prev.pos.y * (1 - opts.alpha) + curr.pos.y * opts.alpha;
-
-      const targetAzRad = Math.atan2(lerpedX, lerpedY);
-      let targetAzDeg = (targetAzRad * 180) / Math.PI;
-      if (targetAzDeg < 0) targetAzDeg += 360;
-
-      const jitter = this.cachedJitters.get(curr.id) ?? 0;
-      const strobeDeg = (targetAzDeg + jitter + 360) % 360;
-
+    for (const meas of opts.rfMeasurements) {
+      const strobeDeg = meas.measuredBearingDeg;
       const canvasRad = ((strobeDeg - 90) * Math.PI) / 180;
       const endX = cx + Math.cos(canvasRad) * radius;
       const endY = cy + Math.sin(canvasRad) * radius;
 
-      const isSelected = curr.trackNo === opts.selectedTrackNo;
+      const isSelected = Boolean(meas.trackNo && meas.trackNo === opts.selectedTrackNo);
       ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphor;
       ctx.lineWidth = isSelected ? 1.5 : 1;
 
+      // Draw line-of-bearing strobe
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.lineTo(endX, endY);
       ctx.stroke();
 
+      // Draw bearing uncertainty fan
+      const uncertRad = (meas.bearingUncertaintyDeg * Math.PI) / 180;
+      ctx.save();
+      ctx.strokeStyle = isSelected ? 'rgba(0, 204, 255, 0.25)' : 'rgba(0, 255, 102, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, radius, canvasRad - uncertRad, canvasRad + uncertRad);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+
+      // Bearing readout
       ctx.font = '9px "JetBrains Mono"';
       ctx.fillStyle = isSelected ? PALETTE.friend : PALETTE.phosphor;
       ctx.textAlign = 'center';
@@ -526,46 +409,16 @@ export class RfLayer {
     wfTop: number,
     opts: RfRenderOptions
   ): void {
-    if (opts.rfMeasurements && opts.rfMeasurements.length > 0) {
-      ctx.save();
-      for (const m of opts.rfMeasurements) {
-        const bin = this.freqToBin(m.freqMhz);
-        const tag = m.freqMhz === 2412 ? 'RID' : 'LINK';
-        const tagX = wfX + (bin / 200) * wfW;
-        const isSelected = Boolean(m.trackNo && m.trackNo === opts.selectedTrackNo);
+    if (!opts.rfMeasurements || opts.rfMeasurements.length === 0) return;
 
-        const color = isSelected || tag === 'RID' ? PALETTE.friend : PALETTE.phosphor;
-
-        ctx.save();
-        ctx.translate(tagX, wfY);
-        ctx.fillStyle = color;
-        ctx.fill(arrowMarkerPath);
-        ctx.restore();
-
-        ctx.font = 'bold 8px "JetBrains Mono"';
-        ctx.fillStyle = color;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(`[${tag} ${m.trackNo ?? ''}]`, tagX, wfTop + 14);
-      }
-      ctx.restore();
-      return;
-    }
-
-    if (!opts.currEntities) return;
     ctx.save();
-    for (const curr of opts.currEntities) {
-      if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED') continue;
-      if (!curr.emitsRf) continue;
-
-      const { bin, tag } = this.getEmitterChannel(curr);
+    for (const m of opts.rfMeasurements) {
+      const bin = this.freqToBin(m.freqMhz);
+      const tag = m.freqMhz === 2412 ? 'RID' : 'LINK';
       const tagX = wfX + (bin / 200) * wfW;
-      const isSelected = curr.trackNo === opts.selectedTrackNo;
+      const isSelected = Boolean(m.trackNo && m.trackNo === opts.selectedTrackNo);
 
-      let color: string = PALETTE.phosphor;
-      if (isSelected || tag === 'RID') {
-        color = PALETTE.friend;
-      }
+      const color = isSelected || tag === 'RID' ? PALETTE.friend : PALETTE.phosphor;
 
       ctx.save();
       ctx.translate(tagX, wfY);
@@ -577,7 +430,7 @@ export class RfLayer {
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(`[${tag} ${curr.trackNo ?? ''}]`, tagX, wfTop + 14);
+      ctx.fillText(`[${tag} ${m.trackNo ?? ''}]`, tagX, wfTop + 14);
     }
     ctx.restore();
   }

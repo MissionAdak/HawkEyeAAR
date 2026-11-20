@@ -139,6 +139,14 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
 
     expect(state).toBeDefined();
     expect(state?.tracks.length).toBeGreaterThan(0);
+    expect(state?.allAreRadarSymbols).toBe(true);
+
+    const audit = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.inspectOperatorFacingData();
+    });
+    expect(audit?.hasLeaks).toBe(false);
+    expect(audit?.leakedProperties).toEqual([]);
 
     await saveShot(page, 'task18_03_radar_coasting_uncertainty.png');
   });

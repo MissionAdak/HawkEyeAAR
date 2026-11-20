@@ -70,6 +70,11 @@ export function generateRadarMeasurement(params: {
   const measuredRangeM = Math.max(1, trueRange + rangeNoise);
   const measuredAzimuthDeg = ((trueAzDeg + azimuthNoise) % 360 + 360) % 360;
 
+  // Total 2D Cartesian position uncertainty combining radial range and cross-range azimuth dispersion
+  const azRadSigma = (azimuthSigma * Math.PI) / 180;
+  const crossRangeSigma = measuredRangeM * azRadSigma;
+  const positionUncertaintyM = Number(Math.hypot(rangeSigma, crossRangeSigma).toFixed(1));
+
   return {
     sensorType: 'RADAR',
     trackNo: entity.trackNo,
@@ -79,6 +84,7 @@ export function generateRadarMeasurement(params: {
     measuredAzimuthDeg: Number(measuredAzimuthDeg.toFixed(2)),
     rangeUncertaintyM: rangeSigma,
     azimuthUncertaintyDeg: azimuthSigma,
+    positionUncertaintyM,
     snrDb,
     sensorHealth,
   };

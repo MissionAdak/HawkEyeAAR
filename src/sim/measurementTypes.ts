@@ -72,6 +72,7 @@ export interface RadarMeasurement {
   measuredElevationDeg?: number;
   rangeUncertaintyM: number;
   azimuthUncertaintyDeg: number;
+  positionUncertaintyM?: number;
   snrDb: number;
   sensorHealth: SensorHealthStatus;
 }

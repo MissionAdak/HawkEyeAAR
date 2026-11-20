@@ -13,7 +13,7 @@ import {
   calculateAircraftOrientation,
 } from './aircraftModel';
 import type { SafeTrackView, Scene3DOptions } from './types';
-import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent } from '@/sim/types';
+import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent, OperatorEventView } from '@/sim/types';
 import { EnvironmentManager, getScenarioEnvironmentDescriptor } from './environment';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
 import { TargetModelFactory, resolveTargetModelCategory } from './targets';
@@ -716,7 +716,7 @@ export class Scene3D {
   /**
    * Synchronizes active engagement animations with the authoritative simulation event log.
    */
-  public syncEngagementEvents(events: SimEvent[], simMs: number): void {
+  public syncEngagementEvents(events: (SimEvent | OperatorEventView)[], simMs: number): void {
     this.engagementEffectManager.syncEvents(events, simMs, (trackNo) => this.getTrackWorldPosition(trackNo));
   }
 

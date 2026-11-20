@@ -111,8 +111,29 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
 
   describe('1. Ground-Truth Isolation & projectSafeTracks boundary (Task 17.3 §2)', () => {
     it('projectSafeTracks() never copies raw droneType', () => {
-      const entity = makeSimEntity({ droneType: 'FPV_ATTACK' });
-      const safeTracks = projectSafeTracks([entity], null, basePipelineContext);
+      const opTrack = {
+        trackNo: 'TRK-01',
+        entityId: 'sim-ent-01',
+        estPos: { x: 1000, y: 1000, z: 120 },
+        estVel: { x: 15, y: 0, z: 0 },
+        estRangeM: 1419,
+        estBearingDeg: 45,
+        estSpeedMps: 15,
+        estAltBand: 'LOW' as const,
+        uncertaintyM: 18,
+        isCoasting: false,
+        lastMeasurementMs: 5000,
+        lastSensorType: 'RADAR' as const,
+        sensorSources: ['RADAR' as const],
+        q: 0.9,
+        cCls: 0,
+        traineeLabel: null,
+        step: 'TRACK' as const,
+        lifecycle: 'ACTIVE' as const,
+        sensorObservation: null,
+        droneType: 'FPV_ATTACK',
+      } as unknown as import('@/sim/trackerTypes').OperatorTrackView;
+      const safeTracks = projectSafeTracks([opTrack], null);
 
       expect(safeTracks).toHaveLength(1);
       const safe = safeTracks[0];
@@ -121,12 +142,33 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
     });
 
     it('no ground-truth property reaches Renderer3D through SafeTrackView', () => {
-      const entity = makeSimEntity({
+      const opTrack = {
+        trackNo: 'TRK-01',
+        entityId: 'sim-ent-01',
+        estPos: { x: 1000, y: 1000, z: 120 },
+        estVel: { x: 15, y: 0, z: 0 },
+        estRangeM: 1419,
+        estBearingDeg: 45,
+        estSpeedMps: 15,
+        estAltBand: 'LOW' as const,
+        uncertaintyM: 18,
+        isCoasting: false,
+        lastMeasurementMs: 5000,
+        lastSensorType: 'RADAR' as const,
+        sensorSources: ['RADAR' as const],
+        q: 0.9,
+        cCls: 0,
+        traineeLabel: null,
+        step: 'TRACK' as const,
+        lifecycle: 'ACTIVE' as const,
+        sensorObservation: null,
         trueClass: 'HOSTILE_ATTACK',
         droneType: 'LOITERING_MUNITION',
         valueInr: 750000,
-      });
-      const safeTracks = projectSafeTracks([entity], null, basePipelineContext);
+        waypoints: [{ x: 0, y: 0, z: 0 }],
+        killDraw: 0.5,
+      } as unknown as import('@/sim/trackerTypes').OperatorTrackView;
+      const safeTracks = projectSafeTracks([opTrack], null);
 
       const safe = safeTracks[0];
       expect(Object.prototype.hasOwnProperty.call(safe, 'trueClass')).toBe(false);
@@ -1456,7 +1498,29 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         ];
 
         for (const badCtx of malformedContexts) {
-          const safeTracks = projectSafeTracks([entity], null, badCtx);
+          const obs = evaluateSensorObservation(entity, badCtx);
+          const opTrack = {
+            trackNo: 'TRK-01',
+            entityId: 'sim-ent-01',
+            estPos: { x: 1000, y: 1000, z: 120 },
+            estVel: { x: 15, y: 0, z: 0 },
+            estRangeM: 1419,
+            estBearingDeg: 45,
+            estSpeedMps: 15,
+            estAltBand: 'LOW' as const,
+            uncertaintyM: 18,
+            isCoasting: false,
+            lastMeasurementMs: 5000,
+            lastSensorType: 'RADAR' as const,
+            sensorSources: ['RADAR' as const],
+            q: 0.9,
+            cCls: 0,
+            traineeLabel: null,
+            step: 'TRACK' as const,
+            lifecycle: 'ACTIVE' as const,
+            sensorObservation: obs,
+          } as unknown as import('@/sim/trackerTypes').OperatorTrackView;
+          const safeTracks = projectSafeTracks([opTrack], null);
           expect(safeTracks[0].sensorObservation).toBeNull();
 
           const presentation = resolveTargetPresentation(safeTracks[0], baseContext);

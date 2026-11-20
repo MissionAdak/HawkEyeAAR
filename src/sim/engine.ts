@@ -4,6 +4,8 @@ import type {
   TrackEntity,
   SimEvent,
   SimEventType,
+  OperatorEventView,
+  OperatorEventCategory,
   UserAction,
   SensorMode,
   EffectorId,
@@ -102,7 +104,7 @@ export interface UiSnapshot {
   };
   roeText: string;
   isPaused: boolean;
-  recentEvents: SimEvent[];
+  recentEvents: OperatorEventView[];
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   difficulty: number;
   activeEffector: EffectorId;
@@ -436,7 +438,7 @@ export class SimEngine {
         sensorHealth: this.sensorHealth.RADAR,
       });
       if (radarMeas) {
-        this.tracker.updateWithRadar(radarMeas, entity.pos.z);
+        this.tracker.updateWithRadar(radarMeas);
       }
     }
   }
@@ -662,10 +664,10 @@ export class SimEngine {
             sweepIdx: Math.floor(currentSimMs / 2000),
             timestampMs: currentSimMs,
             scenarioSeed: this.spec?.seed ?? 42,
-            sensorHealth: this.sensorHealth.RADAR === 'OUT' ? 'DEG' : this.sensorHealth.RADAR,
+            sensorHealth: this.sensorHealth.RADAR,
           });
           if (initMeas) {
-            this.tracker.updateWithRadar(initMeas, e.pos.z);
+            this.tracker.updateWithRadar(initMeas);
           }
         }
 
@@ -1116,10 +1118,119 @@ export class SimEngine {
       sensorHealth: { ...this.sensorHealth },
       roeText: this.spec?.roeText || 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
       isPaused: clockInstance.getPaused(),
-      recentEvents: this.events.slice(-8),
+      recentEvents: this.getOperatorEvents(),
       mode: this.spec?.mode || 'TRAIN',
       difficulty: this.spec?.difficulty || 0.3,
       activeEffector: this.activeEffector,
     };
+  }
+
+  /**
+   * Returns a sanitized stream of recent events projected for the operator interface (Domain C).
+   * Strictly filters out raw ground-truth secrets (trueClass, targetPos, pk, u, monetary values).
+   */
+  public getOperatorEvents(): OperatorEventView[] {
+    return this.events.slice(-8).map((ev) => this.toOperatorEventView(ev));
+  }
+
+  private toOperatorEventView(ev: SimEvent): OperatorEventView {
+    const est = ev.trackNo ? this.tracker.getTrackEstimate(ev.trackNo) : undefined;
+    const estRangeM = est ? est.estRangeM : undefined;
+    const category = this.getEventCategory(ev.type);
+    const message = this.formatOperatorEventMessage(ev, estRangeM);
+
+    // Strictly sanitized payload containing zero simulation ground-truth secrets
+    const safePayload: Record<string, unknown> = {};
+    if (ev.trackNo) safePayload.trackNo = ev.trackNo;
+    if (typeof ev.payload.effector === 'string') safePayload.effector = ev.payload.effector;
+    if (typeof ev.payload.killed === 'boolean') safePayload.killed = ev.payload.killed;
+    if (typeof ev.payload.reason === 'string') safePayload.reason = ev.payload.reason;
+    if (typeof ev.payload.mode === 'string') safePayload.mode = ev.payload.mode;
+    if (typeof ev.payload.type === 'string') safePayload.type = ev.payload.type;
+    if (estRangeM !== undefined) safePayload.rangeKm = Number((estRangeM / 1000).toFixed(2));
+
+    return {
+      id: `${ev.seq}_${ev.tMs}`,
+      seq: ev.seq,
+      tMs: ev.tMs,
+      type: ev.type,
+      trackNo: ev.trackNo,
+      category,
+      message,
+      estRangeM,
+      payload: safePayload,
+    };
+  }
+
+  private getEventCategory(type: SimEventType): OperatorEventCategory {
+    switch (type) {
+      case 'DETECT':
+      case 'TRACK_INIT':
+        return 'DETECTION';
+      case 'MASKED':
+      case 'REACQUIRE':
+      case 'DESIGNATE':
+      case 'CLASSIFY':
+        return 'TRACK';
+      case 'ENGAGE':
+      case 'ENGAGE_RESULT':
+      case 'RELEASE_BLOCKED':
+      case 'ASSESS':
+        return 'ENGAGEMENT';
+      case 'ROE_VIOLATION':
+      case 'FLAG':
+      case 'LEAK':
+        return 'ROE';
+      case 'SENSOR_SWITCH':
+        return 'SENSOR';
+      default:
+        return 'SYSTEM';
+    }
+  }
+
+  private formatOperatorEventMessage(ev: SimEvent, estRangeM?: number): string {
+    const trk = ev.trackNo ? `TRK ${ev.trackNo} ` : '';
+    const rng = estRangeM !== undefined ? ` | RNG ${(estRangeM / 1000).toFixed(2)}km` : '';
+
+    switch (ev.type) {
+      case 'DETECT':
+        return `${trk}SIGNAL DETECTED`;
+      case 'TRACK_INIT':
+        return `${trk}TRACK ESTABLISHED${rng}`;
+      case 'MASKED':
+        return `${trk}SIGNAL MASKED / COASTING`;
+      case 'REACQUIRE':
+        return `${trk}SIGNAL REACQUIRED`;
+      case 'DESIGNATE':
+        return `${trk}DESIGNATED VIA ${String(ev.payload.via ?? 'SYSTEM')}`;
+      case 'CLASSIFY':
+        return `${trk}CLASSIFIED AS ${String(ev.payload.label ?? 'UNKNOWN')}`;
+      case 'ENGAGE':
+        return `${trk}ENGAGED WITH ${String(ev.payload.effector ?? 'WEAPON')}${rng}`;
+      case 'ENGAGE_RESULT':
+        return `${trk}${ev.payload.killed ? 'NEUTRALIZATION INDICATED' : 'ENGAGEMENT INEFFECTIVE'}`;
+      case 'RELEASE_BLOCKED':
+        return `RELEASE BLOCKED: ${String(ev.payload.reason ?? 'UNKNOWN')}`;
+      case 'ROE_VIOLATION':
+        return `ROE VIOLATION: ${String(ev.payload.reason ?? 'CRITERIA NOT MET')}`;
+      case 'FLAG':
+        return `TACTICAL FLAG: ${String(ev.payload.type ?? 'ALERT')}`;
+      case 'LEAK':
+        return `PERIMETER BREACH DETECTED`;
+      case 'CHAOS_ON':
+        return `ENVIRONMENTAL DEGRADATION ACTIVE`;
+      case 'CHAOS_OFF':
+        return `ENVIRONMENTAL CONDITIONS NORMAL`;
+      case 'SENSOR_SWITCH':
+        return `SENSOR SWITCHED TO ${String(ev.payload.mode ?? '')}`;
+      case 'SESSION_PAUSE':
+        return `SIMULATION PAUSED`;
+      case 'SESSION_RESUME':
+        return `SIMULATION RESUMED`;
+      case 'SESSION_END':
+        return `SESSION COMPLETED`;
+      default:
+        return `${ev.type} ${trk}`.trim();
+    }
   }
 }

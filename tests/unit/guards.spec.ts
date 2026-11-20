@@ -157,4 +157,32 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
       expect(endEvent?.payload.aborted).toBe(true);
     });
   });
+
+  describe('R10: Information-Boundary Static Guard (Domain A vs C Separation)', () => {
+    it('strictly forbids importing TrackEntity into live UI and live renderers (allowing only post-session AAR)', () => {
+      const liveDirs = [
+        path.resolve('src/ui'),
+        path.resolve('src/render'),
+      ];
+
+      const bannedImportRegex = /import\s+(?:type\s+)?(?:\{[^}]*\bTrackEntity\b[^}]*\}|\bTrackEntity\b)\s+from/s;
+
+      for (const dir of liveDirs) {
+        const files = getAllSourceFiles(dir);
+        for (const file of files) {
+          // Explicit allowlist: only post-session AAR review components may inspect ground truth entities
+          if (file.includes('src/ui/aar') || file.includes('src\\ui\\aar')) {
+            continue;
+          }
+
+          const content = fs.readFileSync(file, 'utf-8');
+          const hasTrackEntityImport = bannedImportRegex.test(content);
+          expect(
+            hasTrackEntityImport,
+            `File ${path.relative(process.cwd(), file)} must not import TrackEntity (Rule R10.3 Domain Separation)`
+          ).toBe(false);
+        }
+      }
+    });
+  });
 });

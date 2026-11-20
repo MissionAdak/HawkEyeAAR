@@ -529,5 +529,14 @@ Files: `src/testBridge/drishtiTestBridge.ts`, `tests/e2e/task18_trackerEstimatio
 - [x] Automated E2E Test Suite: 7 comprehensive Playwright tests verifying zero truth leakage across live operator views, radar PPI estimated tracks, coasting uncertainty circles, EO/IR estimated range HUD and neutral morphologies, 3D viewport safe tracks, AAR comparison replay, and production debug window isolation (`hasLeaks: false`).
 - [x] Strict Airgap & Bundle Budget: Production bundle size verified at 1.71 MB (< 2.0 MB budget), zero network requests (`connect-src 'none'`), zero debug globals in production build.
 
+### TASK-18-06 — Final Truth-Boundary Audit, Sensor Integrity & Regression Hardening · P0 · B/D · 2.0 h
+Files: `src/sim/types.ts`, `src/sim/engine.ts`, `src/sim/tracker.ts`, `src/sim/sensorMeasurement.ts`, `src/render/rfLayer.ts`, `src/render/radarLayer.ts`, `src/render/eoirLayer.ts`, `src/ui/Console.tsx`, `src/ui/EventLog.tsx`, `tests/unit/guards.spec.ts`, `tests/unit/tracker.spec.ts`, `tests/e2e/task18_trackerEstimation.spec.ts`
+- [x] Estimated Altitude Isolation: Removed all passes of ground-truth `pos.z` to `updateWithRadar()`. Radar initialization and updates operate with nominal operator assumed altitude (60.0m) and vertical uncertainty until refined by optical elevation measurements (`updateWithEoir()`).
+- [x] Radar Outage Fail-Closed Integrity: Removed `OUT -> DEG` bypass in `syncTrackerWithEntities()`. Radar outage strictly produces `null` measurements, prevents new radar tracks, and forces unobserved tracks to coast with linear uncertainty growth.
+- [x] Sanitized Live Operator Event Boundary (`OperatorEventView`): Introduced `OperatorEventView` with sanitized messages and category classifications. `buildUiSnapshot()` returns `recentEvents: OperatorEventView[]` strictly purging all simulation ground-truth secrets (`trueClass`, `targetPos`, `pk`, `u`, `valueInr`).
+- [x] Pure Sensor Layer Architecture: Purged legacy `currEntities` and `prevEntities` truth fallbacks from `radarLayer.ts`, `eoirLayer.ts`, and `rfLayer.ts`. Live 2D renderers operate strictly on `OperatorTrackView` and `RfMeasurement`.
+- [x] Total 2D Cartesian Position Uncertainty: Modeled range and cross-range azimuth dispersion ($\sigma_{\text{pos}} = \sqrt{\sigma_{\text{range}}^2 + (R \cdot \sigma_{\text{az}})^2}$) ensuring stable innovation gating across 0–5 km.
+- [x] Architectural Information-Boundary Guard: Added static test in `tests/unit/guards.spec.ts` enforcing zero imports of `TrackEntity` across all files in `src/render/` and `src/ui/` (with strict allowlist only for post-session `src/ui/aar/*`).
+
 
 

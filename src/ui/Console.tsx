@@ -15,16 +15,12 @@ import { OperatorFeedbackToast } from './OperatorFeedbackToast';
 import { TargetRecognitionModal } from './TargetRecognitionModal';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
-import type { SensorMode, TrackEntity } from '@/sim/types';
+import type { SensorMode } from '@/sim/types';
 import type { OperatorTrackView } from '@/sim/trackerTypes';
 import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo, TargetDisplayMode } from '@/render3d/types';
 import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
-import {
-  evaluateSensorObservation,
-  type SensorObservationPipelineContext,
-} from '@/sim/sensorObservation';
 import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
 
 /**
@@ -34,9 +30,8 @@ import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
  * Positions and velocities are derived purely from estimated tracker state, not raw ground truth.
  */
 export function projectSafeTracks(
-  tracks: (OperatorTrackView | TrackEntity)[],
-  selectedTrackNo: string | null,
-  sensorContext?: SensorObservationPipelineContext | null
+  tracks: OperatorTrackView[],
+  selectedTrackNo: string | null
 ): SafeTrackView[] {
   return tracks
     .filter(
@@ -45,30 +40,19 @@ export function projectSafeTracks(
         t.step !== 'UNDETECTED' &&
         (t.lifecycle === 'ACTIVE' || t.lifecycle === 'LEAKED' || t.lifecycle === 'NEUTRALISED')
     )
-    .map((t) => {
-      const isOperator = 'estPos' in t;
-      const pos = isOperator ? { ...t.estPos } : { ...t.pos };
-      const vel = isOperator ? { ...t.estVel } : { ...t.vel };
-      const masked = isOperator ? t.isCoasting : t.masked;
-      const ghostSigmaM = isOperator ? t.uncertaintyM : t.ghostSigmaM;
-      const observation = isOperator
-        ? (t.sensorObservation ?? null)
-        : (sensorContext ? evaluateSensorObservation(t as TrackEntity, sensorContext) : null);
-
-      return {
-        trackNo: t.trackNo!,
-        pos,
-        vel,
-        traineeLabel: t.traineeLabel,
-        step: t.step,
-        q: t.q,
-        masked,
-        ghostSigmaM,
-        isSelected: t.trackNo === selectedTrackNo,
-        lifecycle: t.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
-        sensorObservation: observation,
-      };
-    });
+    .map((t) => ({
+      trackNo: t.trackNo,
+      pos: { ...t.estPos },
+      vel: { ...t.estVel },
+      traineeLabel: t.traineeLabel,
+      step: t.step,
+      q: t.q,
+      masked: t.isCoasting,
+      ghostSigmaM: t.uncertaintyM,
+      isSelected: t.trackNo === selectedTrackNo,
+      lifecycle: t.lifecycle,
+      sensorObservation: t.sensorObservation ?? null,
+    }));
 }
 
 function computeCursorCoords(
@@ -92,7 +76,7 @@ function computeCursorCoords(
 export function findNearestTrackNo(
   clickX: number,
   clickY: number,
-  tracks: (OperatorTrackView | TrackEntity)[],
+  tracks: OperatorTrackView[],
   scale: number = 245 / 5000
 ): string | null {
   let nearestTrackNo: string | null = null;
@@ -100,8 +84,8 @@ export function findNearestTrackNo(
 
   for (const track of tracks) {
     if (!track.trackNo || track.lifecycle !== 'ACTIVE' || track.step === 'UNDETECTED') continue;
-    const px = 'estPos' in track ? track.estPos.x : track.pos.x;
-    const py = 'estPos' in track ? track.estPos.y : track.pos.y;
+    const px = track.estPos.x;
+    const py = track.estPos.y;
     const ex = px * scale;
     const ey = py * scale;
     const d = Math.hypot(clickX - ex, clickY - ey);
@@ -583,26 +567,13 @@ export const Console: React.FC = () => {
       chaosList: engineInstance.spec?.chaos,
     }));
 
-    r3d.setEventsProvider(() => engineInstance.events);
+    r3d.setEventsProvider(() => engineInstance.getOperatorEvents());
     r3d.setSensorHealthProvider(() => engineInstance.sensorHealth);
 
     r3d.setTrackProvider(() => {
-      const activeSensor = useSessionStore.getState().ui.activeSensor;
-      const currentSimMs = engineInstance.tickIndex * 50;
-      const envMgr = renderer3dRef.current?.getEnvironmentManager();
-      const weather = envMgr?.isFogActive() ? 'FOG' : (envMgr?.getDescriptor().weather ?? 'CLEAR');
-      const isNight = engineInstance.spec?.dayNight === 'NIGHT' || (envMgr?.isNightTime() ?? false);
-      const sensorContext: SensorObservationPipelineContext = {
-        activeSensor,
-        sensorHealth: engineInstance.sensorHealth,
-        isNight,
-        weather,
-        currentSimMs,
-      };
-
       const opTracks = engineInstance.getOperatorTracks();
       return {
-        tracks: projectSafeTracks(opTracks, engineInstance.selectedTrackNo, sensorContext),
+        tracks: projectSafeTracks(opTracks, engineInstance.selectedTrackNo),
         selectedTrackNo: engineInstance.selectedTrackNo,
       };
     });

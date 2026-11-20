@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SimEvent, EffectorId } from '@/sim/types';
+import type { SimEvent, OperatorEventView, EffectorId } from '@/sim/types';
 import type { EngagementEffect, EngagementEffectContext } from './engagementEffectTypes';
 import { createEngagementEffect } from './weaponEffectFactory';
 import { toThree } from '../coords';
@@ -27,7 +27,7 @@ export class EngagementEffectManager {
    * Compatible with both live 20Hz stepping and post-session AAR timeline scrubbing.
    */
   public syncEvents(
-    events: SimEvent[],
+    events: (SimEvent | OperatorEventView)[],
     currentSimMs: number,
     getTrackPosition?: (trackNo: string) => THREE.Vector3 | null
   ): void {
@@ -54,22 +54,23 @@ export class EngagementEffectManager {
     // 2. Process incoming events
     for (const event of events) {
       if (event.tMs > currentSimMs) continue;
+      const payload = event.payload ?? {};
 
       if (event.type === 'ENGAGE') {
         if (this.processedEventSeqs.has(event.seq)) continue;
         this.processedEventSeqs.add(event.seq);
 
-        const effectorId = event.payload.effector as EffectorId;
+        const effectorId = (payload.effector as EffectorId) ?? 'GUN';
         const trackNo = event.trackNo ?? 'UNKNOWN_TRACK';
 
         // Authoritative target position from event payload or track provider
         let targetPos: THREE.Vector3;
         if (
-          event.payload.targetPos &&
-          typeof event.payload.targetPos === 'object' &&
-          'x' in (event.payload.targetPos as Record<string, unknown>)
+          payload.targetPos &&
+          typeof payload.targetPos === 'object' &&
+          'x' in (payload.targetPos as Record<string, unknown>)
         ) {
-          const tp = event.payload.targetPos as { x: number; y: number; z?: number };
+          const tp = payload.targetPos as { x: number; y: number; z?: number };
           targetPos = toThree(tp.x, tp.y, tp.z ?? 30);
         } else {
           const livePos = getTrackPosition?.(trackNo);
@@ -85,7 +86,7 @@ export class EngagementEffectManager {
           startTMs: event.tMs,
           originPos: this.getDefaultWeaponOrigin(),
           targetPos,
-          killed: typeof event.payload.killed === 'boolean' ? event.payload.killed : null,
+          killed: typeof payload.killed === 'boolean' ? payload.killed : null,
         });
 
         this.activeEffects.set(effectId, effect);
@@ -93,7 +94,7 @@ export class EngagementEffectManager {
       } else if (event.type === 'ENGAGE_RESULT') {
         const trackNo = event.trackNo;
         if (!trackNo) continue;
-        const killed = Boolean(event.payload.killed);
+        const killed = Boolean(payload.killed);
 
         // Find matching active effect for this track and resolve outcome
         for (const effect of this.activeEffects.values()) {

@@ -10,7 +10,7 @@ import type {
   EnvironmentObjectInfo,
   TargetDisplayMode,
 } from './types';
-import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent } from '@/sim/types';
+import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent, OperatorEventView } from '@/sim/types';
 import type { SensorHealthStatus } from '@/sim/engine';
 import { EnvironmentManager } from './environment/environmentManager';
 import { attachContextLossHandler } from './capability';
@@ -48,7 +48,7 @@ export class Renderer3D {
   private getCoverage?: () => SensorCoverageState;
   private getEffectorOptions?: () => EffectorVisualOptions;
   private getSimTime?: () => { simMs: number; chaosList?: ChaosSpec[] };
-  private getEvents?: () => SimEvent[];
+  private getEvents?: () => (SimEvent | OperatorEventView)[];
   private getSensorHealth?: () => Record<SensorMode, SensorHealthStatus>;
 
   private showLos: boolean = true;
@@ -74,7 +74,7 @@ export class Renderer3D {
     return this.scene3d.getEnvironmentManager();
   }
 
-  public setEventsProvider(fn: () => SimEvent[]): void {
+  public setEventsProvider(fn: () => (SimEvent | OperatorEventView)[]): void {
     this.getEvents = fn;
   }
 

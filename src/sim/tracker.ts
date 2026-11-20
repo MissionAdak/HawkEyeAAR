@@ -91,8 +91,10 @@ export class TrackEstimator {
 
     const existing = this.estimates.get(meas.trackNo);
 
+    const posUncertainty = meas.positionUncertaintyM ?? meas.rangeUncertaintyM;
+
     if (!existing) {
-      // Initialize new estimate
+      // Initialize new estimate with assumed nominal altitude and total 2D position uncertainty
       const initEst: TrackEstimate = {
         trackNo: meas.trackNo,
         entityId: meas.entityId,
@@ -103,7 +105,7 @@ export class TrackEstimator {
         estBearingDeg: Math.round(meas.measuredAzimuthDeg),
         estSpeedMps: 0,
         estAltBand: computeAltBand(measZ),
-        uncertaintyM: meas.rangeUncertaintyM,
+        uncertaintyM: posUncertainty,
         isCoasting: false,
         coastingSinceMs: null,
         lastMeasurementMs: meas.timestampMs,
@@ -143,7 +145,7 @@ export class TrackEstimator {
         existing.estVel.y += (beta / dtSec) * ry;
       }
 
-      existing.uncertaintyM = meas.rangeUncertaintyM;
+      existing.uncertaintyM = posUncertainty;
       existing.isCoasting = false;
       existing.coastingSinceMs = null;
       existing.lastMeasurementMs = meas.timestampMs;
@@ -208,7 +210,10 @@ export class TrackEstimator {
   }
 
   /**
-   * Records RF detection on this track.
+   * Records RF detection / bearing cue on this track.
+   * RF provides bearing-only angle-of-arrival information.
+   * It associates with the track if matched, updating sensor sources
+   * without fabricating false Cartesian position or range.
    */
   public updateWithRf(meas: RfMeasurement): void {
     if (!meas.trackNo) return;

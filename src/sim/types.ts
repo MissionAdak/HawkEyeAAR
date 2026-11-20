@@ -192,6 +192,34 @@ export interface SimEvent {
   payload: Record<string, unknown>;
 }
 
+export type OperatorEventCategory =
+  | 'DETECTION'
+  | 'TRACK'
+  | 'ENGAGEMENT'
+  | 'ROE'
+  | 'SENSOR'
+  | 'SYSTEM';
+
+/**
+ * Sanitized, operator-facing event projection (Domain C).
+ * Guaranteed to exclude all internal simulation ground truth:
+ * - NO trueClass
+ * - NO raw ground truth coordinates or targetPos
+ * - NO exact Pk or kill PRNG draws (u)
+ * - NO secret scoring or monetary valuations
+ */
+export interface OperatorEventView {
+  id: string;
+  seq: number;
+  tMs: number;
+  type: SimEventType;
+  trackNo?: string;
+  category: OperatorEventCategory;
+  message: string;
+  estRangeM?: number;
+  payload?: Record<string, unknown>;
+}
+
 export type Grade = 'PROFICIENT_IN_SIMULATION' | 'DEVELOPING' | 'NEEDS_RETRAINING';
 
 export interface AARMetrics {
