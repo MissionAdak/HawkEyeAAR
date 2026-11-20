@@ -1,4 +1,5 @@
 import type { SimEngine, SensorHealthStatus } from '@/sim/engine';
+import { TrackEstimator } from '@/sim/tracker';
 import type { Renderer3D } from '@/render3d';
 import type { SensorMode, TrackClass, ChaosSpec } from '@/sim/types';
 import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
@@ -34,6 +35,49 @@ export interface TrackEstimateOverride {
   estSpeedMps?: number;
   uncertaintyM?: number;
   isCoasting?: boolean;
+}
+
+export function isValidTrackEstimateOverride(override: unknown): override is TrackEstimateOverride {
+  if (!override || typeof override !== 'object') return false;
+  const ovr = override as Record<string, unknown>;
+
+  if ('estPos' in ovr && ovr.estPos !== undefined) {
+    const pos = ovr.estPos as Record<string, unknown>;
+    if (!pos || typeof pos !== 'object') return false;
+    if (typeof pos.x !== 'number' || !Number.isFinite(pos.x)) return false;
+    if (typeof pos.y !== 'number' || !Number.isFinite(pos.y)) return false;
+    if (typeof pos.z !== 'number' || !Number.isFinite(pos.z)) return false;
+  }
+
+  if ('estVel' in ovr && ovr.estVel !== undefined) {
+    const vel = ovr.estVel as Record<string, unknown>;
+    if (!vel || typeof vel !== 'object') return false;
+    if (typeof vel.x !== 'number' || !Number.isFinite(vel.x)) return false;
+    if (typeof vel.y !== 'number' || !Number.isFinite(vel.y)) return false;
+    if (typeof vel.z !== 'number' || !Number.isFinite(vel.z)) return false;
+  }
+
+  if ('estRangeM' in ovr && ovr.estRangeM !== undefined) {
+    if (typeof ovr.estRangeM !== 'number' || !Number.isFinite(ovr.estRangeM) || ovr.estRangeM < 0) return false;
+  }
+
+  if ('estBearingDeg' in ovr && ovr.estBearingDeg !== undefined) {
+    if (typeof ovr.estBearingDeg !== 'number' || !Number.isFinite(ovr.estBearingDeg)) return false;
+  }
+
+  if ('estSpeedMps' in ovr && ovr.estSpeedMps !== undefined) {
+    if (typeof ovr.estSpeedMps !== 'number' || !Number.isFinite(ovr.estSpeedMps) || ovr.estSpeedMps < 0) return false;
+  }
+
+  if ('uncertaintyM' in ovr && ovr.uncertaintyM !== undefined) {
+    if (typeof ovr.uncertaintyM !== 'number' || !Number.isFinite(ovr.uncertaintyM) || ovr.uncertaintyM < 0) return false;
+  }
+
+  if ('isCoasting' in ovr && ovr.isCoasting !== undefined) {
+    if (typeof ovr.isCoasting !== 'boolean') return false;
+  }
+
+  return true;
 }
 
 export interface DrishtiTestBridge {
@@ -112,38 +156,45 @@ export function installDrishtiTestBridge(
   const observationOverrides = new Map<string, Partial<ApprovedSensorObservation> | null>();
   const estimateOverrides = new Map<string, TrackEstimateOverride>();
 
-  const origGetTrackEstimate = engine.tracker.getTrackEstimate.bind(engine.tracker);
-  const origGetOperatorTracks = engine.tracker.getOperatorTracks.bind(engine.tracker);
+  const origGetTrackEstimate = TrackEstimator.prototype.getTrackEstimate;
+  const origGetOperatorTracks = TrackEstimator.prototype.getOperatorTracks;
 
   engine.tracker.getTrackEstimate = (tNo: string) => {
-    const est = origGetTrackEstimate(tNo);
-    if (!est) return undefined;
+    const rawEst = origGetTrackEstimate.call(engine.tracker, tNo);
+    if (!rawEst) return undefined;
     const ovr = estimateOverrides.get(tNo);
     if (ovr) {
       return {
-        ...est,
-        ...(ovr.estPos ? { estPos: { ...ovr.estPos } } : {}),
-        ...(ovr.estVel ? { estVel: { ...ovr.estVel } } : {}),
-        ...(ovr.estRangeM !== undefined ? { estRangeM: ovr.estRangeM } : {}),
-        ...(ovr.estBearingDeg !== undefined ? { estBearingDeg: ovr.estBearingDeg } : {}),
-        ...(ovr.estSpeedMps !== undefined ? { estSpeedMps: ovr.estSpeedMps } : {}),
-        ...(ovr.uncertaintyM !== undefined ? { uncertaintyM: ovr.uncertaintyM } : {}),
-        ...(ovr.isCoasting !== undefined ? { isCoasting: ovr.isCoasting } : {}),
+        ...rawEst,
+        estPos: ovr.estPos ? { ...ovr.estPos } : { ...rawEst.estPos },
+        estVel: ovr.estVel ? { ...ovr.estVel } : { ...rawEst.estVel },
+        prevEstPos: { ...rawEst.prevEstPos },
+        estRangeM: ovr.estRangeM ?? rawEst.estRangeM,
+        estBearingDeg: ovr.estBearingDeg ?? rawEst.estBearingDeg,
+        estSpeedMps: ovr.estSpeedMps ?? rawEst.estSpeedMps,
+        uncertaintyM: ovr.uncertaintyM ?? rawEst.uncertaintyM,
+        isCoasting: ovr.isCoasting ?? rawEst.isCoasting,
       };
     }
-    return est;
+    return {
+      ...rawEst,
+      estPos: { ...rawEst.estPos },
+      estVel: { ...rawEst.estVel },
+      prevEstPos: { ...rawEst.prevEstPos },
+    };
   };
 
   engine.tracker.getOperatorTracks = () => {
-    const tracks = origGetOperatorTracks();
+    const tracks = origGetOperatorTracks.call(engine.tracker);
     if (estimateOverrides.size === 0) return tracks;
     return tracks.map((t) => {
       const ovr = estimateOverrides.get(t.trackNo);
       if (!ovr) return t;
       return {
         ...t,
-        estPos: ovr.estPos ? { ...ovr.estPos } : t.estPos,
-        estVel: ovr.estVel ? { ...ovr.estVel } : t.estVel,
+        estPos: ovr.estPos ? { ...ovr.estPos } : { ...t.estPos },
+        estVel: ovr.estVel ? { ...ovr.estVel } : { ...t.estVel },
+        prevEstPos: { ...t.prevEstPos },
         estRangeM: ovr.estRangeM ?? t.estRangeM,
         estBearingDeg: ovr.estBearingDeg ?? t.estBearingDeg,
         estSpeedMps: ovr.estSpeedMps ?? t.estSpeedMps,
@@ -309,19 +360,18 @@ export function installDrishtiTestBridge(
       if (!trackNo || typeof trackNo !== 'string') return false;
       if (override === null) {
         estimateOverrides.delete(trackNo);
-      } else {
-        estimateOverrides.set(trackNo, override);
-        const est = origGetTrackEstimate(trackNo);
-        if (est) {
-          if (override.estPos) est.estPos = { ...override.estPos };
-          if (override.estVel) est.estVel = { ...override.estVel };
-          if (override.estRangeM !== undefined) est.estRangeM = override.estRangeM;
-          if (override.estBearingDeg !== undefined) est.estBearingDeg = override.estBearingDeg;
-          if (override.estSpeedMps !== undefined) est.estSpeedMps = override.estSpeedMps;
-          if (override.uncertaintyM !== undefined) est.uncertaintyM = override.uncertaintyM;
-          if (override.isCoasting !== undefined) est.isCoasting = override.isCoasting;
-        }
+        useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
+        return true;
       }
+      if (!isValidTrackEstimateOverride(override)) {
+        return false;
+      }
+      const clonedOverride: TrackEstimateOverride = {
+        ...override,
+        estPos: override.estPos ? { ...override.estPos } : undefined,
+        estVel: override.estVel ? { ...override.estVel } : undefined,
+      };
+      estimateOverrides.set(trackNo, clonedOverride);
       useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
       return true;
     },
@@ -333,6 +383,7 @@ export function installDrishtiTestBridge(
       simTimeOverride = null;
       observationOverrides.clear();
       estimateOverrides.clear();
+      useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
     },
 
     getPresentationState(trackNo?: string): {
@@ -678,8 +729,10 @@ export function installDrishtiTestBridge(
 
   return () => {
     if (window.__DRISHTI_TEST__ === bridge) {
-      engine.tracker.getTrackEstimate = origGetTrackEstimate;
-      engine.tracker.getOperatorTracks = origGetOperatorTracks;
+      delete (engine.tracker as unknown as Record<string, unknown>).getTrackEstimate;
+      delete (engine.tracker as unknown as Record<string, unknown>).getOperatorTracks;
+      estimateOverrides.clear();
+      observationOverrides.clear();
       window.__DRISHTI_TEST__ = null;
     }
   };

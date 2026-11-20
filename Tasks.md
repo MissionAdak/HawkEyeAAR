@@ -569,6 +569,16 @@ Files: `src/testBridge/drishtiTestBridge.ts`, `tests/e2e/task18_trackerEstimatio
 - [x] PNR Feedback Non-Circular Verification: Verified toast renders `Point of No Return exceeded (~0.47 km...)` and omits truth `~0.42 km`, while simulation gating enforces PNR hard-block based on ground truth range ($424.264\text{ m} \le 500\text{ m}$).
 - [x] Complete Regression Gate: 494/494 unit/integration tests and 44/44 Playwright E2E tests passing 100% green. Production deployment verified unchanged at `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`.
 
+### TASK-18-06E — Test Override State Restoration & Final Task 18 Closure · P0 · B/D · 1.0 h
+Files: `src/testBridge/drishtiTestBridge.ts`, `tests/unit/testBridgeLifecycle.spec.ts`, `tests/e2e/task18_trackerEstimation.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] Pure Overlay Architecture for Test Overrides: Updated `overrideTrackEstimate()` to store overrides strictly in `estimateOverrides` without mutating underlying `TrackEstimate` instances in `engine.tracker`. Returns cloned estimate objects with deep-copied positions and velocities.
+- [x] Comprehensive Input Validation: Validated coordinates, velocities, bearing, speed, range, and uncertainty. Rejected non-finite numbers, negative range/speed/uncertainty, and malformed objects with `false`.
+- [x] Clean State Restoration on Clear: Calling `clearOverrides()` clears all override maps and immediately issues `useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot())` so the UI instantly reverts to natural tracker values without waiting for a new tick.
+- [x] Prototype Delegation Recovery on Uninstallation: Test bridge cleanup deletes own properties `getTrackEstimate` and `getOperatorTracks` from `engine.tracker`, cleanly restoring `TrackEstimator.prototype` lookup without residual closures.
+- [x] Dedicated Lifecycle Unit Test Suite: Added `tests/unit/testBridgeLifecycle.spec.ts` asserting all 9 lifecycle invariants (initial unmutated read, overlaid reads, untouched underlying estimator state, post-clear restoration, prototype deletion, null bridge global, clean re-installation, and malformed input rejection).
+- [x] Hardened E2E Test 01 Verification: In `tests/e2e/task18_trackerEstimation.spec.ts`, verified boolean returns of `positionTrack()` and `overrideTrackEstimate()`, ensured coherent kinematic vector (`vx = 8.49 m/s, vy = 8.49 m/s` at 45 deg, 12 m/s), extracted shared `assertEventLogSanitized()` helper across all 3 inspection stages, and asserted post-clear Track Table and operator track restoration.
+- [x] Full Verification Gate & Task 18 Final Closure: All 39 unit/golden test files (495 tests) and all 8 Playwright E2E suites (44 tests) passing 100% green. Task 18 officially closed with production release parity preserved on `gh-pages` (`22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`).
+
 
 
 

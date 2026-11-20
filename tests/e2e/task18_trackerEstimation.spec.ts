@@ -95,13 +95,24 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
       'OBSERVED_HOSTILE',
     ];
 
-    // B1: Initial Event Log Inspection
+    // Shared Event Log sanitization verification helper across all stages
     const eventLog = page.locator('#event-log, [data-testid="event-log"]');
     await expect(eventLog).toBeVisible({ timeout: 5000 });
-    let eventLogText = await eventLog.innerText();
-    for (const token of forbiddenTokens) {
-      expect(eventLogText).not.toContain(token);
-    }
+
+    const assertEventLogSanitized = async (stageDescription: string) => {
+      const text = await eventLog.innerText();
+      for (const token of forbiddenTokens) {
+        expect(text, `[${stageDescription}] Forbidden token leaked in event log: ${token}`).not.toContain(token);
+      }
+      expect(text, `[${stageDescription}] Raw ground-truth X coordinate leaked`).not.toContain('x: 300');
+      expect(text, `[${stageDescription}] Raw ground-truth Y coordinate leaked`).not.toContain('y: 300');
+      expect(text, `[${stageDescription}] Secret schema key trueClass leaked`).not.toContain('trueClass');
+      expect(text, `[${stageDescription}] Secret schema key droneType leaked`).not.toContain('droneType');
+      expect(text, `[${stageDescription}] Secret schema key valueInr leaked`).not.toContain('valueInr');
+    };
+
+    // Stage 1: Initial Event Log Inspection
+    await assertEventLogSanitized('Stage 1 - Initial');
 
     // B2: Select the track in the Track Table and inspect rendered estimates vs safe OperatorTrackView
     const targetNo = await page.evaluate(() => {
@@ -119,21 +130,26 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     // Ground Truth: position (300, 300, 50) -> truth horizontal range 424.264 m -> 0.42 km
     // Operator Estimate: independently controlled estimate range 470.0 m -> 0.47 km
     // Both ranges are below the 500 m PNR boundary, but their two-decimal displays differ (0.42 km vs 0.47 km)
-    await page.evaluate((tNo) => {
+    // Internally consistent kinematics: bearing 45 deg, speed 12 m/s -> vx = 8.49 m/s, vy = 8.49 m/s
+    const overrideResults = await page.evaluate((tNo) => {
       const win = window as unknown as WindowWithDrishti;
       // 1. Set authoritative Domain A simulation ground truth
-      win.__DRISHTI_TEST__?.positionTrack(tNo!, { x: 300, y: 300, z: 50 });
+      const posOk = win.__DRISHTI_TEST__?.positionTrack(tNo!, { x: 300, y: 300, z: 50 });
       // 2. Independently set Domain C operator track estimate
-      win.__DRISHTI_TEST__?.overrideTrackEstimate(tNo!, {
+      const ovrOk = win.__DRISHTI_TEST__?.overrideTrackEstimate(tNo!, {
         estPos: { x: 332.34, y: 332.34, z: 50 },
-        estVel: { x: 0, y: 0, z: 0 },
+        estVel: { x: 8.49, y: 8.49, z: 0 },
         estRangeM: 470.0,
         estBearingDeg: 45,
         estSpeedMps: 12,
         uncertaintyM: 20,
         isCoasting: false,
       });
+      return { posOk, ovrOk };
     }, targetNo);
+
+    expect(overrideResults.posOk).toBe(true);
+    expect(overrideResults.ovrOk).toBe(true);
 
     // Read authoritative truth position through the E2E-only truth fixture
     const truthData = await page.evaluate((tNo) => {
@@ -161,16 +177,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     expect(estRangeKmStr).toBe('0.47');
 
     // Stage 2: Re-inspect Event Log after controlled position and estimator changes
-    eventLogText = await eventLog.innerText();
-    for (const token of forbiddenTokens) {
-      expect(eventLogText).not.toContain(token);
-    }
-    // Verify no raw target coordinates or hidden truth payload appear in Event Log
-    expect(eventLogText).not.toContain('x: 300');
-    expect(eventLogText).not.toContain('y: 300');
-    expect(eventLogText).not.toContain('trueClass');
-    expect(eventLogText).not.toContain('droneType');
-    expect(eventLogText).not.toContain('valueInr');
+    await assertEventLogSanitized('Stage 2 - Post-Override');
 
     // Phase C: Track Table DOM Proof
     const renderedRangeElem = targetRow.locator('[data-testid="track-range"]');
@@ -223,10 +230,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     }
 
     // Stage 3: Re-inspect Event Log after release-block action
-    eventLogText = await eventLog.innerText();
-    for (const token of forbiddenTokens) {
-      expect(eventLogText).not.toContain(token);
-    }
+    await assertEventLogSanitized('Stage 3 - Post-Fire');
 
     // Final audit across all operator-facing paths after all mutations
     const finalAudit = await page.evaluate(() => {
@@ -241,6 +245,20 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
       const win = window as unknown as WindowWithDrishti;
       win.__DRISHTI_TEST__?.clearOverrides();
     });
+
+    // Verify post-clear state restoration in the E2E test
+    const restoredOpTrack = await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+    }, targetNo);
+    expect(restoredOpTrack).toBeDefined();
+    // Restored estimate range should no longer equal the overridden 470.0 m
+    expect(restoredOpTrack!.estRangeM).not.toBe(470.0);
+
+    // Assert that the rendered Track Table row updates to display the restored estimate
+    await expect(renderedRangeElem).not.toHaveText(estRangeKmStr, { timeout: 5000 });
+    const restoredRenderedRange = (await renderedRangeElem.innerText()).trim();
+    expect(restoredRenderedRange).not.toBe(estRangeKmStr);
 
     await saveShot(page, 'task18_01_zero_truth_leakage_audit.png');
   });
