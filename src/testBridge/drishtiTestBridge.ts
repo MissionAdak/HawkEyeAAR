@@ -2,6 +2,7 @@ import type { SimEngine, SensorHealthStatus } from '@/sim/engine';
 import type { Renderer3D } from '@/render3d';
 import type { SensorMode, TrackClass, ChaosSpec } from '@/sim/types';
 import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
+import type { ApprovedSensorObservation } from '@/render3d/types';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -37,6 +38,9 @@ export interface DrishtiTestBridge {
     hasLeaks: boolean;
     leakedProperties: string[];
   };
+  setSensorHealthOverride: (health: Record<string, unknown> | null) => boolean;
+  injectObservationOverride: (trackNo: string, obs: Partial<ApprovedSensorObservation> | null) => boolean;
+  clearOverrides: () => void;
 }
 
 declare global {
@@ -60,6 +64,9 @@ export function installDrishtiTestBridge(
   if (typeof window === 'undefined') {
     return () => {};
   }
+
+  let sensorHealthOverride: Record<string, unknown> | null = null;
+  const observationOverrides = new Map<string, Partial<ApprovedSensorObservation> | null>();
 
   const bridge: DrishtiTestBridge = {
     isReady(): boolean {
@@ -98,58 +105,101 @@ export function installDrishtiTestBridge(
       entity.prev = { x: pos.x, y: pos.y, z: pos.z };
       entity.vel = { x: 0, y: 0, z: 0 };
       entity.masked = false;
-      entity.q = 0.95;
+
+      const r3d = getRenderer3D();
+      if (r3d) {
+        const trackData = r3d.getCurrentTracks();
+        if (trackData) {
+          const safeTrack = trackData.tracks.find((t) => t.trackNo === trackNo);
+          if (safeTrack) {
+            safeTrack.pos = { x: pos.x, y: pos.y, z: pos.z };
+            safeTrack.masked = false;
+            r3d.update(trackData.tracks, trackData.selectedTrackNo);
+          }
+        }
+      }
       return true;
     },
 
     setSensorCondition(condition: { sensor: SensorMode; health: SensorHealthStatus }): boolean {
-      if (!condition || !['RADAR', 'EOIR', 'RF'].includes(condition.sensor)) return false;
-      if (!['OK', 'DEG', 'OUT'].includes(condition.health)) return false;
+      if (!condition || !condition.sensor || !condition.health) return false;
+      if (condition.sensor !== 'RADAR' && condition.sensor !== 'EOIR' && condition.sensor !== 'RF') {
+        return false;
+      }
+      if (condition.health !== 'OK' && condition.health !== 'DEG' && condition.health !== 'OUT') {
+        return false;
+      }
 
       engine.baselineSensorHealth[condition.sensor] = condition.health;
       const currentSimMs = engine.tickIndex * 50;
       engine.sensorHealth = engine.getEffectiveSensorHealth(currentSimMs);
+
+      const r3d = getRenderer3D();
+      if (r3d) {
+        const trackData = r3d.getCurrentTracks();
+        if (trackData) {
+          r3d.update(trackData.tracks, trackData.selectedTrackNo);
+        }
+      }
       return true;
     },
 
     setSimChaos(chaosList: ChaosSpec[]): boolean {
-      if (!Array.isArray(chaosList)) return false;
-      for (const c of chaosList) {
-        if (!['FOG', 'JAMMING', 'RAIN', 'RADAR_DROPOUT'].includes(c.type)) return false;
-        if (typeof c.tStartMs !== 'number' || typeof c.tEndMs !== 'number') return false;
-      }
+      if (!engine.spec || !Array.isArray(chaosList)) return false;
+      engine.spec.chaos = [...chaosList];
 
-      if (engine.spec) {
-        engine.spec.chaos = [...chaosList];
-      }
       const currentSimMs = engine.tickIndex * 50;
       engine.sensorHealth = engine.getEffectiveSensorHealth(currentSimMs);
+
+      const r3d = getRenderer3D();
+      if (r3d) {
+        const trackData = r3d.getCurrentTracks();
+        if (trackData) {
+          r3d.update(trackData.tracks, trackData.selectedTrackNo);
+        }
+      }
       return true;
     },
 
     classifyTrack(trackNo: string, label: TrackClass): boolean {
-      if (!trackNo || typeof trackNo !== 'string') return false;
-      const validLabels: TrackClass[] = [
-        'HOSTILE_ATTACK',
-        'HOSTILE_ISR',
-        'SWARM_ELEMENT',
-        'CIVIL_UAS',
-        'BIRD',
-        'FRIENDLY',
-        'UNKNOWN_EVIDENCE_INSUFFICIENT',
-      ];
-      if (!validLabels.includes(label)) return false;
-
+      if (!trackNo) return false;
       const entity = engine.curr.find((e) => e.trackNo === trackNo);
       if (!entity) return false;
+
       entity.traineeLabel = label;
-      entity.tCls ??= engine.tickIndex * 50;
+
+      const r3d = getRenderer3D();
+      if (r3d) {
+        const trackData = r3d.getCurrentTracks();
+        if (trackData) {
+          const safeTrack = trackData.tracks.find((t) => t.trackNo === trackNo);
+          if (safeTrack) {
+            safeTrack.traineeLabel = label;
+            r3d.update(trackData.tracks, trackData.selectedTrackNo);
+          }
+        }
+      }
       return true;
     },
 
     getTrackScreenCoords(trackNo: string): { clientX: number; clientY: number } | null {
       const r3d = getRenderer3D();
       return r3d?.getTrackScreenCoords(trackNo) ?? null;
+    },
+
+    setSensorHealthOverride(health: Record<string, unknown> | null): boolean {
+      sensorHealthOverride = health;
+      return true;
+    },
+
+    injectObservationOverride(trackNo: string, obs: Partial<ApprovedSensorObservation> | null): boolean {
+      observationOverrides.set(trackNo, obs);
+      return true;
+    },
+
+    clearOverrides(): void {
+      sensorHealthOverride = null;
+      observationOverrides.clear();
     },
 
     getPresentationState(trackNo?: string): {
@@ -168,12 +218,40 @@ export function installDrishtiTestBridge(
       }
 
       const { tracks } = trackData;
-      r3d.update(tracks, null);
+      const patchedTracks = tracks.map((t) => {
+        if (observationOverrides.has(t.trackNo)) {
+          const override = observationOverrides.get(t.trackNo);
+          return {
+            ...t,
+            sensorObservation: override
+              ? ({ ...(t.sensorObservation ?? {}), ...override } as ApprovedSensorObservation)
+              : null,
+          };
+        }
+        return t;
+      });
+
+      // Apply sensorHealthOverride if present
+      if (sensorHealthOverride !== null) {
+        const originalProvider = (r3d as unknown as { getSensorHealth?: () => unknown }).getSensorHealth;
+        (r3d as unknown as { setSensorHealthProvider: (fn: () => unknown) => void }).setSensorHealthProvider(
+          () => sensorHealthOverride
+        );
+        r3d.update(patchedTracks, null);
+        if (originalProvider) {
+          (r3d as unknown as { setSensorHealthProvider: (fn: () => unknown) => void }).setSensorHealthProvider(
+            originalProvider
+          );
+        }
+      } else {
+        r3d.update(patchedTracks, null);
+      }
+
       const scene3d = r3d.getScene3D();
 
       const candidateTracks = trackNo
-        ? tracks.filter((t) => t.trackNo === trackNo)
-        : tracks;
+        ? patchedTracks.filter((t) => t.trackNo === trackNo)
+        : patchedTracks;
 
       const records: DrishtiPresentationRecord[] = candidateTracks.map((t) => {
         const rec = scene3d.getTrackRecord(t.trackNo);

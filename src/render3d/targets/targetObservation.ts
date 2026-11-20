@@ -2,24 +2,107 @@ import type { SafeTrackView, TargetDisplayMode, ObservedAirframeSignature } from
 import type { SensorMode, DroneType } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
 import type { WeatherType } from '../environment/types';
+import type { ApprovedSensorObservation } from '../types';
 
-export type SensorHealthState = 'OK' | 'DEG' | 'OUT';
+export const VALID_SENSOR_HEALTH_STATES = ['OK', 'DEG', 'OUT'] as const;
+export type SensorHealthState = (typeof VALID_SENSOR_HEALTH_STATES)[number];
+
+export const VALID_SENSOR_MODES = ['RADAR', 'EOIR', 'RF'] as const;
+
+export const VALID_OPTICAL_RESOLUTION_LEVELS = ['FULL', 'DEGRADED', 'UNRESOLVED'] as const;
+export type OpticalResolutionLevel = (typeof VALID_OPTICAL_RESOLUTION_LEVELS)[number];
+
+export const VALID_OPTICAL_VISIBILITY_STATES = [
+  'CLEAR',
+  'DEGRADED',
+  'DEGRADED_FOG',
+  'DEGRADED_RAIN',
+  'DEGRADED_NIGHT_THERMAL',
+  'MASKED',
+  'OUT_OF_RANGE',
+] as const;
+export type OpticalVisibilityState = (typeof VALID_OPTICAL_VISIBILITY_STATES)[number];
+
+export const VALID_OBSERVED_AIRFRAME_SIGNATURES = [
+  'MULTIROTOR_COMPACT',
+  'MULTIROTOR_WITH_CAMERA_POD',
+  'MULTIROTOR_STANDARD',
+  'FIXED_WING_DELTA',
+  'BIRD_LIKE',
+  'UNRESOLVED_AIRFRAME',
+] as const;
+
+/**
+ * Authoritative Deterministic Simulation Timestamp Tolerances at 20 Hz (50 ms / tick):
+ * - MAX_OBSERVATION_FUTURE_TOLERANCE_MS: 50 ms (max 1 simulation tick ahead permitted for sub-tick frame interpolation).
+ * - MAX_OBSERVATION_AGE_MS: 1000 ms (20 simulation ticks / 1.0 second; observations older than 1.0s are stale).
+ * - NOTIONAL TRAINING VISIBILITY PARAMETERS:
+ *   1. Clear Daylight Nominal Optical Recognition Range: 2400 metres.
+ *   2. Maximum Optical Detection Range: 3800 metres.
+ *
+ * CAUTION: These parameters are synthetic training heuristics for simulation education,
+ * NOT physically calibrated military sensor specifications.
+ */
+export const MAX_OBSERVATION_FUTURE_TOLERANCE_MS = 50;
+export const MAX_OBSERVATION_AGE_MS = 1000;
+export const CLEAR_OPTICAL_RANGE_M = 2400;
+export const MAX_OPTICAL_RANGE_M = 3800;
 
 export interface SensorObservationContext {
   activeSensor: SensorMode;
   displayMode: TargetDisplayMode;
   sensorHealth?: Record<SensorMode, SensorHealthState>;
+  currentSimMs?: number;
   weather?: WeatherType;
   isNight?: boolean;
   mode?: 'TRAIN' | 'EVAL' | 'DEMO';
   sensorPos?: { x: number; y: number; z: number };
 }
 
+export type SensorHealthValidationResult =
+  | { isValid: true; health: Record<SensorMode, SensorHealthState> }
+  | { isValid: false; error: string };
+
+/**
+ * Validates sensor health record fail-closed (Task 17.5.1 Part B1).
+ * Requires all sensor modes (RADAR, EOIR, RF) to be explicitly present and valid.
+ * Does not silently convert missing or malformed values to 'OK'.
+ */
+export function validateSensorHealthRecord(raw: unknown): SensorHealthValidationResult {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { isValid: false, error: 'Sensor health record is missing or not an object' };
+  }
+  const record = raw as Record<string, unknown>;
+  for (const mode of VALID_SENSOR_MODES) {
+    if (!(mode in record) || record[mode] === undefined || record[mode] === null) {
+      return { isValid: false, error: `Missing sensor health key: ${mode}` };
+    }
+    const val = record[mode];
+    if (typeof val !== 'string' || !VALID_SENSOR_HEALTH_STATES.includes(val as SensorHealthState)) {
+      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${String(val)}` };
+    }
+  }
+  return {
+    isValid: true,
+    health: {
+      RADAR: record.RADAR as SensorHealthState,
+      EOIR: record.EOIR as SensorHealthState,
+      RF: record.RF as SensorHealthState,
+    },
+  };
+}
+
+/**
+ * Retrieves validated EOIR health state fail-closed.
+ * Returns null if record is missing or malformed (never defaults to 'OK').
+ */
 export function getEoirHealth(
   health?: Record<SensorMode, SensorHealthState>
-): SensorHealthState {
-  if (!health) return 'OK';
-  return health.EOIR ?? 'OK';
+): SensorHealthState | null {
+  if (!health) return null;
+  const validation = validateSensorHealthRecord(health);
+  if (!validation.isValid) return null;
+  return validation.health.EOIR;
 }
 
 export type ObservationState =
@@ -38,17 +121,260 @@ export interface TargetObservationResult {
   reason: string;
 }
 
+export type ObservationValidationResult =
+  | { isValid: true; observation: ApprovedSensorObservation }
+  | { isValid: false; error: string; fallbackState: ObservationState };
+
 /**
- * NOTIONAL TRAINING ASSUMPTIONS & VISIBILITY PARAMETERS (Task 17.3 §4, §8):
- *
- * 1. Clear Daylight Nominal Optical Recognition Range: 2400 metres.
- * 2. Maximum Optical Detection Range: 3800 metres.
- *
- * CAUTION: These parameters are synthetic training heuristics for simulation education,
- * NOT physically calibrated military sensor specifications.
+ * Strictly validates the complete observation contract and timestamp provenance (Task 17.5.1 Part B2, B3).
+ * Fails closed on any inconsistency, missing key, non-finite number, or contract violation.
  */
-export const CLEAR_OPTICAL_RANGE_M = 2400;
-export const MAX_OPTICAL_RANGE_M = 3800;
+export function validateObservationProvenance(
+  obs: unknown,
+  context: SensorObservationContext
+): ObservationValidationResult {
+  if (!obs || typeof obs !== 'object' || Array.isArray(obs)) {
+    return {
+      isValid: false,
+      error: 'Observation payload is missing or not an object',
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  const o = obs as Record<string, unknown>;
+
+  // 1. Validate sensorSource
+  if (o.sensorSource !== 'EOIR') {
+    return {
+      isValid: false,
+      error: `Invalid observation sensorSource: ${String(o.sensorSource)} (must be EOIR)`,
+      fallbackState: 'RADAR_TRACK',
+    };
+  }
+
+  // 2. Validate activeSensor when present
+  if ('activeSensor' in o && o.activeSensor !== undefined && o.activeSensor !== null) {
+    if (o.activeSensor !== 'EOIR') {
+      return {
+        isValid: false,
+        error: `Inconsistent activeSensor: ${String(o.activeSensor)} (must match EOIR)`,
+        fallbackState: 'RADAR_TRACK',
+      };
+    }
+  }
+
+  // 3. Validate timestampMs
+  if (typeof o.timestampMs !== 'number' || !Number.isFinite(o.timestampMs)) {
+    return {
+      isValid: false,
+      error: `Invalid observation timestampMs: ${String(o.timestampMs)} (must be finite number)`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // Authoritative simulation timestamp check
+  if (context.currentSimMs !== undefined) {
+    if (!Number.isFinite(context.currentSimMs)) {
+      return {
+        isValid: false,
+        error: `Invalid context currentSimMs: ${String(context.currentSimMs)}`,
+        fallbackState: 'OUT_OF_RANGE',
+      };
+    }
+    if (o.timestampMs > context.currentSimMs + MAX_OBSERVATION_FUTURE_TOLERANCE_MS) {
+      return {
+        isValid: false,
+        error: `Observation timestamp ${o.timestampMs}ms is in the future relative to sim ${context.currentSimMs}ms`,
+        fallbackState: 'OUT_OF_RANGE',
+      };
+    }
+    if (o.timestampMs < context.currentSimMs - MAX_OBSERVATION_AGE_MS) {
+      return {
+        isValid: false,
+        error: `Observation timestamp ${o.timestampMs}ms is stale relative to sim ${context.currentSimMs}ms`,
+        fallbackState: 'OUT_OF_RANGE',
+      };
+    }
+  }
+
+  // 4. Validate confidence
+  if (
+    typeof o.confidence !== 'number' ||
+    !Number.isFinite(o.confidence) ||
+    o.confidence < 0 ||
+    o.confidence > 1
+  ) {
+    return {
+      isValid: false,
+      error: `Invalid observation confidence: ${String(o.confidence)} (must be between 0.0 and 1.0)`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // 5. Validate sensorHealth within observation
+  if (
+    typeof o.sensorHealth !== 'string' ||
+    !VALID_SENSOR_HEALTH_STATES.includes(o.sensorHealth as SensorHealthState)
+  ) {
+    return {
+      isValid: false,
+      error: `Invalid observation sensorHealth: ${String(o.sensorHealth)}`,
+      fallbackState: 'SENSOR_OFFLINE',
+    };
+  }
+
+  // 6. Validate sensorAvailability
+  if (typeof o.sensorAvailability !== 'boolean') {
+    return {
+      isValid: false,
+      error: `Invalid observation sensorAvailability: ${String(o.sensorAvailability)} (must be boolean)`,
+      fallbackState: 'SENSOR_OFFLINE',
+    };
+  }
+
+  // Inconsistency check between sensorHealth and sensorAvailability
+  if (o.sensorHealth === 'OUT' && o.sensorAvailability === true) {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: sensorHealth is OUT but sensorAvailability is true',
+      fallbackState: 'SENSOR_OFFLINE',
+    };
+  }
+  if (o.sensorHealth === 'OK' && o.sensorAvailability === false) {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: sensorHealth is OK but sensorAvailability is false',
+      fallbackState: 'SENSOR_OFFLINE',
+    };
+  }
+
+  // 7. Validate signature
+  const sig = (o.signature ?? o.observedSignature) as string;
+  if (
+    typeof sig !== 'string' ||
+    !VALID_OBSERVED_AIRFRAME_SIGNATURES.includes(sig as ObservedAirframeSignature)
+  ) {
+    return {
+      isValid: false,
+      error: `Invalid observation airframe signature: ${String(sig)}`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+  if (
+    'observedSignature' in o &&
+    o.observedSignature !== undefined &&
+    o.signature !== undefined &&
+    o.signature !== o.observedSignature
+  ) {
+    return {
+      isValid: false,
+      error: `Inconsistent observation signatures: signature '${String(o.signature)}' !== observedSignature '${String(o.observedSignature)}'`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // 8. Validate resolutionLevel and resolution
+  const resLevel = o.resolutionLevel as string;
+  const res = o.resolution as string;
+  if (
+    typeof resLevel !== 'string' ||
+    !VALID_OPTICAL_RESOLUTION_LEVELS.includes(resLevel as OpticalResolutionLevel)
+  ) {
+    return {
+      isValid: false,
+      error: `Invalid observation resolutionLevel: ${String(resLevel)}`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+  if (
+    'resolution' in o &&
+    o.resolution !== undefined &&
+    (!VALID_OPTICAL_RESOLUTION_LEVELS.includes(res as OpticalResolutionLevel) || res !== resLevel)
+  ) {
+    return {
+      isValid: false,
+      error: `Inconsistent observation resolution fields: resolution '${String(res)}' !== resolutionLevel '${String(resLevel)}'`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // 9. Validate visibilityState
+  const visState = o.visibilityState as string;
+  if (
+    typeof visState !== 'string' ||
+    !VALID_OPTICAL_VISIBILITY_STATES.includes(visState as OpticalVisibilityState)
+  ) {
+    return {
+      isValid: false,
+      error: `Invalid observation visibilityState: ${String(visState)}`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // 10. Field consistency checks:
+  if (o.sensorHealth === 'OUT' && (resLevel === 'FULL' || resLevel === 'DEGRADED')) {
+    return {
+      isValid: false,
+      error: `Inconsistent observation: sensorHealth OUT cannot produce resolution ${resLevel}`,
+      fallbackState: 'SENSOR_OFFLINE',
+    };
+  }
+
+  if (o.sensorHealth === 'DEG' && resLevel === 'FULL') {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: sensorHealth DEG cannot produce resolution FULL',
+      fallbackState: 'DEGRADED_OPTICAL',
+    };
+  }
+
+  if (o.sensorAvailability === false && (resLevel === 'FULL' || visState === 'CLEAR')) {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: unavailable sensor cannot produce CLEAR or FULL observation',
+      fallbackState: 'SENSOR_OFFLINE',
+    };
+  }
+
+  if (visState === 'MASKED' && resLevel !== 'UNRESOLVED') {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: MASKED visibility cannot produce resolved resolution',
+      fallbackState: 'MASKED',
+    };
+  }
+
+  if (visState === 'OUT_OF_RANGE' && resLevel !== 'UNRESOLVED') {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: OUT_OF_RANGE visibility cannot produce resolved resolution',
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  if (resLevel === 'FULL' && sig === 'UNRESOLVED_AIRFRAME') {
+    return {
+      isValid: false,
+      error: 'Inconsistent observation: resolution FULL cannot have UNRESOLVED_AIRFRAME signature',
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  if ('estimatedRangeM' in o && o.estimatedRangeM !== undefined && o.estimatedRangeM !== null) {
+    if (typeof o.estimatedRangeM !== 'number' || !Number.isFinite(o.estimatedRangeM) || o.estimatedRangeM < 0) {
+      return {
+        isValid: false,
+        error: `Invalid observation estimatedRangeM: ${String(o.estimatedRangeM)}`,
+        fallbackState: 'OUT_OF_RANGE',
+      };
+    }
+  }
+
+  return {
+    isValid: true,
+    observation: o as unknown as ApprovedSensorObservation,
+  };
+}
 
 /**
  * Maps legitimate observable physical airframe type to neutral procedural target model category (Task 17.5 §5).
@@ -83,21 +409,23 @@ export function mapSignatureToCategory(
 export const mapAirframeToCategory = mapSignatureToCategory;
 
 /**
- * Resolves sensor-aware 3D target visual presentation (Task 17.2, Task 17.3, Task 17.5).
+ * Resolves sensor-aware 3D target visual presentation (Task 17.2, Task 17.3, Task 17.5, Task 17.5.1).
  *
  * Rules:
- * 1. RADAR mode / displayMode RADAR: strictly produces RADAR_SYMBOL (high-contrast diamond reticle).
+ * 1. Context sensorHealth MUST be strictly validated (fail-closed: missing/invalid records fail to SENSOR_OFFLINE).
+ * 2. RADAR mode / displayMode RADAR: strictly produces RADAR_SYMBOL (high-contrast diamond reticle).
  *    TGT:AIR preference CANNOT override RADAR selection.
- * 2. RF mode: strictly produces RADAR_SYMBOL. Optical models are forbidden in RF mode.
- * 3. EO/IR mode:
- *    - Sensor offline (eoirOk === false): strictly RADAR_SYMBOL / SENSOR_OFFLINE.
+ * 3. RF mode: strictly produces RADAR_SYMBOL. Optical models are forbidden in RF mode.
+ * 4. EO/IR mode:
+ *    - Sensor offline (sensorHealth.EOIR === 'OUT'): strictly RADAR_SYMBOL / SENSOR_OFFLINE.
  *    - Masked tracks (terrain/buildings): strictly RADAR_SYMBOL / MASKED state. Never see-through.
  *    - Approved sensor observation present:
- *      * resolution === 'FULL': maps observed signature to physical model category.
+ *      * Validated through strict provenance & consistency check.
+ *      * resolution === 'FULL': maps observed signature to neutral physical model category.
  *      * resolution === 'DEGRADED': resolves UNKNOWN_AIRFRAME.
  *      * resolution === 'UNRESOLVED': resolves RADAR_SYMBOL.
  *    - If no observation is available: returns RADAR_SYMBOL.
- * 4. Operator classification (traineeLabel) does NOT alter physical airframe geometry.
+ * 5. Operator classification (traineeLabel) does NOT alter physical airframe geometry.
  */
 export function resolveTargetPresentation(
   track: SafeTrackView,
@@ -106,9 +434,21 @@ export function resolveTargetPresentation(
   const {
     activeSensor,
     displayMode = 'AUTO',
-    sensorHealth = { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
     mode = 'TRAIN',
   } = context;
+
+  // Validate context sensorHealth strictly (Fail-Closed: Task 17.5.1 Part B1)
+  const healthValidation = validateSensorHealthRecord(context.sensorHealth);
+  if (!healthValidation.isValid) {
+    return {
+      presentationCategory: 'RADAR_SYMBOL',
+      isVisuallyResolved: false,
+      observationState: 'SENSOR_OFFLINE',
+      opticalConfidence: 0,
+      reason: `Sensor health validation failed: ${healthValidation.error}`,
+    };
+  }
+  const sensorHealth = healthValidation.health;
 
   // 1. Force RADAR symbols if display mode is explicitly RADAR
   if (displayMode === 'RADAR') {
@@ -121,7 +461,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 2. Active sensor is RADAR or RF (Task 17.3 §6: AIRFRAME preference cannot override RADAR or RF!)
+  // 2. Active sensor is RADAR or RF (AIRFRAME preference cannot override RADAR or RF!)
   if (activeSensor === 'RADAR' || activeSensor === 'RF') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -132,9 +472,8 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 3. Sensor Health Check for EO/IR (Task 17.3 §7, Task 17.4 §1, Task 17.5 §4)
-  const eoirHealth = getEoirHealth(sensorHealth);
-  if (activeSensor === 'EOIR' && eoirHealth === 'OUT') {
+  // 3. Sensor Health Check for EO/IR
+  if (activeSensor === 'EOIR' && sensorHealth.EOIR === 'OUT') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
@@ -145,7 +484,7 @@ export function resolveTargetPresentation(
   }
 
   // 4. Line-of-sight & terrain masking check
-  // Optical sensors cannot see through buildings or terrain! (Task 17.3 §8)
+  // Optical sensors cannot see through buildings or terrain!
   if (track.masked) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -156,7 +495,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // In EVAL mode, prevent omniscient truth override (Rule F5 & Task 17.3 §6)
+  // In EVAL mode, prevent omniscient truth override
   if (mode === 'EVAL' && displayMode === 'AIRFRAME' && activeSensor !== 'EOIR') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -167,9 +506,8 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 5. Approved Sensor Observation Dispatch (Task 17.3 §3, §4, Task 17.4 §1, §2, Task 17.5 §6)
+  // 5. Approved Sensor Observation Dispatch
   if (!track.sensorObservation) {
-    // Both null and undefined observations must produce a safe unresolved presentation (Task 17.4 §2)
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
@@ -179,32 +517,23 @@ export function resolveTargetPresentation(
     };
   }
 
-  const obs = track.sensorObservation;
-
-  // Strict observation provenance validation at renderer boundary (Task 17.5 §6)
-  const isProvenanceValid =
-    obs.sensorSource === 'EOIR' &&
-    typeof obs.timestampMs === 'number' &&
-    obs.confidence >= 0 &&
-    obs.confidence <= 1 &&
-    (obs.resolutionLevel === 'FULL' || obs.resolutionLevel === 'DEGRADED' || obs.resolutionLevel === 'UNRESOLVED' ||
-      obs.resolution === 'FULL' || obs.resolution === 'DEGRADED' || obs.resolution === 'UNRESOLVED') &&
-    (obs.visibilityState === 'CLEAR' || obs.visibilityState === 'DEGRADED' || obs.visibilityState === 'MASKED');
-
-  if (!isProvenanceValid) {
+  // Strict observation provenance & contract validation (Task 17.5.1 Part B2, B3)
+  const obsValidation = validateObservationProvenance(track.sensorObservation, context);
+  if (!obsValidation.isValid) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
-      observationState: 'OUT_OF_RANGE',
+      observationState: obsValidation.fallbackState,
       opticalConfidence: 0,
-      reason: 'Sensor observation failed provenance validation',
+      reason: `Observation validation failed: ${obsValidation.error}`,
     };
   }
 
+  const obs = obsValidation.observation;
   const signature = obs.signature ?? obs.observedSignature ?? 'UNRESOLVED_AIRFRAME';
   const resolution = obs.resolutionLevel ?? obs.resolution ?? 'UNRESOLVED';
-  const obsHealth = obs.sensorHealth ?? (obs.sensorAvailability ? 'OK' : 'OUT');
-  const sensorOk = eoirHealth !== 'OUT' && obsHealth !== 'OUT' && obs.sensorAvailability !== false;
+  const obsHealth = obs.sensorHealth;
+  const sensorOk = sensorHealth.EOIR !== 'OUT' && obsHealth !== 'OUT' && obs.sensorAvailability !== false;
   const rangeM = obs.estimatedRangeM ?? 0;
   const confidence = Math.max(0, Math.min(1.0, obs.confidence));
 
@@ -227,14 +556,14 @@ export function resolveTargetPresentation(
     };
   }
 
-  // Degraded sensor health or degraded observation produces UNKNOWN_AIRFRAME, not SENSOR_OFFLINE (Task 17.4 §1)
-  if (eoirHealth === 'DEG' || obsHealth === 'DEG' || resolution === 'DEGRADED') {
+  // Degraded sensor health or degraded observation produces UNKNOWN_AIRFRAME, not SENSOR_OFFLINE
+  if (sensorHealth.EOIR === 'DEG' || obsHealth === 'DEG' || resolution === 'DEGRADED') {
     return {
       presentationCategory: 'UNKNOWN_AIRFRAME',
       isVisuallyResolved: false,
       observationState: 'DEGRADED_OPTICAL',
       opticalConfidence: confidence,
-      reason: eoirHealth === 'DEG' || obsHealth === 'DEG'
+      reason: sensorHealth.EOIR === 'DEG' || obsHealth === 'DEG'
         ? 'EO/IR sensor degraded (DEG)'
         : `Sensor observation degraded by ${obs.visibilityState} (${Math.round(rangeM)}m)`,
     };

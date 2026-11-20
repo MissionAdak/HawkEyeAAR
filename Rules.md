@@ -267,3 +267,6 @@ All constants live in `/public/config.json` (schema in `ARCHITECTURE.md` §3.8).
 
 **R10.18 — Neutral physical airframe recognition taxonomy.** Observable airframe morphology MUST NOT be conflated with tactical threat intent. Physical signatures map to neutral observable categories (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`) with neutral tactical palettes. Operator classification labels (`traineeLabel`) represent operator assessment only and MUST NOT alter physical aircraft geometry or mesh identifiers.
 
+**R10.19 — Fail-closed sensor provenance & simulation timestamp contract.** Sensor health inputs and observation contracts MUST fail closed. Missing or malformed sensor health records, missing mode keys, or invalid health strings MUST NOT default to `OK` and MUST prevent resolved optical model presentation (`SENSOR_OFFLINE`). Observation timestamps MUST be finite numbers and verified deterministically against authoritative simulation time (`currentSimMs` at 20 Hz); timestamps in the future (> 50 ms tolerance) or stale (> 1000 ms age) MUST be rejected into `RADAR_SYMBOL`. Inconsistent observation fields (e.g. `OUT` health with `FULL` resolution, or mismatched resolution fields) MUST fail closed.
+
+

@@ -468,10 +468,13 @@ export class Renderer3D {
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
     this.selectedTrackNo = selectedTrackNo;
     const health = this.getSensorHealth ? this.getSensorHealth() : undefined;
+    const simTimeData = this.getSimTime ? this.getSimTime() : undefined;
+    const currentSimMs = simTimeData?.simMs ?? 0;
     const observationContext: SensorObservationContext = {
       activeSensor: this.activeSensor,
       displayMode: this.targetDisplayMode,
-      sensorHealth: health ?? { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
+      sensorHealth: health,
+      currentSimMs,
       weather: this.scene3d.getEnvironmentManager().isFogActive()
         ? 'FOG'
         : (this.scene3d.getEnvironmentManager().getDescriptor().weather ?? 'CLEAR'),

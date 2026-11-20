@@ -2,6 +2,7 @@ import type { TrackEntity, SensorMode, DroneType } from './types';
 import type {
   ApprovedSensorObservation,
   ObservedAirframeSignature,
+  OpticalVisibilityState,
 } from '@/render3d/types';
 import type { WeatherType } from '@/render3d/environment/types';
 import type { SensorHealthStatus } from './engine';
@@ -72,7 +73,7 @@ export function mapDroneTypeToAirframeSignature(droneType: DroneType): ObservedA
 }
 
 /**
- * Evaluates legitimate sensor observation for an entity (Task 17.3 §3, §4).
+ * Evaluates legitimate sensor observation for an entity (Task 17.3 §3, §4, Task 17.5.1).
  * Returns an ApprovedSensorObservation if and only if sensor conditions permit observation.
  * Returns null when active sensor is RADAR or RF (optical models forbidden in non-EO/IR modes).
  */
@@ -104,10 +105,11 @@ export function evaluateSensorObservation(
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
+      activeSensor: 'EOIR',
       confidence: 0,
       resolutionLevel: 'UNRESOLVED',
       resolution: 'UNRESOLVED',
-      visibilityState: 'CLEAR',
+      visibilityState: 'OUT_OF_RANGE',
       sensorAvailability: false,
       sensorHealth: 'OUT',
       sensorHealthOk: false,
@@ -123,6 +125,7 @@ export function evaluateSensorObservation(
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
+      activeSensor: 'EOIR',
       confidence: 0,
       resolutionLevel: 'UNRESOLVED',
       resolution: 'UNRESOLVED',
@@ -164,6 +167,7 @@ export function evaluateSensorObservation(
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
+      activeSensor: 'EOIR',
       confidence: 0,
       resolutionLevel: 'UNRESOLVED',
       resolution: 'UNRESOLVED',
@@ -182,6 +186,7 @@ export function evaluateSensorObservation(
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
+      activeSensor: 'EOIR',
       confidence: Math.max(0, Math.min(1.0, 0.1)),
       resolutionLevel: 'UNRESOLVED',
       resolution: 'UNRESOLVED',
@@ -200,15 +205,25 @@ export function evaluateSensorObservation(
       Math.min(0.65, 1.0 - (distM - clearThreshold) / Math.max(1, maxThreshold - clearThreshold))
     );
     const confidence = eoirHealth === 'DEG' ? rawConf * 0.7 : rawConf;
+    const degradedVisState: OpticalVisibilityState =
+      weather === 'FOG'
+        ? 'DEGRADED_FOG'
+        : weather === 'RAIN'
+          ? 'DEGRADED_RAIN'
+          : isNight
+            ? 'DEGRADED_NIGHT_THERMAL'
+            : 'DEGRADED';
+
     return {
       signature: 'UNRESOLVED_AIRFRAME',
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
+      activeSensor: 'EOIR',
       confidence: Math.max(0, Math.min(1.0, confidence)),
       resolutionLevel: 'DEGRADED',
       resolution: 'DEGRADED',
-      visibilityState: 'DEGRADED',
+      visibilityState: degradedVisState,
       sensorAvailability: true,
       sensorHealth: eoirHealth,
       sensorHealthOk: false,
@@ -225,7 +240,8 @@ export function evaluateSensorObservation(
     observedSignature: signature,
     timestampMs: currentSimMs,
     sensorSource: 'EOIR',
-    confidence: Math.max(0, Math.min(1.0, confidence)),
+    activeSensor: 'EOIR',
+    confidence: Math.max(0.7, Math.min(1.0, confidence)),
     resolutionLevel: 'FULL',
     resolution: 'FULL',
     visibilityState: 'CLEAR',

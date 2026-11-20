@@ -287,7 +287,7 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
     expect(result.category).toBe('UNKNOWN_AIRFRAME');
     expect(result.obsHealth).toBe('DEG');
     expect(result.obsResolution).toBe('DEGRADED');
-    expect(result.obsVisibility).toBe('DEGRADED');
+    expect(result.obsVisibility).toMatch(/^DEGRADED/);
   });
 
   test('Test F — OUT EO/IR Sensor: Offline sensor strictly prohibits optical models (RADAR_SYMBOL)', async ({
@@ -469,5 +469,113 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     expect(audit.hasLeaks).toBe(false);
     expect(audit.leakedProperties).toHaveLength(0);
+  });
+
+  test('Test K — Fail-Closed Sensor Provenance & Health Validation (Task 17.5.1)', async ({ page }) => {
+    await setupSession(page);
+
+    // Switch to EO/IR and clear optical conditions
+    const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await eoirBtn.click();
+    await page.waitForTimeout(1000);
+
+    const tracks = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getTrackList();
+    });
+    expect(tracks.length).toBeGreaterThan(0);
+    const targetTrack = tracks[0].trackNo;
+
+    // 1. Position target within clear optical reach
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.positionTrack(trk, { x: 800, y: 800, z: 100 });
+    }, targetTrack);
+    await page.waitForTimeout(1000);
+
+    // Baseline: track is optically resolved
+    const baseState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(baseState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
+
+    // Subtest 1: Corrupt sensor-health by omitting EOIR key -> fails closed to RADAR_SYMBOL
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSensorHealthOverride({ RADAR: 'OK', RF: 'OK' });
+    });
+    const missingHealthState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(missingHealthState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Subtest 2: Corrupt sensor-health with invalid state string -> fails closed to RADAR_SYMBOL
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSensorHealthOverride({ RADAR: 'OK', EOIR: 'MALFUNCTION', RF: 'OK' });
+    });
+    const malformedHealthState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(malformedHealthState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Restore health override
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSensorHealthOverride(null);
+    });
+
+    // Subtest 3: Inject NaN timestamp -> fails closed to RADAR_SYMBOL
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, { timestampMs: NaN });
+    }, targetTrack);
+    const nanTimeState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(nanTimeState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Subtest 4: Inject future timestamp -> fails closed to RADAR_SYMBOL
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, { timestampMs: 9999999 });
+    }, targetTrack);
+    const futureTimeState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(futureTimeState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Subtest 5: Inject inconsistent resolution fields -> fails closed to RADAR_SYMBOL
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, {
+        resolutionLevel: 'FULL',
+        resolution: 'DEGRADED',
+      });
+    }, targetTrack);
+    const inconsistentResState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(inconsistentResState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Subtest 6: Clear overrides -> returns to resolved optical presentation
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.clearOverrides();
+    });
+    await page.waitForTimeout(500);
+    const restoredState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(restoredState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
+
+    await saveShot(page, 'task17_5_03_fail_closed_provenance.png');
   });
 });

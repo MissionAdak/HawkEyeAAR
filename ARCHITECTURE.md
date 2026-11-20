@@ -937,3 +937,19 @@ To uphold the operator-facing information boundary, the production deployment (`
    - Observable signatures map to neutral categories (`MULTIROTOR_COMPACT`, `MULTIROTOR_WITH_CAMERA_POD`, `MULTIROTOR_STANDARD` $\to$ `OBSERVED_MULTIROTOR`; `FIXED_WING_DELTA` $\to$ `OBSERVED_FIXED_WING`).
    - Procedural 3D models preserve physical geometry differences (FPV X-frame, reconnaissance gimbal pod, delta wing) using neutral matte palettes, preventing false inferences of threat intent from observable shape.
    - Operator classifications (`traineeLabel`) remain separate tactical metadata and never alter physical 3D mesh geometry.
+
+### 8.11 Fail-Closed Sensor Provenance & Timestamp Audit (Task 17.5.1)
+
+1. **Fail-Closed Sensor Health Contract:**
+   - Any missing sensor health record, missing mode key (`RADAR`, `EOIR`, `RF`), or non-conforming state string immediately fails closed to `SENSOR_OFFLINE` / `RADAR_SYMBOL`.
+   - Missing health information never defaults to `OK`.
+2. **Authoritative Deterministic Simulation Timestamp Validation:**
+   - Evaluated strictly against simulation time `currentSimMs` at 20 Hz (50 ms ticks); never reads wall-clock `Date.now()`.
+   - Permitted future tolerance: `MAX_OBSERVATION_FUTURE_TOLERANCE_MS = 50 ms` (1 simulation tick for sub-tick frame interpolation).
+   - Permitted staleness: `MAX_OBSERVATION_AGE_MS = 1000 ms` (20 simulation ticks / 1.0 second).
+   - Rejects NaN, Infinite, future, and stale observation timestamps fail-closed to `RADAR_SYMBOL`.
+3. **Comprehensive Observation Contract & Consistency Verification:**
+   - Validates all 11 observation fields: `sensorSource`, `activeSensor`, `sensorHealth`, `sensorAvailability`, `timestampMs`, `confidence`, `signature`, `resolutionLevel`, `resolution`, `visibilityState`, and `estimatedRangeM`.
+   - Enforces field consistency: EOIR `OUT` cannot produce `FULL` or `DEGRADED`; `sensorAvailability === false` cannot produce `FULL` or `CLEAR`; `resolutionLevel` and `resolution` must match; `signature` and `observedSignature` must match; `MASKED` or `OUT_OF_RANGE` cannot produce `FULL` resolution.
+   - All 7 declared visibility states (`CLEAR`, `DEGRADED`, `DEGRADED_FOG`, `DEGRADED_RAIN`, `DEGRADED_NIGHT_THERMAL`, `MASKED`, `OUT_OF_RANGE`) are accepted and handled fail-closed.
+

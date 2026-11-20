@@ -16,22 +16,27 @@ import {
 } from '@/sim/sensorObservation';
 
 describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17.4)', () => {
-  const makeObservation = (overrides?: Partial<ApprovedSensorObservation>): ApprovedSensorObservation => ({
-    signature: overrides?.signature ?? overrides?.observedSignature ?? 'FIXED_WING_DELTA',
-    observedSignature: overrides?.signature ?? overrides?.observedSignature ?? 'FIXED_WING_DELTA',
-    sensorSource: 'EOIR',
-    activeSensor: 'EOIR',
-    sensorHealth: 'OK',
-    sensorHealthOk: true,
-    sensorAvailability: true,
-    resolution: 'FULL',
-    resolutionLevel: 'FULL',
-    visibilityState: 'CLEAR',
-    estimatedRangeM: 1419,
-    confidence: 0.9,
-    timestampMs: 5000,
-    ...overrides,
-  });
+  const makeObservation = (overrides?: Partial<ApprovedSensorObservation>): ApprovedSensorObservation => {
+    const sig = overrides?.signature ?? overrides?.observedSignature ?? 'FIXED_WING_DELTA';
+    const res = overrides?.resolutionLevel ?? overrides?.resolution ?? 'FULL';
+    const vis = overrides?.visibilityState ?? (res === 'DEGRADED' ? 'DEGRADED' : 'CLEAR');
+    return {
+      signature: sig,
+      observedSignature: sig,
+      sensorSource: 'EOIR',
+      activeSensor: 'EOIR',
+      sensorHealth: 'OK',
+      sensorHealthOk: true,
+      sensorAvailability: true,
+      resolution: res,
+      resolutionLevel: res,
+      visibilityState: vis,
+      estimatedRangeM: 1419,
+      confidence: 0.9,
+      timestampMs: 5000,
+      ...overrides,
+    };
+  };
 
   const makeTrack = (overrides?: Partial<SafeTrackView>): SafeTrackView => ({
     trackNo: 'T-01',
@@ -52,6 +57,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
     activeSensor: 'EOIR',
     displayMode: 'AUTO',
     sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
+    currentSimMs: 5000,
     weather: 'CLEAR',
     isNight: false,
     mode: 'TRAIN',
@@ -98,7 +104,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
     sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
     isNight: false,
     weather: 'CLEAR',
-    currentSimMs: 10000,
+    currentSimMs: 5000,
   };
 
   describe('1. Ground-Truth Isolation & projectSafeTracks boundary (Task 17.3 §2)', () => {
@@ -586,7 +592,293 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       });
       const result = resolveTargetPresentation(badTrack, baseContext);
       expect(result.presentationCategory).toBe('RADAR_SYMBOL');
-      expect(result.reason).toContain('provenance');
+      expect(result.reason).toMatch(/validation|provenance/i);
+    });
+  });
+
+  describe('11. Fail-Closed Sensor Health & Contract Validation (Task 17.5.1 Part B & C)', () => {
+    it('1. missing sensor-health record fails closed to SENSOR_OFFLINE and RADAR_SYMBOL', () => {
+      const track = makeTrack();
+      const ctx: SensorObservationContext = {
+        ...baseContext,
+        sensorHealth: undefined,
+      };
+      const result = resolveTargetPresentation(track, ctx);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.observationState).toBe('SENSOR_OFFLINE');
+      expect(result.reason).toContain('Sensor health validation failed');
+    });
+
+    it('2. missing EOIR health key fails closed to SENSOR_OFFLINE and RADAR_SYMBOL', () => {
+      const track = makeTrack();
+      const ctx: SensorObservationContext = {
+        ...baseContext,
+        sensorHealth: { RADAR: 'OK', RF: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/render3d/targets/targetObservation').SensorHealthState>,
+      };
+      const result = resolveTargetPresentation(track, ctx);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.observationState).toBe('SENSOR_OFFLINE');
+      expect(result.reason).toContain('Missing sensor health key: EOIR');
+    });
+
+    it('3. invalid sensor-health string fails closed to SENSOR_OFFLINE and RADAR_SYMBOL', () => {
+      const track = makeTrack();
+      const ctx: SensorObservationContext = {
+        ...baseContext,
+        sensorHealth: { RADAR: 'OK', EOIR: 'NOMINAL', RF: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/render3d/targets/targetObservation').SensorHealthState>,
+      };
+      const result = resolveTargetPresentation(track, ctx);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.observationState).toBe('SENSOR_OFFLINE');
+      expect(result.reason).toContain('Invalid sensor health state for EOIR');
+    });
+
+    it('4. valid OK health allows resolved optical model when observation is clear', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          resolution: 'FULL',
+          resolutionLevel: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorHealth: 'OK',
+          sensorAvailability: true,
+          signature: 'MULTIROTOR_COMPACT',
+        }),
+      });
+      const ctx: SensorObservationContext = {
+        ...baseContext,
+        sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
+      };
+      const result = resolveTargetPresentation(track, ctx);
+      expect(result.presentationCategory).toBe('OBSERVED_MULTIROTOR');
+      expect(result.isVisuallyResolved).toBe(true);
+      expect(result.observationState).toBe('CLEAR_OPTICAL');
+    });
+
+    it('5. valid DEG health restricts presentation to UNKNOWN_AIRFRAME / DEGRADED_OPTICAL', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          resolution: 'DEGRADED',
+          resolutionLevel: 'DEGRADED',
+          visibilityState: 'DEGRADED',
+          sensorHealth: 'DEG',
+          sensorAvailability: true,
+        }),
+      });
+      const ctx: SensorObservationContext = {
+        ...baseContext,
+        sensorHealth: { RADAR: 'OK', EOIR: 'DEG', RF: 'OK' },
+      };
+      const result = resolveTargetPresentation(track, ctx);
+      expect(result.presentationCategory).toBe('UNKNOWN_AIRFRAME');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.observationState).toBe('DEGRADED_OPTICAL');
+    });
+
+    it('6. valid OUT health forces RADAR_SYMBOL / SENSOR_OFFLINE', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          sensorHealth: 'OUT',
+          sensorAvailability: false,
+          resolution: 'UNRESOLVED',
+          resolutionLevel: 'UNRESOLVED',
+        }),
+      });
+      const ctx: SensorObservationContext = {
+        ...baseContext,
+        sensorHealth: { RADAR: 'OK', EOIR: 'OUT', RF: 'OK' },
+      };
+      const result = resolveTargetPresentation(track, ctx);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.observationState).toBe('SENSOR_OFFLINE');
+    });
+
+    it('7. NaN timestamp fails validation and produces RADAR_SYMBOL', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: NaN,
+        }),
+      });
+      const result = resolveTargetPresentation(track, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('must be finite number');
+    });
+
+    it('8. infinite timestamp fails validation and produces RADAR_SYMBOL', () => {
+      const trackPosInf = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: Infinity,
+        }),
+      });
+      const resultPos = resolveTargetPresentation(trackPosInf, baseContext);
+      expect(resultPos.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(resultPos.isVisuallyResolved).toBe(false);
+
+      const trackNegInf = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: -Infinity,
+        }),
+      });
+      const resultNeg = resolveTargetPresentation(trackNegInf, baseContext);
+      expect(resultNeg.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(resultNeg.isVisuallyResolved).toBe(false);
+    });
+
+    it('9. future timestamp beyond tolerance fails validation and produces RADAR_SYMBOL', () => {
+      // baseContext currentSimMs = 5000, tolerance = 50ms. Timestamp 5100 is > 5050ms.
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: 5100,
+        }),
+      });
+      const result = resolveTargetPresentation(track, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('future');
+    });
+
+    it('10. stale timestamp beyond max age fails validation and produces RADAR_SYMBOL', () => {
+      // baseContext currentSimMs = 5000, max age = 1000ms. Timestamp 3500 is < 4000ms.
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: 3500,
+        }),
+      });
+      const result = resolveTargetPresentation(track, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('stale');
+    });
+
+    it('11. valid current timestamp within tolerance passes validation', () => {
+      // Timestamp within [4000, 5050]
+      const trackExact = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: 5000,
+        }),
+      });
+      const resultExact = resolveTargetPresentation(trackExact, baseContext);
+      expect(resultExact.isVisuallyResolved).toBe(true);
+
+      const trackWithinTol = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: 5030,
+        }),
+      });
+      const resultWithinTol = resolveTargetPresentation(trackWithinTol, baseContext);
+      expect(resultWithinTol.isVisuallyResolved).toBe(true);
+    });
+
+    it('12. sensor availability and health inconsistency is rejected fail-closed', () => {
+      // sensorHealth OUT but availability true
+      const trackInconsistent1 = makeTrack({
+        sensorObservation: makeObservation({
+          sensorHealth: 'OUT',
+          sensorAvailability: true,
+        }),
+      });
+      const result1 = resolveTargetPresentation(trackInconsistent1, baseContext);
+      expect(result1.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result1.isVisuallyResolved).toBe(false);
+      expect(result1.reason).toContain('Inconsistent');
+
+      // sensorHealth OK but availability false
+      const trackInconsistent2 = makeTrack({
+        sensorObservation: makeObservation({
+          sensorHealth: 'OK',
+          sensorAvailability: false,
+        }),
+      });
+      const result2 = resolveTargetPresentation(trackInconsistent2, baseContext);
+      expect(result2.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result2.isVisuallyResolved).toBe(false);
+      expect(result2.reason).toContain('Inconsistent');
+    });
+
+    it('13. invalid sensor source fails validation for optical airframe model', () => {
+      const trackRadar = makeTrack({
+        sensorObservation: makeObservation({
+          sensorSource: 'RADAR' as unknown as 'EOIR',
+        }),
+      });
+      const resultRadar = resolveTargetPresentation(trackRadar, baseContext);
+      expect(resultRadar.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(resultRadar.isVisuallyResolved).toBe(false);
+      expect(resultRadar.reason).toContain('Invalid observation sensorSource');
+
+      const trackInvalid = makeTrack({
+        sensorObservation: makeObservation({
+          sensorSource: 'SONAR' as unknown as 'EOIR',
+        }),
+      });
+      const resultInvalid = resolveTargetPresentation(trackInvalid, baseContext);
+      expect(resultInvalid.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(resultInvalid.isVisuallyResolved).toBe(false);
+    });
+
+    it('14. inconsistent resolution fields are rejected fail-closed', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          resolutionLevel: 'FULL',
+          resolution: 'DEGRADED',
+        }),
+      });
+      const result = resolveTargetPresentation(track, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Inconsistent observation resolution fields');
+    });
+
+    it('15. every valid visibility-state value in the declared union is accepted', () => {
+      const validVisibilityStates: Array<import('@/render3d/types').OpticalVisibilityState> = [
+        'CLEAR',
+        'DEGRADED',
+        'DEGRADED_FOG',
+        'DEGRADED_RAIN',
+        'DEGRADED_NIGHT_THERMAL',
+        'MASKED',
+        'OUT_OF_RANGE',
+      ];
+
+      for (const visState of validVisibilityStates) {
+        const isResolved = visState === 'CLEAR';
+        const isDegraded = visState.startsWith('DEGRADED');
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            visibilityState: visState,
+            resolutionLevel: isResolved ? 'FULL' : isDegraded ? 'DEGRADED' : 'UNRESOLVED',
+            resolution: isResolved ? 'FULL' : isDegraded ? 'DEGRADED' : 'UNRESOLVED',
+          }),
+        });
+        const result = resolveTargetPresentation(track, baseContext);
+        // None of these should fail with "Invalid observation visibilityState"
+        expect(result.reason).not.toContain('Invalid observation visibilityState');
+      }
+    });
+
+    it('16. invalid/corrupted observation never produces a resolved physical model', () => {
+      const corruptedPayloads = [
+        makeObservation({ confidence: -1 }),
+        makeObservation({ confidence: 1.5 }),
+        makeObservation({ timestampMs: NaN }),
+        makeObservation({ timestampMs: 999999 }), // far future
+        makeObservation({ sensorHealth: 'OUT', resolutionLevel: 'FULL' }),
+        makeObservation({ sensorAvailability: false, resolutionLevel: 'FULL' }),
+        makeObservation({ visibilityState: 'MASKED', resolutionLevel: 'FULL' }),
+        makeObservation({ signature: 'UNRESOLVED_AIRFRAME', resolutionLevel: 'FULL' }),
+        makeObservation({ signature: 'MULTIROTOR_COMPACT', observedSignature: 'FIXED_WING_DELTA' }),
+      ];
+
+      for (const payload of corruptedPayloads) {
+        const track = makeTrack({ sensorObservation: payload });
+        const result = resolveTargetPresentation(track, baseContext);
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      }
     });
   });
 });
