@@ -38,6 +38,9 @@ import type { SensorHealthStatus } from './engine';
 export const NOMINAL_CLEAR_OPTICAL_RECOGNITION_M = 2400;
 export const NOMINAL_MAX_OPTICAL_DETECTION_M = 3800;
 
+export const VALID_PRODUCER_SENSOR_MODES: readonly SensorMode[] = ['RADAR', 'EOIR', 'RF'];
+export const VALID_PRODUCER_HEALTH_STATES: readonly SensorHealthStatus[] = ['OK', 'DEG', 'OUT'];
+
 export interface SensorObservationPipelineContext {
   activeSensor: SensorMode;
   sensorHealth: Record<SensorMode, SensorHealthStatus>;
@@ -45,6 +48,46 @@ export interface SensorObservationPipelineContext {
   weather?: WeatherType;
   currentSimMs: number;
   sensorPos?: { x: number; y: number; z: number };
+}
+
+/**
+ * Validates sensor health record fail-closed at the producer boundary (Task 17.5.3 Fix B).
+ * Rejects missing records, non-objects, arrays, missing modes (RADAR, EOIR, RF),
+ * null/undefined values, and non-conforming state strings.
+ * Never silently defaults missing keys to 'OK'.
+ */
+export function validateProducerSensorHealth(
+  raw: unknown
+): { isValid: true; health: Record<SensorMode, SensorHealthStatus> } | { isValid: false; error: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { isValid: false, error: 'Sensor health record is missing or not an object' };
+  }
+  const record = raw as Record<string, unknown>;
+  for (const mode of VALID_PRODUCER_SENSOR_MODES) {
+    if (!(mode in record) || record[mode] === undefined || record[mode] === null) {
+      return { isValid: false, error: `Missing sensor health key: ${mode}` };
+    }
+    const val = record[mode];
+    if (typeof val !== 'string' || !VALID_PRODUCER_HEALTH_STATES.includes(val as SensorHealthStatus)) {
+      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${String(val)}` };
+    }
+  }
+  return {
+    isValid: true,
+    health: {
+      RADAR: record.RADAR as SensorHealthStatus,
+      EOIR: record.EOIR as SensorHealthStatus,
+      RF: record.RF as SensorHealthStatus,
+    },
+  };
+}
+
+/**
+ * Validates simulation clock at the producer boundary (Task 17.5.3 Fix B).
+ * Rejects missing, null, non-number, NaN, infinite, and negative timestamps (< 0).
+ */
+export function isValidProducerSimTime(simMs: unknown): simMs is number {
+  return typeof simMs === 'number' && Number.isFinite(simMs) && simMs >= 0;
 }
 
 /**
@@ -73,14 +116,21 @@ export function mapDroneTypeToAirframeSignature(droneType: DroneType): ObservedA
 }
 
 /**
- * Evaluates legitimate sensor observation for an entity (Task 17.3 §3, §4, Task 17.5.1).
+ * Evaluates legitimate sensor observation for an entity (Task 17.3 §3, §4, Task 17.5.1, Task 17.5.3).
  * Returns an ApprovedSensorObservation if and only if sensor conditions permit observation.
- * Returns null when active sensor is RADAR or RF (optical models forbidden in non-EO/IR modes).
+ * Returns null when:
+ *  - Simulation clock is missing, invalid, NaN, infinite, or negative (< 0)
+ *  - Sensor health is missing, malformed, incomplete, or contains invalid states
+ *  - Active sensor is not EO/IR (optical models forbidden in non-EO/IR modes)
  */
 export function evaluateSensorObservation(
   entity: TrackEntity,
   context: SensorObservationPipelineContext
 ): ApprovedSensorObservation | null {
+  if (!context) {
+    return null;
+  }
+
   const {
     activeSensor,
     sensorHealth,
@@ -90,13 +140,25 @@ export function evaluateSensorObservation(
     sensorPos = { x: 0, y: 0, z: 0 },
   } = context;
 
+  // 1. Simulation clock validation at producer (Task 17.5.3 Fix B)
+  if (!isValidProducerSimTime(currentSimMs)) {
+    return null;
+  }
+
+  // 2. Sensor health validation at producer (Task 17.5.3 Fix B)
+  const healthValidation = validateProducerSensorHealth(sensorHealth);
+  if (!healthValidation.isValid) {
+    return null;
+  }
+  const validatedHealth = healthValidation.health;
+
   // Rule §3, §6: Optical airframe observations are ONLY generated in EO/IR mode.
   // In RADAR or RF mode, no optical observation is approved.
   if (activeSensor !== 'EOIR') {
     return null;
   }
 
-  const eoirHealth = sensorHealth.EOIR ?? 'OK';
+  const eoirHealth = validatedHealth.EOIR;
 
   // Rule §7: EO/IR offline prevents optical model presentation entirely.
   if (eoirHealth === 'OUT') {

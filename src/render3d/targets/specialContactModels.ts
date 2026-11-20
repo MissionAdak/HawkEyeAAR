@@ -197,7 +197,7 @@ export function buildRadarContactSymbolModel(palette: TargetModelPalette): Built
   const diamondGeom = new THREE.BufferGeometry();
   diamondGeom.setAttribute('position', new THREE.Float32BufferAttribute(diamondPts, 3));
   geometries.push(diamondGeom);
-  const bodyMesh = new THREE.LineSegments(diamondGeom, palette.accent as unknown as THREE.Material) as unknown as THREE.Mesh;
+  const bodyMesh = new THREE.LineSegments(diamondGeom, palette.accent);
   group.add(bodyMesh);
 
   // Center radar return blip / pip

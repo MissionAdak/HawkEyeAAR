@@ -12,6 +12,8 @@ import { projectSafeTracks } from '@/ui/Console';
 import {
   evaluateSensorObservation,
   mapDroneTypeToAirframeSignature,
+  validateProducerSensorHealth,
+  isValidProducerSimTime,
   type SensorObservationPipelineContext,
 } from '@/sim/sensorObservation';
 
@@ -577,8 +579,12 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       const fixedWingModel = factory.createModel('OBSERVED_FIXED_WING', 'T-03');
       expect(fixedWingModel.category).toBe('OBSERVED_FIXED_WING');
 
-      // Geometry UUIDs should differ between variants
-      expect(compactModel.bodyMesh.geometry.uuid).not.toBe(podModel.bodyMesh.geometry.uuid);
+      // Morphology features: podModel features a spherical camera-pod / gimbal turret,
+      // while compactModel features a forward-canted camera snout and box avionics body
+      expect(podModel.accentMesh.geometry.type).toBe('SphereGeometry');
+      expect(compactModel.accentMesh.geometry.type).toBe('ConeGeometry');
+      expect(podModel.bodyMesh.geometry.type).toBe('CylinderGeometry');
+      expect(compactModel.bodyMesh.geometry.type).toBe('BoxGeometry');
 
       factory.dispose();
     });
@@ -1095,6 +1101,372 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
           expect(modelCat).toBe('RADAR_SYMBOL');
         }
       }
+    });
+  });
+
+  describe('13. Observation Timestamp Epoch Validation & Producer Sensor-Health Hardening (Task 17.5.3)', () => {
+    const validPipelineContext: SensorObservationPipelineContext = {
+      activeSensor: 'EOIR',
+      sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
+      currentSimMs: 5000,
+      weather: 'CLEAR',
+      isNight: false,
+      sensorPos: { x: 0, y: 0, z: 0 },
+    };
+
+    describe('A. Producer Sensor-Health Validation', () => {
+      it('1. missing or non-object sensorHealth returns null from producer', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const invalidHealths: unknown[] = [undefined, null, 'OK', 123, true, [], {}];
+        for (const h of invalidHealths) {
+          const ctx = { ...validPipelineContext, sensorHealth: h as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus> };
+          expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+          expect(validateProducerSensorHealth(h).isValid).toBe(false);
+        }
+      });
+
+      it('2. missing RADAR key fails closed and returns null from producer', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx = {
+          ...validPipelineContext,
+          sensorHealth: { EOIR: 'OK', RF: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus>,
+        };
+        expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+        const v = validateProducerSensorHealth(ctx.sensorHealth);
+        expect(v.isValid).toBe(false);
+        expect((v as { error: string }).error).toContain('Missing sensor health key: RADAR');
+      });
+
+      it('3. missing EOIR key fails closed and returns null from producer (never defaults to OK)', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx = {
+          ...validPipelineContext,
+          sensorHealth: { RADAR: 'OK', RF: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus>,
+        };
+        expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+        const v = validateProducerSensorHealth(ctx.sensorHealth);
+        expect(v.isValid).toBe(false);
+        expect((v as { error: string }).error).toContain('Missing sensor health key: EOIR');
+      });
+
+      it('4. missing RF key fails closed and returns null from producer', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx = {
+          ...validPipelineContext,
+          sensorHealth: { RADAR: 'OK', EOIR: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus>,
+        };
+        expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+        const v = validateProducerSensorHealth(ctx.sensorHealth);
+        expect(v.isValid).toBe(false);
+        expect((v as { error: string }).error).toContain('Missing sensor health key: RF');
+      });
+
+      it('5. null, undefined, or invalid health string on any mode fails closed', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const badRecords: Array<Record<string, unknown>> = [
+          { RADAR: 'OK', EOIR: null, RF: 'OK' },
+          { RADAR: 'OK', EOIR: undefined, RF: 'OK' },
+          { RADAR: 'OK', EOIR: 'BROKEN', RF: 'OK' },
+          { RADAR: 'UNKNOWN', EOIR: 'OK', RF: 'OK' },
+          { RADAR: 'OK', EOIR: 'OK', RF: 'OFFLINE' },
+          { RADAR: 'OK', EOIR: 1, RF: 'OK' },
+        ];
+        for (const bad of badRecords) {
+          const ctx = { ...validPipelineContext, sensorHealth: bad as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus> };
+          expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+          expect(validateProducerSensorHealth(bad).isValid).toBe(false);
+        }
+      });
+
+      it('6. explicit OK behavior remains valid and produces approved optical observation', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const obs = evaluateSensorObservation(entity, validPipelineContext);
+        expect(obs).not.toBeNull();
+        expect(obs?.resolutionLevel).toBe('FULL');
+        expect(obs?.sensorHealth).toBe('OK');
+        expect(obs?.sensorAvailability).toBe(true);
+      });
+
+      it('7. explicit DEG behavior remains degraded and produces DEGRADED observation', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx: SensorObservationPipelineContext = {
+          ...validPipelineContext,
+          sensorHealth: {
+            RADAR: 'OK' as const,
+            EOIR: 'DEG' as const,
+            RF: 'OK' as const,
+          },
+        };
+        const obs = evaluateSensorObservation(entity, ctx);
+        expect(obs).not.toBeNull();
+        expect(obs?.resolutionLevel).toBe('DEGRADED');
+        expect(obs?.sensorHealth).toBe('DEG');
+        expect(obs?.sensorAvailability).toBe(true);
+      });
+
+      it('8. explicit OUT behavior remains offline and produces UNRESOLVED observation', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx: SensorObservationPipelineContext = {
+          ...validPipelineContext,
+          sensorHealth: {
+            RADAR: 'OK' as const,
+            EOIR: 'OUT' as const,
+            RF: 'OK' as const,
+          },
+        };
+        const obs = evaluateSensorObservation(entity, ctx);
+        expect(obs).not.toBeNull();
+        expect(obs?.resolutionLevel).toBe('UNRESOLVED');
+        expect(obs?.sensorHealth).toBe('OUT');
+        expect(obs?.sensorAvailability).toBe(false);
+      });
+    });
+
+    describe('B. Producer Simulation Clock Validation', () => {
+      it('1. missing, null, NaN, or infinite simMs returns null from producer', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const badTimes: unknown[] = [undefined, null, NaN, Infinity, -Infinity, '5000', {}];
+        for (const t of badTimes) {
+          const ctx = { ...validPipelineContext, currentSimMs: t as unknown as number };
+          expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+          expect(isValidProducerSimTime(t)).toBe(false);
+        }
+      });
+
+      it('2. negative simulation time (< 0) returns null from producer', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        for (const neg of [-1, -50, -1000]) {
+          const ctx = { ...validPipelineContext, currentSimMs: neg };
+          expect(evaluateSensorObservation(entity, ctx)).toBeNull();
+          expect(isValidProducerSimTime(neg)).toBe(false);
+        }
+      });
+
+      it('3. zero simulation time (0) is accepted and generates timestampMs = 0', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx = { ...validPipelineContext, currentSimMs: 0 };
+        const obs = evaluateSensorObservation(entity, ctx);
+        expect(obs).not.toBeNull();
+        expect(obs?.timestampMs).toBe(0);
+        expect(isValidProducerSimTime(0)).toBe(true);
+      });
+
+      it('4. valid positive simulation time generates timestampMs = currentSimMs', () => {
+        const entity = makeSimEntity({ pos: { x: 800, y: 800, z: 100 } });
+        const ctx = { ...validPipelineContext, currentSimMs: 12500 };
+        const obs = evaluateSensorObservation(entity, ctx);
+        expect(obs).not.toBeNull();
+        expect(obs?.timestampMs).toBe(12500);
+        expect(isValidProducerSimTime(12500)).toBe(true);
+      });
+    });
+
+    describe('C. Observation Timestamp Epoch Validation & Boundaries', () => {
+      it('1. negative timestamp at simulation time zero (simMs = 0, timestampMs = -1) is rejected to RADAR_SYMBOL', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            timestampMs: -1,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 0,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('Invalid observation timestampMs');
+      });
+
+      it('2. negative timestamp at simulation time zero (simMs = 0, timestampMs = -50) is rejected to RADAR_SYMBOL', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            timestampMs: -50,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 0,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('Invalid observation timestampMs');
+      });
+
+      it('3. negative timestamp at positive simulation time (simMs = 5000, timestampMs = -1) is rejected to RADAR_SYMBOL', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            timestampMs: -1,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 5000,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('Invalid observation timestampMs');
+      });
+
+      it('4. timestamp exactly zero at simulation time zero (simMs = 0, timestampMs = 0) is accepted', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            signature: 'MULTIROTOR_COMPACT',
+            observedSignature: 'MULTIROTOR_COMPACT',
+            timestampMs: 0,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 0,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('OBSERVED_MULTIROTOR');
+        expect(result.isVisuallyResolved).toBe(true);
+        expect(result.observationState).toBe('CLEAR_OPTICAL');
+      });
+
+      it('5. exact future boundary: simMs = 5000, timestampMs = 5050 is accepted', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            signature: 'FIXED_WING_DELTA',
+            observedSignature: 'FIXED_WING_DELTA',
+            timestampMs: 5050,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 5000,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('OBSERVED_FIXED_WING');
+        expect(result.isVisuallyResolved).toBe(true);
+      });
+
+      it('6. future beyond boundary: simMs = 5000, timestampMs = 5051 is rejected to RADAR_SYMBOL', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            signature: 'FIXED_WING_DELTA',
+            observedSignature: 'FIXED_WING_DELTA',
+            timestampMs: 5051,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 5000,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('exceeds future tolerance');
+      });
+
+      it('7. exact age boundary: simMs = 5000, timestampMs = 4000 is accepted', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            signature: 'FIXED_WING_DELTA',
+            observedSignature: 'FIXED_WING_DELTA',
+            timestampMs: 4000,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 5000,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('OBSERVED_FIXED_WING');
+        expect(result.isVisuallyResolved).toBe(true);
+      });
+
+      it('8. stale beyond boundary: simMs = 5000, timestampMs = 3999 is rejected to RADAR_SYMBOL', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            signature: 'FIXED_WING_DELTA',
+            observedSignature: 'FIXED_WING_DELTA',
+            timestampMs: 3999,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 5000,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('is stale');
+      });
+
+      it('9. stale beyond boundary: simMs = 5000, timestampMs = 0 is rejected to RADAR_SYMBOL (5s stale)', () => {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            signature: 'FIXED_WING_DELTA',
+            observedSignature: 'FIXED_WING_DELTA',
+            timestampMs: 0,
+          }),
+        });
+        const context: SensorObservationContext = {
+          ...baseContext,
+          currentSimMs: 5000,
+        };
+        const result = resolveTargetPresentation(track, context);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('is stale');
+      });
+
+      it('10. negative timestamps never resolve OBSERVED_MULTIROTOR, OBSERVED_FIXED_WING, or BIRD', () => {
+        const opticalSignatures = ['MULTIROTOR_COMPACT', 'FIXED_WING_DELTA', 'BIRD_LIKE'] as const;
+        const negativeTimestamps = [-1, -50, -100, -9999];
+
+        for (const sig of opticalSignatures) {
+          for (const ts of negativeTimestamps) {
+            const track = makeTrack({
+              sensorObservation: makeObservation({
+                signature: sig,
+                observedSignature: sig,
+                timestampMs: ts,
+              }),
+            });
+            const context: SensorObservationContext = {
+              ...baseContext,
+              currentSimMs: 0,
+            };
+            const presentation = resolveTargetPresentation(track, context);
+            expect(presentation.isVisuallyResolved).toBe(false);
+            expect(presentation.presentationCategory).toBe('RADAR_SYMBOL');
+            expect(['OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD']).not.toContain(
+              presentation.presentationCategory
+            );
+          }
+        }
+      });
+    });
+
+    describe('D. End-to-End Pipeline: Malformed Producer Inputs Fail Closed to RADAR_SYMBOL', () => {
+      it('1. tracks created with malformed producer inputs fail closed to RADAR_SYMBOL', () => {
+        const entity = makeSimEntity({ droneType: 'FPV_ATTACK' });
+        const malformedContexts: SensorObservationPipelineContext[] = [
+          { ...validPipelineContext, sensorHealth: { RADAR: 'OK', RF: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus> },
+          { ...validPipelineContext, sensorHealth: null as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus> },
+          { ...validPipelineContext, sensorHealth: { RADAR: 'OK', EOIR: 'MALFUNCTION', RF: 'OK' } as unknown as Record<import('@/sim/types').SensorMode, import('@/sim/engine').SensorHealthStatus> },
+          { ...validPipelineContext, currentSimMs: -1 },
+          { ...validPipelineContext, currentSimMs: NaN },
+        ];
+
+        for (const badCtx of malformedContexts) {
+          const safeTracks = projectSafeTracks([entity], null, badCtx);
+          expect(safeTracks[0].sensorObservation).toBeNull();
+
+          const presentation = resolveTargetPresentation(safeTracks[0], baseContext);
+          expect(presentation.isVisuallyResolved).toBe(false);
+          expect(presentation.presentationCategory).toBe('RADAR_SYMBOL');
+          expect(['OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD']).not.toContain(
+            presentation.presentationCategory
+          );
+        }
+      });
     });
   });
 });

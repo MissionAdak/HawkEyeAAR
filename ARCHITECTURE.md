@@ -971,4 +971,26 @@ To uphold the operator-facing information boundary, the production deployment (`
      - `obs.timestampMs < currentSimMs - 1000 ms`: REJECT fail-closed to `RADAR_SYMBOL`.
    - Observations with missing, NaN, or infinite timestamps fail closed immediately.
 
+### 8.13 Observation Timestamp Epoch Validation & Sensor-Health Producer Hardening (Task 17.5.3)
+
+1. **Producer-Side Sensor-Health Validation (`evaluateSensorObservation`):**
+   - The sensor-observation producer strictly validates `sensorHealth` before generating optical observations.
+   - Requires explicit presence and validity of all modes (`RADAR`, `EOIR`, `RF`) with states in `['OK', 'DEG', 'OUT']`.
+   - Rejects missing, null, non-object, array, or partial records fail-closed (returns `null`), eliminating the former `sensorHealth.EOIR ?? 'OK'` fallback.
+   - **Distinction between Valid `OUT` and Malformed Data:**
+     - A valid `OUT` state (sensor explicitly disabled/destroyed) produces an offline unresolved observation (`sensorHealth: 'OUT'`, `sensorAvailability: false`, `signature: 'UNRESOLVED_AIRFRAME'`).
+     - Malformed or missing sensor health produces no observation (`null`), preventing fabricated or default observations.
+2. **Producer-Side Simulation Clock Validation:**
+   - Evaluates `currentSimMs` at the producer boundary before generating observation timestamps.
+   - Rejects missing, null, non-number, NaN, infinite, or negative values fail-closed (returns `null`).
+   - Timestamps are generated strictly from authoritative simulation time (at tick 0, `currentSimMs = 0` generates valid `timestampMs = 0`).
+3. **Observation Timestamp Epoch Invariant (`timestampMs >= 0`):**
+   - In `validateObservationProvenance()`, observation timestamps are validated against the simulation epoch: `timestampMs >= 0`.
+   - Prevents negative observation timestamps (e.g. `timestampMs = -1` or `-50` when `currentSimMs = 0`) from passing window checks.
+   - Preserves exact boundary semantics: `timestampMs <= currentSimMs + 50` and `timestampMs >= currentSimMs - 1000`.
+4. **Fail-Closed Producer-to-Renderer Pipeline:**
+   - Any failure at the producer (`evaluateSensorObservation` returning `null`) leaves `SafeTrackView.sensorObservation` as `null`.
+   - The 3D renderer resolves missing observations to `RADAR_SYMBOL`, ensuring malformed producer inputs can never resolve physical optical models (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`, or `BIRD`).
+
+
 

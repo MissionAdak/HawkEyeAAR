@@ -29,8 +29,8 @@ export interface BuiltTargetModel {
   group: THREE.Group;
   /** Optional alias for root group */
   rootGroup?: THREE.Group;
-  /** Main body mesh */
-  bodyMesh: THREE.Mesh;
+  /** Main body mesh or wireframe outline */
+  bodyMesh: THREE.Mesh | THREE.LineSegments;
   /** Symbology/accent mesh (canopy, turret, markings) */
   accentMesh: THREE.Mesh;
   /** Optional animated rotor or prop elements */

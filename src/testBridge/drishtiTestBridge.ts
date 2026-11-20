@@ -3,6 +3,7 @@ import type { Renderer3D } from '@/render3d';
 import type { SensorMode, TrackClass, ChaosSpec } from '@/sim/types';
 import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
 import type { ApprovedSensorObservation } from '@/render3d/types';
+import { evaluateSensorObservation } from '@/sim/sensorObservation';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -39,6 +40,7 @@ export interface DrishtiTestBridge {
     leakedProperties: string[];
   };
   setSensorHealthOverride: (health: Record<string, unknown> | null) => boolean;
+  setProducerHealthOverride: (health: Record<string, unknown> | null | undefined) => boolean;
   setSimTimeOverride: (timeOverride: number | 'MISSING' | 'INVALID' | null) => boolean;
   injectObservationOverride: (trackNo: string, obs: Partial<ApprovedSensorObservation> | null) => boolean;
   clearOverrides: () => void;
@@ -67,6 +69,8 @@ export function installDrishtiTestBridge(
   }
 
   let sensorHealthOverride: Record<string, unknown> | null = null;
+  let hasProducerHealthOverride = false;
+  let producerHealthOverride: Record<string, unknown> | null = null;
   let simTimeOverride: number | 'MISSING' | 'INVALID' | null = null;
   const observationOverrides = new Map<string, Partial<ApprovedSensorObservation> | null>();
 
@@ -194,18 +198,35 @@ export function installDrishtiTestBridge(
       return true;
     },
 
+    setProducerHealthOverride(health: Record<string, unknown> | null | undefined): boolean {
+      if (health === undefined) {
+        hasProducerHealthOverride = false;
+        producerHealthOverride = null;
+      } else {
+        hasProducerHealthOverride = true;
+        producerHealthOverride = health;
+      }
+      return true;
+    },
+
     setSimTimeOverride(timeOverride: number | 'MISSING' | 'INVALID' | null): boolean {
       simTimeOverride = timeOverride;
       return true;
     },
 
     injectObservationOverride(trackNo: string, obs: Partial<ApprovedSensorObservation> | null): boolean {
-      observationOverrides.set(trackNo, obs);
+      if (obs === null) {
+        observationOverrides.delete(trackNo);
+      } else {
+        observationOverrides.set(trackNo, obs);
+      }
       return true;
     },
 
     clearOverrides(): void {
       sensorHealthOverride = null;
+      hasProducerHealthOverride = false;
+      producerHealthOverride = null;
       simTimeOverride = null;
       observationOverrides.clear();
     },
@@ -235,6 +256,22 @@ export function installDrishtiTestBridge(
               ? ({ ...(t.sensorObservation ?? {}), ...override } as ApprovedSensorObservation)
               : null,
           };
+        }
+        if (hasProducerHealthOverride) {
+          const entity = engine.curr.find((e) => e.trackNo === t.trackNo);
+          if (entity) {
+            const activeSensor = r3d.getActiveSensor?.() ?? 'EOIR';
+            const simMs = typeof simTimeOverride === 'number' ? simTimeOverride : (engine.tickIndex * 50);
+            const obs = evaluateSensorObservation(entity, {
+              activeSensor,
+              sensorHealth: producerHealthOverride as unknown as Record<SensorMode, SensorHealthStatus>,
+              currentSimMs: simMs,
+            });
+            return {
+              ...t,
+              sensorObservation: obs,
+            };
+          }
         }
         return t;
       });

@@ -178,16 +178,17 @@ export function validateObservationProvenance(
     };
   }
 
-  // Validate observation timestampMs
+  // Validate observation timestampMs (Task 17.5.3: Mandatory epoch invariant timestampMs >= 0)
   if (
     o.timestampMs === undefined ||
     o.timestampMs === null ||
     typeof o.timestampMs !== 'number' ||
-    !Number.isFinite(o.timestampMs)
+    !Number.isFinite(o.timestampMs) ||
+    o.timestampMs < 0
   ) {
     return {
       isValid: false,
-      error: `Invalid observation timestampMs: ${String(o.timestampMs)} (must be finite number)`,
+      error: `Invalid observation timestampMs: ${String(o.timestampMs)} (must be finite number >= 0)`,
       fallbackState: 'OUT_OF_RANGE',
     };
   }

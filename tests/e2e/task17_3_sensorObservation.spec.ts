@@ -50,23 +50,26 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
     enable3D: boolean = true
   ) => {
     await page.goto(url, { waitUntil: 'networkidle' });
-    await page.waitForTimeout(1000);
 
     const startBtn = page.getByTestId('start-session-btn');
-    if (await startBtn.isVisible()) {
-      await startBtn.click();
-      await page.waitForTimeout(1000);
-    }
+    await expect(startBtn).toBeVisible({ timeout: 10000 });
+    await startBtn.click();
+    await expect(startBtn).not.toBeVisible({ timeout: 5000 });
 
     if (enable3D) {
       const btn3D = page.getByRole('button', { name: /\[V\] 3D/i });
-      if (await btn3D.isVisible()) {
-        await btn3D.click();
-        await page.waitForTimeout(1500);
-      }
+      await expect(btn3D).toBeVisible({ timeout: 5000 });
+      await btn3D.click();
       const canvas3d = page.locator('canvas.cursor-grab');
-      await expect(canvas3d).toBeVisible();
+      await expect(canvas3d).toBeVisible({ timeout: 10000 });
     }
+
+    // Wait for bridge readiness on E2E builds (where __DRISHTI_TEST__ is active)
+    await page.waitForFunction(() => {
+      const w = window as unknown as WindowWithDrishti;
+      if (!('__DRISHTI_TEST__' in w) || !w.__DRISHTI_TEST__) return true;
+      return w.__DRISHTI_TEST__.isReady() && w.__DRISHTI_TEST__.getTrackList().length > 0;
+    }, undefined, { timeout: 10000 });
   };
 
   test('Test A — Production debug isolation: All prohibited debug globals absent in production build', async ({
@@ -198,13 +201,12 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     const autoBtn = page.getByRole('button', { name: /TGT:AUTO/i });
-    if (await autoBtn.isVisible()) {
-      await autoBtn.click();
-    }
+    await expect(autoBtn).toBeVisible();
+    await autoBtn.click();
 
     // Position one track in unmasked clear optical range (quadrant 2: x = -500, y = 300, z = 60)
     const targetNo = await page.evaluate(() => {
@@ -218,7 +220,30 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       return tNo;
     });
 
-    await page.waitForTimeout(2000);
+    // Poll for the presentation state to resolve to optical airframe
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return null;
+        const state = bridge.getPresentationState(tNo);
+        const track = state.tracks[0];
+        if (!track || !track.observation) return null;
+        return {
+          found: true,
+          category: track.currentCategory,
+          sensorSource: track.observation.sensorSource,
+          resolutionLevel: track.observation.resolutionLevel,
+          visibilityState: track.observation.visibilityState,
+        };
+      }, targetNo);
+    }, { timeout: 10000 }).toMatchObject({
+      found: true,
+      sensorSource: 'EOIR',
+      resolutionLevel: 'FULL',
+      visibilityState: 'CLEAR',
+    });
+
     await saveShot(page, 'task17_4_02_eoir_physical_models.png', 'task17_3_02_eoir_optical_models.png');
 
     const result = await page.evaluate((tNo) => {
@@ -249,8 +274,8 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     // Position track within optical reach and degrade EO/IR baseline
     const targetNo = await page.evaluate(() => {
@@ -264,7 +289,27 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       return tNo;
     });
 
-    await page.waitForTimeout(1500);
+    // Poll until degraded observation is reflected
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return null;
+        const state = bridge.getPresentationState(tNo);
+        const track = state.tracks[0];
+        if (!track || !track.observation) return null;
+        return {
+          category: track.currentCategory,
+          obsHealth: track.observation.sensorHealth,
+          obsResolution: track.observation.resolutionLevel,
+        };
+      }, targetNo);
+    }, { timeout: 10000 }).toMatchObject({
+      category: 'UNKNOWN_AIRFRAME',
+      obsHealth: 'DEG',
+      obsResolution: 'DEGRADED',
+    });
+
     await saveShot(page, 'task17_4_03_deg_eoir_observation.png');
 
     const result = await page.evaluate((tNo) => {
@@ -297,8 +342,8 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     // Set EO/IR sensor to OUT
     await page.evaluate(() => {
@@ -308,7 +353,22 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       bridge.setSensorCondition({ sensor: 'EOIR', health: 'OUT' });
     });
 
-    await page.waitForTimeout(1500);
+    // Poll until all tracks are confirmed as radar symbols
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return null;
+        const evaluation = bridge.getPresentationState();
+        return {
+          trackCount: evaluation.trackCount,
+          allAreRadarSymbols: evaluation.allAreRadarSymbols,
+        };
+      });
+    }, { timeout: 10000 }).toMatchObject({
+      allAreRadarSymbols: true,
+    });
+
     await saveShot(page, 'task17_4_04_out_eoir_sensor.png');
 
     const evaluation = await page.evaluate(() => {
@@ -327,8 +387,8 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     // Position track inside building zone U1 below 40m roofline (centroid 1898, 1329, z = 20)
     const maskedTrackNo = await page.evaluate(() => {
@@ -342,7 +402,26 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       return tNo;
     });
 
-    await page.waitForTimeout(1500);
+    // Poll until masking is detected and presentation updates to RADAR_SYMBOL
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return null;
+        const state = bridge.getPresentationState(tNo);
+        const track = state.tracks[0];
+        return {
+          found: !!track,
+          category: track?.currentCategory,
+          obsVisibility: track?.observation?.visibilityState,
+        };
+      }, maskedTrackNo);
+    }, { timeout: 10000 }).toMatchObject({
+      found: true,
+      category: 'RADAR_SYMBOL',
+      obsVisibility: 'MASKED',
+    });
+
     await saveShot(page, 'task17_4_05_masked_target.png');
 
     const maskedResult = await page.evaluate((tNo) => {
@@ -370,8 +449,8 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     // Position track in unmasked clear optical range
     const targetNo = await page.evaluate(() => {
@@ -385,7 +464,16 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       return tNo;
     });
 
-    await page.waitForTimeout(1500);
+    // Poll until optical model is resolved
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return 'RADAR_SYMBOL';
+        const state = bridge.getPresentationState(tNo);
+        return state.tracks[0]?.currentCategory;
+      }, targetNo);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
 
     const initialRecord = await page.evaluate((tNo) => {
       const w = window as unknown as WindowWithDrishti;
@@ -409,7 +497,17 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       bridge.classifyTrack(tNo, 'FRIENDLY');
     }, targetNo);
 
-    await page.waitForTimeout(1500);
+    // Poll until classification change is processed
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return null;
+        const trk = bridge.getTrackList().find((t) => t.trackNo === tNo);
+        return trk ? true : null;
+      }, targetNo);
+    }, { timeout: 5000 }).toBe(true);
+
     await saveShot(page, 'task17_4_06_classification_independence.png', 'task17_3_04_classification_independence.png');
 
     const postRecord = await page.evaluate((tNo) => {
@@ -434,14 +532,23 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Select RADAR
     const radarBtn = page.getByRole('button', { name: /\[1\] RADAR/i });
+    await expect(radarBtn).toBeVisible();
     await radarBtn.click();
-    await page.waitForTimeout(1000);
 
     // Mandatory interaction: Enable AIRFRAME mode
     const airframeBtn = page.getByRole('button', { name: /TGT:AIR/i });
     await expect(airframeBtn).toBeVisible();
     await airframeBtn.click();
-    await page.waitForTimeout(1500);
+
+    // Poll until all tracks are confirmed as radar symbols
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        const w = window as unknown as WindowWithDrishti;
+        const bridge = w.__DRISHTI_TEST__;
+        if (!bridge) return false;
+        return bridge.getPresentationState().allAreRadarSymbols;
+      });
+    }, { timeout: 10000 }).toBe(true);
 
     await saveShot(page, 'task17_3_03_tgtair_radar_override_locked.png');
 
@@ -476,8 +583,8 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR and clear optical conditions
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     const tracks = await page.evaluate(() => {
       const w = window as unknown as WindowWithDrishti;
@@ -491,7 +598,14 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       const w = window as unknown as WindowWithDrishti;
       w.__DRISHTI_TEST__!.positionTrack(trk, { x: 800, y: 800, z: 100 });
     }, targetTrack);
-    await page.waitForTimeout(1000);
+
+    // Poll until baseline optical presentation is resolved
+    await expect.poll(async () => {
+      return await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__?.getPresentationState(trk).tracks[0]?.currentCategory;
+      }, targetTrack);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
 
     // Baseline: track is optically resolved
     const baseState = await page.evaluate((trk) => {
@@ -569,7 +683,12 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       const w = window as unknown as WindowWithDrishti;
       w.__DRISHTI_TEST__!.clearOverrides();
     });
-    await page.waitForTimeout(500);
+    await expect.poll(async () => {
+      return await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__?.getPresentationState(trk).tracks[0]?.currentCategory;
+      }, targetTrack);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
     const restoredState = await page.evaluate((trk) => {
       const w = window as unknown as WindowWithDrishti;
       return w.__DRISHTI_TEST__!.getPresentationState(trk);
@@ -584,8 +703,8 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     // Switch to EO/IR
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
     await eoirBtn.click();
-    await page.waitForTimeout(1000);
 
     const tracks = await page.evaluate(() => {
       const w = window as unknown as WindowWithDrishti;
@@ -599,9 +718,15 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       const w = window as unknown as WindowWithDrishti;
       w.__DRISHTI_TEST__!.positionTrack(trk, { x: 800, y: 800, z: 100 });
     }, targetTrack);
-    await page.waitForTimeout(1000);
 
     // 1. Normal valid clock allows optical model
+    await expect.poll(async () => {
+      return await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__?.getPresentationState(trk).tracks[0]?.currentCategory;
+      }, targetTrack);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
+
     const baseState = await page.evaluate((trk) => {
       const w = window as unknown as WindowWithDrishti;
       return w.__DRISHTI_TEST__!.getPresentationState(trk);
@@ -732,7 +857,12 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       const w = window as unknown as WindowWithDrishti;
       w.__DRISHTI_TEST__!.clearOverrides();
     });
-    await page.waitForTimeout(500);
+    await expect.poll(async () => {
+      return await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__?.getPresentationState(trk).tracks[0]?.currentCategory;
+      }, targetTrack);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
     const restoredState = await page.evaluate((trk) => {
       const w = window as unknown as WindowWithDrishti;
       return w.__DRISHTI_TEST__!.getPresentationState(trk);
@@ -740,5 +870,131 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
     expect(restoredState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
 
     await saveShot(page, 'task17_5_04_mandatory_simulation_clock.png');
+  });
+
+  test('Test M — Negative Observation Timestamp & Producer Sensor-Health Integrity (Task 17.5.3)', async ({ page }) => {
+    await setupSession(page);
+
+    // Switch to EO/IR
+    const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await expect(eoirBtn).toBeVisible();
+    await eoirBtn.click();
+
+    const tracks = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getTrackList();
+    });
+    expect(tracks.length).toBeGreaterThan(0);
+    const targetTrack = tracks[0].trackNo;
+
+    // Position target within clear optical reach (< 1000m)
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.positionTrack(trk, { x: 800, y: 800, z: 100 });
+    }, targetTrack);
+
+    // 1. A valid EO/IR observation can resolve a physical model
+    await expect.poll(async () => {
+      return await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__?.getPresentationState(trk).tracks[0]?.currentCategory;
+      }, targetTrack);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
+
+    const baseState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(baseState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
+
+    // 2. An observation timestamp of -1 at simulation time zero cannot resolve an optical model
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSimTimeOverride(0);
+    });
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, { timestampMs: -1 });
+    }, targetTrack);
+    const negativeTimestampState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(negativeTimestampState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Clear the timestamp override before testing producer health
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSimTimeOverride(null);
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, null);
+    }, targetTrack);
+
+    // 3. An invalid or missing producer-side EOIR health record cannot generate an approved optical observation
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      // Producer health missing EOIR
+      w.__DRISHTI_TEST__!.setProducerHealthOverride({ RADAR: 'OK', RF: 'OK' });
+    });
+    const missingEoirState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(missingEoirState.tracks[0].observation).toBeNull();
+    expect(missingEoirState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // 4. Invalid or missing producer-side sensor-health data cannot result in OBSERVED_MULTIROTOR, OBSERVED_FIXED_WING, or BIRD
+    const malformedProducerHealths = [
+      { RADAR: 'OK', EOIR: null, RF: 'OK' },
+      { RADAR: 'OK', EOIR: 'MALFUNCTION', RF: 'OK' },
+      null,
+    ];
+    for (const badHealth of malformedProducerHealths) {
+      await page.evaluate((h) => {
+        const w = window as unknown as WindowWithDrishti;
+        w.__DRISHTI_TEST__!.setProducerHealthOverride(h);
+      }, badHealth);
+      const badState = await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__!.getPresentationState(trk);
+      }, targetTrack);
+      expect(badState.tracks[0].observation).toBeNull();
+      expect(badState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+      expect(['OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD']).not.toContain(
+        badState.tracks[0].currentCategory
+      );
+    }
+
+    // 5. Valid OUT health preserves the existing sensor-offline behavior
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setProducerHealthOverride({ RADAR: 'OK', EOIR: 'OUT', RF: 'OK' });
+    });
+    const outState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(outState.tracks[0].observation).not.toBeNull();
+    expect(outState.tracks[0].observation?.sensorHealth).toBe('OUT');
+    expect(outState.tracks[0].observation?.sensorAvailability).toBe(false);
+    expect(outState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // 6. Restoring valid producer inputs restores normal presentation
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.clearOverrides();
+    });
+    await expect.poll(async () => {
+      return await page.evaluate((trk) => {
+        const w = window as unknown as WindowWithDrishti;
+        return w.__DRISHTI_TEST__?.getPresentationState(trk).tracks[0]?.currentCategory;
+      }, targetTrack);
+    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
+    const restoredState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(restoredState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
+
+    await saveShot(page, 'task17_5_05_producer_health_and_epoch_validation.png');
   });
 });

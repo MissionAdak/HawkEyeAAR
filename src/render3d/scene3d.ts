@@ -38,10 +38,10 @@ export interface TrackMeshRecord {
   group: THREE.Group;
   modelAnchor: THREE.Group;
   aircraftGroup: THREE.Group;
-  bodyMesh: THREE.Mesh;
+  bodyMesh: THREE.Mesh | THREE.LineSegments;
   accentMesh: THREE.Mesh;
   hitProxy: THREE.Mesh;
-  marker: THREE.Mesh;
+  marker: THREE.Mesh | THREE.LineSegments;
   stem: THREE.Line;
   ghostRing: THREE.LineLoop | null;
   labelSprite: THREE.Sprite;
