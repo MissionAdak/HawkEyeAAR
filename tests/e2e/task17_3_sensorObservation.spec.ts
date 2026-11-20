@@ -473,7 +473,7 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
         const state = bridge.getPresentationState(tNo);
         return state.tracks[0]?.currentCategory;
       }, targetNo);
-    }, { timeout: 10000 }).not.toBe('RADAR_SYMBOL');
+    }, { timeout: 10000 }).toMatch(/^OBSERVED_/);
 
     const initialRecord = await page.evaluate((tNo) => {
       const w = window as unknown as WindowWithDrishti;
@@ -487,7 +487,7 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
       };
     }, targetNo);
 
-    expect(initialRecord.category).not.toBe('RADAR_SYMBOL');
+    expect(initialRecord.category).toMatch(/^OBSERVED_/);
 
     // Change operator classification label to FRIENDLY
     await page.evaluate((tNo) => {

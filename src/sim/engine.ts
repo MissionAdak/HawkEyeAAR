@@ -912,7 +912,10 @@ export class SimEngine {
       return;
     }
     if (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED') {
-      const reason = target.lifecycle !== 'ACTIVE' ? 'INACTIVE_TARGET' : 'PNR_VIOLATION';
+      const reason =
+        target.step === 'CLOSED' || target.lifecycle === 'LEAKED'
+          ? 'PNR_VIOLATION'
+          : 'INACTIVE_TARGET';
       const est = this.tracker.getTrackEstimate(action.trackNo);
       this.appendEvent(
         'RELEASE_BLOCKED',

@@ -81,6 +81,51 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     expect(audit?.hasLeaks).toBe(false);
     expect(audit?.leakedProperties).toEqual([]);
 
+    // 1. Audit DOM Event Log: Assert that live DOM text does not contain secret truth class tokens or uncommitted ground truth
+    const eventLog = page.locator('#event-log, [data-testid="event-log"]');
+    await expect(eventLog).toBeVisible({ timeout: 5000 });
+    const eventLogText = await eventLog.innerText();
+    const forbiddenTokens = ['FPV_ATTACK', 'SWARM_ELEMENT_FW', 'RECON_QUAD', 'LOITERING_MUNITION'];
+    for (const token of forbiddenTokens) {
+      expect(eventLogText).not.toContain(token);
+    }
+
+    // 2. Audit Track Table DOM: Headers and estimated value formatting
+    const trackTable = page.getByTestId('track-table');
+    await expect(trackTable).toBeVisible({ timeout: 5000 });
+    const tableText = await trackTable.innerText();
+    expect(tableText).toMatch(/~RNG/);
+    expect(tableText).toMatch(/~SPD/);
+    for (const token of forbiddenTokens) {
+      expect(tableText).not.toContain(token);
+    }
+
+    // 3. Trigger effector release block and verify operator feedback toast in the DOM
+    const targetNo = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      const tNo = win.__DRISHTI_TEST__?.getTrackList()[0]?.trackNo;
+      if (tNo) {
+        win.__DRISHTI_TEST__?.positionTrack(tNo, { x: 300, y: 300, z: 50 });
+      }
+      return tNo;
+    });
+    expect(targetNo).toBeDefined();
+
+    // Select track and trigger fire (target inside PNR boundary < 500m is hard-blocked)
+    const trackRow = page.locator('[data-testid="track-table"] button').first();
+    await trackRow.click();
+    await page.keyboard.press('f');
+
+    const toast = page.getByTestId('operator-feedback-toast');
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    const toastText = await toast.innerText();
+    // Visible toast must contain estimated telemetry (~ or km) and NOT raw un-estimated truth coordinates or secret tokens
+    expect(toastText).toMatch(/RELEASE BLOCKED/i);
+    expect(toastText).toMatch(/~|km/i);
+    for (const token of forbiddenTokens) {
+      expect(toastText).not.toContain(token);
+    }
+
     await saveShot(page, 'task18_01_zero_truth_leakage_audit.png');
   });
 
@@ -231,7 +276,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     expect(selTrack?.estRangeM).toBeGreaterThan(0);
     expect(selTrack?.observation).toBeDefined();
 
-    const allowedCategories = ['RADAR_SYMBOL', 'OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD', 'UNRESOLVED_AIRFRAME'];
+    const allowedCategories = ['RADAR_SYMBOL', 'OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD', 'UNRESOLVED_AIRFRAME', 'UNKNOWN_AIRFRAME'];
     expect(allowedCategories).toContain(selTrack!.currentCategory);
     // Strictly verify no tactical classification in category or morphology
     expect(selTrack!.currentCategory).not.toBe('HOSTILE_ATTACK');

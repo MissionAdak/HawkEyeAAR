@@ -191,12 +191,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       target &&
       (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS')
     ) {
-      const reasonCode = target.step === 'ASSESS' ? 'DUPLICATE_PENDING_FIRE' : 'INACTIVE_TARGET';
+      const reasonCode =
+        target.step === 'ASSESS'
+          ? 'DUPLICATE_PENDING_FIRE'
+          : target.step === 'CLOSED' || target.lifecycle === 'LEAKED'
+            ? 'PNR_VIOLATION'
+            : 'INACTIVE_TARGET';
+      const est = engineInstance.tracker.getTrackEstimate(trackNo);
       const fb = createOperatorFeedback({
         category: 'RELEASE_BLOCKED',
         reasonCode,
         timestampMs: currentSimMs,
         trackNo,
+        effectorId: get().ui.activeEffector,
+        rangeM: est?.estRangeM,
       });
       set((state) => ({
         feedbackList: [fb, ...state.feedbackList].slice(0, 20),

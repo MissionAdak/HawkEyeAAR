@@ -8,7 +8,7 @@
 3. §5 — add a bug-log row for every bug fixed, with its regression test; add a new `T-xx` trap when you discover one.
 4. Use the sprint hour marker (`H12`, `H26`, …) as the timestamp. Never delete history; append.
 
-Last updated: **H32** (Phase 4 complete; Phase 5 hardening; all 142 unit/golden tests passing; 5 Playwright E2E tests passing).
+Last updated: **TASK 18-06B** (TASK 18 closeout & complete E2E regression gate; all 38 test files with 494 unit/golden tests passing; full Playwright E2E suite with 44 tests passing across all 8 test suites).
 
 ---
 
@@ -34,7 +34,7 @@ Last updated: **H32** (Phase 4 complete; Phase 5 hardening; all 142 unit/golden 
 | UI | React 19 + TypeScript (strict) + Vite | Fast iteration; strict types protect the contracts in `ARCHITECTURE.md` §3 |
 | Styling | Tailwind CSS v4, CSS-first `@theme`, default palette/radii/shadows **reset** | Makes banned SaaS looks impossible to type (`DESIGN.md` §1.3) |
 | App state | Zustand, holding UI state and a per-tick **projection** | Simulation state is **not** in Zustand (it lives in `SimCore`, plain TS) so it stays deterministic and snapshot-able |
-| Rendering | Native HTML5 Canvas 2D only | No PixiJS, no Three.js; 2D is explicitly allowed by the statement ("desktop or VR-capable") |
+| Rendering | Native HTML5 Canvas 2D default baseline | Authoritative 2D Canvas default console; optional Three.js 3D in lazy chunk (src/render3d/); WebXR VR prototype experimental/unverified until physical headset testing |
 | Persistence | Dexie.js (IndexedDB) | Offline, per-origin; origin fixed by `127.0.0.1:47260` |
 | Validation | zod | Config and import schemas |
 | Charts | Custom canvas charts | Mil-spec look, no chart library |
@@ -66,7 +66,7 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 | Hardening, e2e, demo content | **Done** | Air-gap E2E, zero-overflow layout, trainee interaction, bundle 0.85 MB < 2 MB limit |
 | Optional Three.js 3D Feature Pack (Track X3D) | **Done** | Lazy-loaded 3D tactical viewport (`render3d` chunk 510 kB, 0B in main chunk), model-faithful sensor domes, effector envelopes, evaluateMasking LOS explanation, cluster hulls, TRAIN-only RCS aid/elevation cross-section, post-session AAR 3D replay & engagement inspector. VR marked experimental |
 | 3D Tactical Environment & Weather (TASK 16) | **Done** | 6 deterministic environment presets (`URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL`), procedural buildings & radar installations, instanced vegetation (2 draw calls), dynamic weather & rain driven strictly by `simMs` without Math.random, 6-DOF camera navigation (orbit, pan, cursor zoom, angle clamps, double-click focus, Home reset), dual-domain picking with Environment Inspector panel (zero ground-truth leak), and Mission Briefing tactical atmosphere card. Verified by 51 unit tests and 21 E2E tests |
-| Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18 & 18-06A) | **Done** | Decoupled ground truth from operator views into 3 strict domains (Domain A: SimEngine truth; Domain B: synthetic measurements with keyed Gaussian noise; Domain C: Alpha-Beta tracker and OperatorTrackView/SafeTrackView/UiTrackRow/OperatorEventView). Eliminated residual operator feedback range leak, sanitized live event stream, and added comprehensive test bridge zero-leakage audit. All 38 unit test files (494 tests) and 8 Playwright E2E tests pass cleanly |
+| Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18, 18-06A & 18-06B) | **Done** | Decoupled ground truth from operator views into 3 strict domains (Domain A: SimEngine truth; Domain B: synthetic measurements with keyed Gaussian noise; Domain C: Alpha-Beta tracker and OperatorTrackView/SafeTrackView/UiTrackRow/OperatorEventView). Residual operator feedback range leaks eliminated, live event stream sanitized, and DOM information-boundary assertions verified. Full Playwright E2E suite (44 tests) and all 38 unit test files (494 tests) pass 100% cleanly |
 | Optional WebXR VR Renderer (Task 14) | **Experimental Prototype (Unverified)** | Implemented `FrameDriver` (`windowDriver`, `xrDriver`), `WebXRManager`, `WebXRTableTop` (1:10,000 scale, 4x Z-scale), `WebXRPanel` (EVAL aids lock), edge-triggered controller handler with 20 Hz tick quantisation, comfort modal advisory, and seamless fallback. Status: `experimental, unverified` due to absence of physical headset testing |
 
 ### 2.2 Phase checkpoints
@@ -80,12 +80,13 @@ Fixed identifiers: IndexedDB name `drishti-cuas`; port `47260`; `SIM_VERSION` = 
 - [x] Track X3D — Optional Three.js 3D Tactical Pack (F1-F5, F7, F8) with lazy chunking, strict ground-truth isolation, zero-network CSP, zero simulation divergence, and 100% deterministic replay [VERIFIED]
 - [x] Task 14 — Optional WebXR VR Renderer prototype with FrameDriver handoff, tick continuity, deterministic input quantization, truth gating parity, table-top view, comfort advisory, and safe teardown [PROTOTYPE PASSING ALL TESTS; STATUS: EXPERIMENTAL, UNVERIFIED]
 - [x] TASK 16 — DRISHTI-CUAS 3D Tactical Environment, Realistic Weather, Camera Navigation & Object Inspection [VERIFIED; 29 unit test files (342 tests) and 21 Playwright E2E tests passing]
+- [x] TASK 18-06B — Complete E2E regression gate (44/44 Playwright tests passing across all 8 suites) & project documentation reconciliation [VERIFIED]
 
 ### 2.3 Known technical debt & architectural limitations
 
 1. **Tracker Velocity Invariance (Task 10 Blocker / OQ-09 — RESOLVED in TASK 18):** `TrackEstimator` with Alpha-Beta kinematic filter now decouples operator-facing velocities and positions from ground truth. Measurements are produced with deterministic keyed Gaussian noise.
 2. **WebXR VR Platform Status (OQ-11):** WebXR VR is implemented as an experimental prototype. Test suite `tests/unit/webxr.spec.ts` provides limited headless/unit coverage without exercising actual VR sessions, `enterVR`, `WebXRManager.update`, XR rendering, or hardware controller polling. The status remains designated `experimental, unverified` until real physical headset validation is obtained.
-3. **Verified Audit Baseline:** All 38 test files (494 unit tests), ESLint clean (0 errors, 0 warnings), production build (~1.71 MB total dist bundle < 2.0 MB budget), and 22 Playwright E2E tests (14 Task 17 & Airgap + 8 Task 18) pass cleanly with zero network calls and 100% deterministic simulation parity.
+3. **Verified Audit Baseline:** All 38 test files (494 unit tests), ESLint clean (0 errors, 0 warnings), production build (~1.71 MB total dist bundle < 2.0 MB budget), and full Playwright E2E test suite (44 discovered tests across all 8 test files in `tests/e2e/`, distinguishing the complete 44-test E2E gate from targeted regression subsets like 8 Task 18 tests and 14 Task 17/17.5 tests) pass 100% cleanly with zero network calls and 100% deterministic simulation parity.
 
 ### 2.4 Open questions
 

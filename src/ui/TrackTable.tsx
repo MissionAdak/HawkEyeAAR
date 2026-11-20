@@ -154,13 +154,13 @@ export const TrackTable: React.FC = () => {
                 <div className={`w-[28px] text-center ${getLabelColor(t.label)}`}>
                   {t.shortCode}
                 </div>
-                <div className="w-[46px] text-right tabular-nums text-text-main">
+                <div data-testid="track-range" className="w-[46px] text-right tabular-nums text-text-main">
                   {t.rangeKm.toFixed(2)}
                 </div>
                 <div className="w-[36px] text-right tabular-nums text-text-dim">
                   {String(t.bearingDeg).padStart(3, '0')}°
                 </div>
-                <div className="w-[34px] text-right tabular-nums text-text-dim">
+                <div data-testid="track-speed" className="w-[34px] text-right tabular-nums text-text-dim">
                   {t.speedMps}
                 </div>
                 <div className="w-[52px] flex justify-center">

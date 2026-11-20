@@ -102,16 +102,28 @@ export function createOperatorFeedback(params: {
     }
 
     case 'INACTIVE_TARGET': {
+      const hasEstimatedRange = typeof rangeM === 'number';
       return {
         id,
         timestampMs,
         category: 'RELEASE_BLOCKED',
         severity: 'ERROR',
         title: 'RELEASE BLOCKED — CONTACT NO LONGER ACTIVE',
-        explanation: `Target ${trackNo ?? ''} is no longer active in the tactical tracking pipeline.`,
+        explanation: hasEstimatedRange
+          ? `Target ${trackNo ?? ''} at estimated range (~${(rangeM / 1000).toFixed(2)} km) is no longer active in the tactical tracking pipeline.`
+          : `Target ${trackNo ?? ''} is no longer active in the tactical tracking pipeline.`,
         trackNo,
         effectorId,
         reasonCode,
+        ...(hasEstimatedRange
+          ? {
+              measured: {
+                actual: `~${(rangeM / 1000).toFixed(2)} km`,
+                required: 'Active Track',
+                unit: 'Range',
+              },
+            }
+          : {}),
         recommendedAction: 'Select an active aerial contact from the radar scope or track table.',
       };
     }
