@@ -1,11 +1,13 @@
 import { PALETTE } from './palette';
 import { drawTrackSymbol } from './symbols';
 import type { TrackEntity, ZoneSpec } from '@/sim/types';
+import type { OperatorTrackView } from '@/sim/trackerTypes';
 
 export interface RadarDynamicOptions {
   sweepAngleRad: number;
-  currEntities: TrackEntity[];
-  prevEntities: TrackEntity[];
+  tracks?: OperatorTrackView[];
+  currEntities?: TrackEntity[];
+  prevEntities?: TrackEntity[];
   alpha: number;
   selectedTrackNo: string | null;
   zones?: ZoneSpec[];
@@ -210,9 +212,68 @@ export class RadarLayer {
     ctx.stroke();
     ctx.restore();
 
-    // 4. Update lookup map for prev entities (zero per-entity closure allocations)
+    // 4. If estimated tracks are supplied, render exclusively from operator track estimates
+    if (opts.tracks) {
+      for (const track of opts.tracks) {
+        if (
+          track.lifecycle !== 'ACTIVE' &&
+          track.lifecycle !== 'LEAKED' &&
+          track.lifecycle !== 'NEUTRALISED'
+        ) {
+          continue;
+        }
+        if (track.step === 'UNDETECTED') {
+          continue;
+        }
+
+        const prevPos = track.prevEstPos ?? track.estPos;
+        const lerpedX = prevPos.x * (1 - alpha) + track.estPos.x * alpha;
+        const lerpedY = prevPos.y * (1 - alpha) + track.estPos.y * alpha;
+
+        const sx = cx + lerpedX * scale;
+        const sy = cy - lerpedY * scale;
+
+        const distFromCenter = Math.hypot(sx - cx, sy - cy);
+        if (distFromCenter > radius) {
+          continue;
+        }
+
+        const isSelected = track.trackNo === selectedTrackNo;
+        const ghostSigmaPx = track.uncertaintyM * scale;
+
+        drawTrackSymbol(ctx, sx, sy, {
+          label: track.traineeLabel,
+          isSelected,
+          isCoasting: track.isCoasting,
+          ghostSigmaPx,
+          trackNo: track.trackNo,
+          step: track.step,
+        });
+
+        const speedSq = track.estVel.x * track.estVel.x + track.estVel.y * track.estVel.y;
+        if (track.lifecycle === 'ACTIVE' && speedSq > 0.25) {
+          const projX = lerpedX + track.estVel.x * 10;
+          const projY = lerpedY + track.estVel.y * 10;
+          const px = cx + projX * scale;
+          const py = cy - projY * scale;
+
+          ctx.save();
+          ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphorDim;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+      return;
+    }
+
+    // Legacy/fallback path for raw test entities
+    if (!currEntities) return;
     this.prevMap.clear();
-    for (const prev of prevEntities) {
+    for (const prev of prevEntities ?? []) {
       this.prevMap.set(prev.id, prev);
     }
 

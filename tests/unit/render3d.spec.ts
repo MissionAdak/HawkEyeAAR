@@ -152,7 +152,10 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       engine.load(demo1Json as unknown as ScenarioSpec);
     });
 
-    function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null): SafeTrackView[] {
+    function projectSafeTracks(
+      curr: (TrackEntity | import('@/sim/trackerTypes').OperatorTrackView)[],
+      selectedTrackNo: string | null
+    ): SafeTrackView[] {
       return curr
         .filter(
           (e) =>
@@ -160,18 +163,21 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
             e.step !== 'UNDETECTED' &&
             (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
         )
-        .map((e) => ({
-          trackNo: e.trackNo!,
-          pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
-          vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
-          traineeLabel: e.traineeLabel,
-          step: e.step,
-          q: e.q,
-          masked: e.masked,
-          ghostSigmaM: e.ghostSigmaM,
-          isSelected: e.trackNo === selectedTrackNo,
-          lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
-        }));
+        .map((e) => {
+          const isOp = 'estPos' in e;
+          return {
+            trackNo: e.trackNo!,
+            pos: isOp ? { ...e.estPos } : { ...e.pos },
+            vel: isOp ? { ...e.estVel } : { ...e.vel },
+            traineeLabel: e.traineeLabel,
+            step: e.step,
+            q: e.q,
+            masked: isOp ? e.isCoasting : e.masked,
+            ghostSigmaM: isOp ? e.uncertaintyM : e.ghostSigmaM,
+            isSelected: e.trackNo === selectedTrackNo,
+            lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+          };
+        });
     }
 
     it('strictly excludes undetected tracks from live 3D view', () => {

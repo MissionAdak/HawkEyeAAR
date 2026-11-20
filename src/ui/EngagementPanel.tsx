@@ -685,15 +685,15 @@ export const EngagementPanel: React.FC = () => {
               <span className="text-friend font-bold">{selectedTrack.trackNo}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-dim">RANGE / BRG:</span>
+              <span className="text-text-dim">EST RANGE / BRG:</span>
               <span className="text-text-main">
-                {selectedTrack.rangeKm.toFixed(2)} km / {String(selectedTrack.bearingDeg).padStart(3, '0')}°
+                ~{selectedTrack.rangeKm.toFixed(2)} km / {String(selectedTrack.bearingDeg).padStart(3, '0')}°
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-dim">SPEED / PNR:</span>
+              <span className="text-text-dim">EST SPD / ~PNR:</span>
               <span className="text-text-main">
-                {selectedTrack.speedMps} m/s | {selectedTrack.timeToPnrSec}s PNR
+                ~{selectedTrack.speedMps} m/s | ~{selectedTrack.timeToPnrSec}s PNR
               </span>
             </div>
             <div className="flex justify-between items-center">

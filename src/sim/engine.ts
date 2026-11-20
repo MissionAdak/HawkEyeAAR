@@ -20,6 +20,14 @@ import { aggregateAARMetrics } from './metrics';
 import { calculateRadarPd, computeCoastingState } from './sensors';
 import { evaluateMasking } from './masking';
 import { type OperatorFeedback, createOperatorFeedback } from './operatorFeedback';
+import { TrackEstimator } from './tracker';
+import type { OperatorTrackView } from './trackerTypes';
+import {
+  generateRadarMeasurement,
+  generateEoirMeasurement,
+  generateRfMeasurement,
+} from './sensorMeasurement';
+import type { RfMeasurement } from './measurementTypes';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
@@ -133,6 +141,9 @@ export class SimEngine {
     RF: 'OK',
   };
 
+  public tracker: TrackEstimator = new TrackEstimator();
+  public rfMeasurements: RfMeasurement[] = [];
+
   public getEffectiveSensorHealth(currentSimMs: number): Record<SensorMode, SensorHealthStatus> {
     const env = computeEnvironmentalSensorHealth(currentSimMs, this.spec?.chaos);
     return {
@@ -167,6 +178,8 @@ export class SimEngine {
     this.baselineSensorHealth = { RADAR: 'OK', EOIR: 'OK', RF: 'OK' };
     this.sensorHealth = this.getEffectiveSensorHealth(0);
     this.killRng = mulberry32(streamSeed(spec.seed, 'kill'));
+    this.tracker.clear();
+    this.rfMeasurements = [];
     clockInstance.reset();
 
     this.curr = [];
@@ -243,6 +256,7 @@ export class SimEngine {
 
     // Initial radar sweep at T=0
     this.evaluateRadarSweep(0);
+    this.updateAuxiliarySensors(0);
   }
 
   public appendEvent(
@@ -319,6 +333,12 @@ export class SimEngine {
 
     // 4. Update active entities, line-of-sight terrain masking, coasting, and check leak conditions
     this.updateEntities(currentSimMs);
+
+    // 4b. Advance track estimator predictions (dt = 0.05s)
+    this.tracker.predict(currentSimMs, 0.05);
+
+    // 4c. Update auxiliary sensors (EO/IR, RF) and synchronize track operational statuses
+    this.updateAuxiliarySensors(currentSimMs);
 
     // 5. Periodic snapshot keyframe every 250ms (5 ticks) for instant AAR scrubbing
     if (this.tickIndex % 5 === 0) {
@@ -402,6 +422,21 @@ export class SimEngine {
 
       if (this.selectedTrackNo === null && entity.trackNo) {
         this.selectedTrackNo = entity.trackNo;
+      }
+    }
+
+    // Generate noisy measurement & update tracker for established or newly initiated track
+    if (isHit && (entity.tTrk !== null || hitsIn3 >= 2) && entity.trackNo && this.spec) {
+      const radarMeas = generateRadarMeasurement({
+        entity,
+        entityIndex: index,
+        sweepIdx,
+        timestampMs: currentSimMs,
+        scenarioSeed: this.spec.seed,
+        sensorHealth: this.sensorHealth.RADAR,
+      });
+      if (radarMeas) {
+        this.tracker.updateWithRadar(radarMeas, entity.pos.z);
       }
     }
   }
@@ -612,20 +647,126 @@ export class SimEngine {
     }
   }
 
+  public syncTrackerWithEntities(currentSimMs: number): void {
+    const validTrackNos = new Set<string>();
+
+    for (let i = 0; i < this.curr.length; i++) {
+      const e = this.curr[i];
+      if (e.trackNo && e.step !== 'UNDETECTED' && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')) {
+        validTrackNos.add(e.trackNo);
+
+        if (!this.tracker.getTrackEstimate(e.trackNo)) {
+          const initMeas = generateRadarMeasurement({
+            entity: e,
+            entityIndex: i,
+            sweepIdx: Math.floor(currentSimMs / 2000),
+            timestampMs: currentSimMs,
+            scenarioSeed: this.spec?.seed ?? 42,
+            sensorHealth: this.sensorHealth.RADAR === 'OUT' ? 'DEG' : this.sensorHealth.RADAR,
+          });
+          if (initMeas) {
+            this.tracker.updateWithRadar(initMeas, e.pos.z);
+          }
+        }
+
+        this.tracker.syncTrackStatus(e.trackNo, {
+          q: e.q,
+          cCls: e.cCls,
+          traineeLabel: e.traineeLabel,
+          step: e.step,
+          lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+        });
+      }
+    }
+
+    // Prune tracks from tracker that no longer exist in this.curr
+    for (const est of this.tracker.getAllEstimates()) {
+      if (!validTrackNos.has(est.trackNo)) {
+        this.tracker.removeTrack(est.trackNo);
+      }
+    }
+  }
+
+  private updateAuxiliarySensors(currentSimMs: number): void {
+    if (!this.spec) return;
+
+    // 1. Synchronize operational statuses and seed any unseeded initiated tracks
+    this.syncTrackerWithEntities(currentSimMs);
+
+    // 2. Generate RF measurements for emitting active targets
+    this.rfMeasurements = [];
+    const isJamming = this.sensorHealth.RF === 'OUT';
+    for (let i = 0; i < this.curr.length; i++) {
+      const e = this.curr[i];
+      if (e.lifecycle === 'ACTIVE' && e.emitsRf) {
+        const rfMeas = generateRfMeasurement({
+          entity: e,
+          entityIndex: i,
+          timestampMs: currentSimMs,
+          scenarioSeed: this.spec.seed,
+          sensorHealth: this.sensorHealth.RF,
+          isJamming,
+        });
+        if (rfMeas) {
+          this.rfMeasurements.push(rfMeas);
+          this.tracker.updateWithRf(rfMeas);
+        }
+      }
+    }
+
+    // 3. Generate EO/IR optical observation measurements
+    if (this.sensorHealth.EOIR !== 'OUT') {
+      const isNight = this.spec.dayNight === 'NIGHT';
+      for (let i = 0; i < this.curr.length; i++) {
+        const e = this.curr[i];
+        if (e.trackNo && e.step !== 'UNDETECTED' && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED')) {
+          const eoirMeas = generateEoirMeasurement({
+            entity: e,
+            entityIndex: i,
+            tickIndex: this.tickIndex,
+            timestampMs: currentSimMs,
+            scenarioSeed: this.spec.seed,
+            context: {
+              activeSensor: this.activeSensor,
+              sensorHealth: this.sensorHealth,
+              isNight,
+              currentSimMs,
+            },
+          });
+          if (eoirMeas) {
+            this.tracker.updateWithEoir(eoirMeas);
+          }
+        }
+      }
+    }
+  }
+
+  public getOperatorTracks(): OperatorTrackView[] {
+    return this.tracker.getOperatorTracks();
+  }
+
   private emitPeriodicSnapshot(): void {
     const liveEntities = this.curr
       .filter((e) => e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
-      .map((e) => ({
-        id: e.id,
-        tNo: e.trackNo,
-        x: Math.round(e.pos.x),
-        y: Math.round(e.pos.y),
-        z: Math.round(e.pos.z),
-        step: e.step,
-        q: Number(e.q.toFixed(2)),
-        lbl: e.traineeLabel ?? 'NONE',
-        trueClass: e.trueClass,
-      }));
+      .map((e) => {
+        const est = e.trackNo ? this.tracker.getTrackEstimate(e.trackNo) : undefined;
+        return {
+          id: e.id,
+          tNo: e.trackNo,
+          x: Math.round(e.pos.x),
+          y: Math.round(e.pos.y),
+          z: Math.round(e.pos.z),
+          estX: est ? Math.round(est.estPos.x) : undefined,
+          estY: est ? Math.round(est.estPos.y) : undefined,
+          estZ: est ? Math.round(est.estPos.z) : undefined,
+          estUncertM: est ? Math.round(est.uncertaintyM) : undefined,
+          isCoasting: est ? est.isCoasting : false,
+          step: e.step,
+          q: Number(e.q.toFixed(2)),
+          lbl: e.traineeLabel ?? 'NONE',
+          trueClass: e.trueClass,
+        };
+      });
 
     this.appendEvent('SNAPSHOT', { entities: liveEntities });
   }
@@ -781,6 +922,8 @@ export class SimEngine {
     }
 
     const rangeM = Math.hypot(target.pos.x, target.pos.y);
+    const est = this.tracker.getTrackEstimate(action.trackNo);
+    const operatorRangeM = est ? est.estRangeM : rangeM;
     const zones = this.spec?.zones || [];
     const isJammingActive = this.sensorHealth.RF === 'OUT';
     const isFogActive = this.sensorHealth.EOIR === 'DEG';
@@ -817,7 +960,7 @@ export class SimEngine {
           trackNo: action.trackNo,
           effectorId: this.activeEffector,
           targetQ: target.q,
-          rangeM,
+          rangeM: operatorRangeM,
           isJammingActive,
         })
       );
@@ -834,7 +977,7 @@ export class SimEngine {
           timestampMs: currentSimMs,
           trackNo: action.trackNo,
           effectorId: this.activeEffector,
-          rangeM,
+          rangeM: operatorRangeM,
         })
       );
     }
@@ -894,7 +1037,7 @@ export class SimEngine {
           timestampMs: currentSimMs,
           trackNo: action.trackNo,
           effectorId: this.activeEffector,
-          rangeM,
+          rangeM: operatorRangeM,
         })
       );
     } else {
@@ -905,7 +1048,7 @@ export class SimEngine {
           timestampMs: currentSimMs,
           trackNo: action.trackNo,
           effectorId: this.activeEffector,
-          rangeM,
+          rangeM: operatorRangeM,
         })
       );
     }
@@ -923,36 +1066,34 @@ export class SimEngine {
 
   public buildUiSnapshot(): UiSnapshot {
     const simTimeMs = this.tickIndex * 50;
+    this.syncTrackerWithEntities(simTimeMs);
     const totalSec = Math.floor(simTimeMs / 1000);
     const msRemainder = simTimeMs % 1000;
     const mins = Math.floor(totalSec / 60);
     const secs = totalSec % 60;
     const formattedClock = `T+${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(msRemainder).padStart(3, '0')}`;
 
-    const trackRows: UiTrackRow[] = this.curr
-      .filter((e) => e.trackNo && e.step !== 'UNDETECTED' && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED'))
+    const rMin = this.spec?.asset.rMinM ?? CONFIG.thresholds.rMinM;
+    const trackRows: UiTrackRow[] = this.tracker
+      .getOperatorTracks()
       .map((e) => {
-        const rangeM = Math.hypot(e.pos.x, e.pos.y);
-        const bearingRad = Math.atan2(e.pos.x, e.pos.y);
-        let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
-        if (bearingDeg < 0) bearingDeg += 360;
-
-        const speedMps = Math.round(Math.hypot(e.vel.x, e.vel.y));
-        const rMin = this.spec?.asset.rMinM ?? CONFIG.thresholds.rMinM;
+        const rangeM = e.estRangeM;
+        const bearingDeg = e.estBearingDeg;
+        const speedMps = e.estSpeedMps;
         const distToPnr = Math.max(0, rangeM - rMin);
-        const timeToPnrSec = speedMps > 0 ? Number((distToPnr / speedMps).toFixed(1)) : 999;
+        const timeToPnrSec = speedMps > 1 ? Number((distToPnr / speedMps).toFixed(1)) : 999;
 
         const shortCode = e.traineeLabel ? (SHORT_CODES[e.traineeLabel] || 'UNK') : 'NON';
 
         return {
-          trackNo: e.trackNo!,
+          trackNo: e.trackNo,
           label: e.traineeLabel,
           shortCode,
           rangeKm: Number((rangeM / 1000).toFixed(2)),
           bearingDeg,
           speedMps,
           step: e.step,
-          statusPill: e.masked ? 'COAST' : e.step,
+          statusPill: e.isCoasting ? 'COAST' : e.step,
           timeToPnrSec,
           q: Number(e.q.toFixed(2)),
           cCls: Number(e.cCls.toFixed(2)),

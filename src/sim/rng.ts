@@ -42,3 +42,15 @@ export function keyedU(seed: number, label: string, a: number, b: number): numbe
   const rng = mulberry32(h);
   return rng();
 }
+
+/**
+ * Stateless keyed Gaussian draw ~ N(0, 1), clamped to [-3.5, 3.5] sigma.
+ * Uses Box-Muller transform over two orthogonal keyed uniform draws.
+ * Deterministic, repeatable, and independent of frame rate or entity ordering.
+ */
+export function keyedGaussian(seed: number, label: string, a: number, b: number): number {
+  const u1 = Math.max(1e-7, keyedU(seed, `${label}:u1`, a, b));
+  const u2 = keyedU(seed, `${label}:u2`, a, b);
+  const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+  return Math.max(-3.5, Math.min(3.5, z));
+}

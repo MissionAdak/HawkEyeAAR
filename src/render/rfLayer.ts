@@ -1,5 +1,7 @@
 import { PALETTE } from './palette';
 import type { TrackEntity } from '@/sim/types';
+import type { OperatorTrackView } from '@/sim/trackerTypes';
+import type { RfMeasurement } from '@/sim/measurementTypes';
 
 // Pre-cached Path2D objects for zero allocations during 60 fps rendering
 const SafePath2D = typeof Path2D !== 'undefined'
@@ -56,8 +58,10 @@ function getCardinalText(deg: number): string {
 }
 
 export interface RfRenderOptions {
-  currEntities: TrackEntity[];
-  prevEntities: TrackEntity[];
+  tracks?: OperatorTrackView[];
+  rfMeasurements?: RfMeasurement[];
+  currEntities?: TrackEntity[];
+  prevEntities?: TrackEntity[];
   alpha: number;
   simTimeMs: number;
   isJamming: boolean;
@@ -306,10 +310,15 @@ export class RfLayer {
     }
   }
 
-  private updateWaterfall(currEntities: TrackEntity[], simTimeMs: number, isJamming: boolean): void {
+  private freqToBin(freqMhz: number): number {
+    const norm = (freqMhz - 400) / (6000 - 400);
+    return Math.max(5, Math.min(195, Math.round(norm * 190 + 5)));
+  }
+
+  private updateWaterfall(opts: RfRenderOptions): void {
     if (!this.wfU32 || !this.wfImageData || !this.wfCtx) return;
 
-    const elapsed = simTimeMs - this.lastScrollSimMs;
+    const elapsed = opts.simTimeMs - this.lastScrollSimMs;
     if (elapsed < 100) return;
 
     const rowsToScroll = Math.min(5, Math.floor(elapsed / 100));
@@ -317,10 +326,19 @@ export class RfLayer {
 
     for (let r = 0; r < rowsToScroll; r++) {
       this.wfU32.copyWithin(200, 0, 200 * 79);
-      if (isJamming) {
-        this.fillJammingRow(this.wfU32, simTimeMs + r * 100);
+      if (opts.isJamming) {
+        this.fillJammingRow(this.wfU32, opts.simTimeMs + r * 100);
+      } else if (opts.rfMeasurements && opts.rfMeasurements.length > 0) {
+        this.fillBackgroundSpeckle(this.wfU32, opts.simTimeMs + r * 100);
+        for (const m of opts.rfMeasurements) {
+          const bin = this.freqToBin(m.freqMhz);
+          const tag = m.freqMhz === 2412 ? 'RID' : 'LINK';
+          this.paintEmitterBin(this.wfU32, bin, tag);
+        }
+      } else if (opts.currEntities) {
+        this.fillSignalRow(this.wfU32, opts.simTimeMs + r * 100, opts.currEntities);
       } else {
-        this.fillSignalRow(this.wfU32, simTimeMs + r * 100, currEntities);
+        this.fillBackgroundSpeckle(this.wfU32, opts.simTimeMs + r * 100);
       }
     }
 
@@ -345,8 +363,10 @@ export class RfLayer {
       ctx.drawImage(this.staticCanvas, 0, 0);
     }
 
-    // 2. DF Lines Jitter Update
-    this.updateJitterCache(opts.currEntities, opts.simTimeMs);
+    // 2. DF Lines Jitter Update (legacy fallback)
+    if (opts.currEntities) {
+      this.updateJitterCache(opts.currEntities, opts.simTimeMs);
+    }
 
     // 3. Render DF Lines (if not jamming)
     if (!opts.isJamming) {
@@ -354,7 +374,7 @@ export class RfLayer {
     }
 
     // 4. Waterfall & Emitter Tags
-    this.updateWaterfall(opts.currEntities, opts.simTimeMs, opts.isJamming);
+    this.updateWaterfall(opts);
 
     const wfTop = height - 120;
     const wfX = 10;
@@ -401,8 +421,56 @@ export class RfLayer {
     radius: number,
     opts: RfRenderOptions
   ): void {
+    if (opts.rfMeasurements && opts.rfMeasurements.length > 0) {
+      ctx.save();
+      for (const meas of opts.rfMeasurements) {
+        const strobeDeg = meas.measuredBearingDeg;
+        const canvasRad = ((strobeDeg - 90) * Math.PI) / 180;
+        const endX = cx + Math.cos(canvasRad) * radius;
+        const endY = cy + Math.sin(canvasRad) * radius;
+
+        const isSelected = Boolean(meas.trackNo && meas.trackNo === opts.selectedTrackNo);
+        ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphor;
+        ctx.lineWidth = isSelected ? 1.5 : 1;
+
+        // Draw line-of-bearing strobe
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        // Draw bearing uncertainty fan
+        const uncertRad = (meas.bearingUncertaintyDeg * Math.PI) / 180;
+        ctx.save();
+        ctx.strokeStyle = isSelected ? 'rgba(0, 204, 255, 0.25)' : 'rgba(0, 255, 102, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius, canvasRad - uncertRad, canvasRad + uncertRad);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+
+        // Bearing readout
+        ctx.font = '9px "JetBrains Mono"';
+        ctx.fillStyle = isSelected ? PALETTE.friend : PALETTE.phosphor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const labelDist = radius - 18;
+        ctx.fillText(
+          `${Math.round(strobeDeg)}°`,
+          cx + Math.cos(canvasRad) * labelDist,
+          cy + Math.sin(canvasRad) * labelDist
+        );
+      }
+      ctx.restore();
+      return;
+    }
+
+    if (!opts.currEntities) return;
     this.prevMap.clear();
-    for (const prev of opts.prevEntities) {
+    for (const prev of opts.prevEntities ?? []) {
       this.prevMap.set(prev.id, prev);
     }
 
@@ -458,6 +526,33 @@ export class RfLayer {
     wfTop: number,
     opts: RfRenderOptions
   ): void {
+    if (opts.rfMeasurements && opts.rfMeasurements.length > 0) {
+      ctx.save();
+      for (const m of opts.rfMeasurements) {
+        const bin = this.freqToBin(m.freqMhz);
+        const tag = m.freqMhz === 2412 ? 'RID' : 'LINK';
+        const tagX = wfX + (bin / 200) * wfW;
+        const isSelected = Boolean(m.trackNo && m.trackNo === opts.selectedTrackNo);
+
+        const color = isSelected || tag === 'RID' ? PALETTE.friend : PALETTE.phosphor;
+
+        ctx.save();
+        ctx.translate(tagX, wfY);
+        ctx.fillStyle = color;
+        ctx.fill(arrowMarkerPath);
+        ctx.restore();
+
+        ctx.font = 'bold 8px "JetBrains Mono"';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`[${tag} ${m.trackNo ?? ''}]`, tagX, wfTop + 14);
+      }
+      ctx.restore();
+      return;
+    }
+
+    if (!opts.currEntities) return;
     ctx.save();
     for (const curr of opts.currEntities) {
       if (curr.lifecycle !== 'ACTIVE' && curr.lifecycle !== 'LEAKED') continue;

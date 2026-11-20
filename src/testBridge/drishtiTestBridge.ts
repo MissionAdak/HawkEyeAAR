@@ -77,7 +77,10 @@ export function installDrishtiTestBridge(
   const bridge: DrishtiTestBridge = {
     isReady(): boolean {
       const r3d = getRenderer3D();
-      return !!r3d && !!r3d.getCurrentTracks();
+      if (r3d) {
+        return !!r3d.getCurrentTracks();
+      }
+      return engine.curr.some((e) => e.trackNo && e.lifecycle === 'ACTIVE');
     },
 
     getTrackList(): Array<{ trackNo: string; pos: { x: number; y: number; z: number }; masked?: boolean }> {
@@ -363,7 +366,21 @@ export function installDrishtiTestBridge(
 
     inspectOperatorFacingData(): { hasLeaks: boolean; leakedProperties: string[] } {
       const leaked: string[] = [];
-      const forbiddenProps = ['trueClass', 'droneType', 'valueInr', 'rcsM2', 'waypoints', 'baseRcsM2', 'killDraw'];
+      const forbiddenProps = [
+        'trueClass',
+        'droneType',
+        'valueInr',
+        'rcsM2',
+        'waypoints',
+        'baseRcsM2',
+        'killDraw',
+        'emitsRf',
+        'remoteId',
+        'iff',
+        'spawnTMs',
+        'truePos',
+        'trueVelocity',
+      ];
 
       const r3d = getRenderer3D();
       if (r3d) {
@@ -375,6 +392,24 @@ export function installDrishtiTestBridge(
                 leaked.push(`SafeTrackView.${t.trackNo}.${prop}`);
               }
             }
+            const rawEntity = engine.curr.find((e) => e.trackNo === t.trackNo);
+            if (rawEntity) {
+              if (t.pos === rawEntity.pos) {
+                leaked.push(`SafeTrackView.${t.trackNo}.posReferenceIdentity`);
+              }
+              if (t.vel === rawEntity.vel) {
+                leaked.push(`SafeTrackView.${t.trackNo}.velReferenceIdentity`);
+              }
+            }
+          }
+        }
+      }
+
+      const opTracks = engine.getOperatorTracks();
+      for (const opt of opTracks) {
+        for (const prop of forbiddenProps) {
+          if (prop in opt || Object.prototype.hasOwnProperty.call(opt, prop)) {
+            leaked.push(`OperatorTrackView.${opt.trackNo}.${prop}`);
           }
         }
       }

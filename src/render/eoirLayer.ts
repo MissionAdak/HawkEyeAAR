@@ -1,6 +1,8 @@
 import { PALETTE } from './palette';
 import { mulberry32 } from '@/sim/rng';
 import type { TrackEntity, ScenarioSpec, Vec3 } from '@/sim/types';
+import type { OperatorTrackView } from '@/sim/trackerTypes';
+import type { ApprovedSensorObservation } from '@/render3d/types';
 
 // Pre-cached Reusable Vector Silhouettes as Path2D (Zero Allocations in Loop)
 const SafePath2D = typeof Path2D !== 'undefined'
@@ -78,8 +80,9 @@ birdSilhouettePath.lineTo(5, 12);
 birdSilhouettePath.lineTo(3, 7);
 
 export interface EoirRenderOptions {
-  currEntities: TrackEntity[];
-  prevEntities: TrackEntity[];
+  tracks?: OperatorTrackView[];
+  currEntities?: TrackEntity[];
+  prevEntities?: TrackEntity[];
   alpha: number;
   azimuthDeg: number;
   spec: ScenarioSpec | null;
@@ -330,6 +333,84 @@ export class EoirLayer {
     ctx.restore();
   }
 
+  private drawEstimatedTargetBox(
+    ctx: CanvasRenderingContext2D,
+    track: OperatorTrackView,
+    proj: { sx: number; sy: number; scale: number; rangeM: number },
+    targetHot: string,
+    isSelected: boolean
+  ): void {
+    const { sx, sy, scale } = proj;
+    const boxSize = Math.max(16, 24 * scale);
+
+    ctx.save();
+    ctx.strokeStyle = isSelected ? PALETTE.friend : targetHot;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.strokeRect(sx - boxSize / 2, sy - boxSize / 2, boxSize, boxSize);
+    ctx.setLineDash([]);
+
+    ctx.font = '9px "JetBrains Mono"';
+    ctx.fillStyle = isSelected ? PALETTE.friend : targetHot;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${track.trackNo} ~${Math.round(track.estRangeM)}m`, sx + boxSize / 2 + 3, sy - boxSize / 2);
+    ctx.restore();
+  }
+
+  private drawObservationSilhouette(
+    ctx: CanvasRenderingContext2D,
+    obs: ApprovedSensorObservation | null | undefined,
+    sx: number,
+    sy: number,
+    scale: number,
+    targetHot: string,
+    isNight: boolean
+  ): void {
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    const haloGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, 18 * scale);
+    haloGrad.addColorStop(0, isNight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(122, 230, 172, 0.5)');
+    haloGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = haloGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, 18 * scale, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.scale(scale, scale);
+    ctx.fillStyle = targetHot;
+    ctx.strokeStyle = targetHot;
+    ctx.lineWidth = 1.2;
+
+    if (obs && obs.resolutionLevel === 'FULL') {
+      if (obs.signature === 'BIRD_LIKE') {
+        ctx.fill(birdSilhouettePath);
+        ctx.stroke(birdSilhouettePath);
+      } else if (obs.signature === 'FIXED_WING_DELTA') {
+        ctx.fill(fixedWingPath);
+        ctx.stroke(fixedWingPath);
+      } else if (
+        obs.signature === 'MULTIROTOR_COMPACT' ||
+        obs.signature === 'MULTIROTOR_WITH_CAMERA_POD' ||
+        obs.signature === 'MULTIROTOR_STANDARD'
+      ) {
+        ctx.fill(quadcopterPath);
+        ctx.stroke(quadcopterPath);
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else {
+      ctx.beginPath();
+      ctx.arc(0, 0, 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
   private drawEntities(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -340,8 +421,41 @@ export class EoirLayer {
   ): void {
     const pad = 24;
 
+    // If operator track estimates are provided, render strictly from estimates & approved observations
+    if (opts.tracks) {
+      for (const track of opts.tracks) {
+        if (track.lifecycle !== 'ACTIVE' && track.lifecycle !== 'LEAKED') continue;
+        if (track.step === 'UNDETECTED') continue;
+
+        const prevPos = track.prevEstPos ?? track.estPos;
+        const lerped: Vec3 = {
+          x: prevPos.x * (1 - opts.alpha) + track.estPos.x * opts.alpha,
+          y: prevPos.y * (1 - opts.alpha) + track.estPos.y * opts.alpha,
+          z: prevPos.z * (1 - opts.alpha) + track.estPos.z * opts.alpha,
+        };
+
+        const proj = this.computeScreenProjection(lerped, opts.azimuthDeg, width, height, pad);
+        if (!proj) continue;
+
+        this.drawObservationSilhouette(
+          ctx,
+          track.sensorObservation,
+          proj.sx,
+          proj.sy,
+          proj.scale,
+          targetHot,
+          isNight
+        );
+
+        const isSelected = track.trackNo === opts.selectedTrackNo;
+        this.drawEstimatedTargetBox(ctx, track, proj, targetHot, isSelected);
+      }
+      return;
+    }
+
+    if (!opts.currEntities) return;
     this.prevMap.clear();
-    for (const prev of opts.prevEntities) {
+    for (const prev of opts.prevEntities ?? []) {
       this.prevMap.set(prev.id, prev);
     }
 

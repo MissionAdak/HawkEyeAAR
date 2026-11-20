@@ -30,9 +30,10 @@ Precedence: `Rules.md` > `ARCHITECTURE.md` > `DESIGN.md` > `Tasks.md` > PRD v1.1
 
 **R2.2 — No `Math.random()` anywhere in `src/`.** All procedural logic and combat rolls use the seeded `mulberry32` streams from `src/sim/rng.ts`:
 - Runtime draws: `draw(master, stream, a, b, c, d)` with `stream ∈ {'traj','sense','kill'}` (keyed, order-independent).
+- Sensor measurement noise: `keyedGaussian(seed, label, a, b)` using Box-Muller transform over orthogonal uniform draws clamped to $[-3.5\sigma, 3.5\sigma]$ with `label ∈ {'meas_radar_rng', 'meas_radar_az', 'meas_eoir_az', 'meas_eoir_el', 'meas_eoir_rng', 'meas_rf_brg'}`.
 - Generation: `sequence(master, 'scenario')`, used only inside `src/director/` while generating (the finished spec is stored).
 - Renderer-only visual noise: `renderRng` in `src/render/fx.ts`; it must never be read by anything outside `render/`.
-- Every new draw site MUST be registered in the key table in `ARCHITECTURE.md` §3.7 in the same change. Changing an existing key tuple requires a `SIM_VERSION` bump.
+- Every new draw site MUST be registered in the key table in `ARCHITECTURE.md` in the same change. Changing an existing key tuple requires a `SIM_VERSION` bump.
 
 **R2.3 — Stream separation.** Trajectory jitter uses `traj`, detection/noise draws use `sense`, kill resolution uses `kill`. Trainee actions MUST NOT change any `traj` or `sense` outcome (the fairness validator depends on this).
 
@@ -78,7 +79,7 @@ for (const file of walk('src')) {
 
 **R3.2 — `UNKNOWN_EVIDENCE_INSUFFICIENT` semantics.** It is a label the trainee may commit ("I looked and cannot tell"). It is never a truth class. `TrackEntity.label === null` means "no label entered yet". For fire control both `null` and `UNKNOWN_EVIDENCE_INSUFFICIENT` count as **not classified**. For scoring, the explicit label earns the matrix's UNKNOWN column; `null` at the deadline earns `C = 0`.
 
-**R3.3 — Ground truth never leaves `src/sim`.** `TruthEntity`, `truthClass`, `droneClass`, `valueInr` of an entity and `truthRef` MUST NOT be imported or received by `render/`, `ui/` or `store/`. The UI receives only `TrackEntity` and operator log lines from `sim/oplog.ts`. The AAR may show truth only on the AAR screens, after the session ends.
+**R3.3 — Ground truth never leaves `src/sim` (TASK 18 Decoupling).** `TrackEntity` ground truth (`trueClass`, `droneType`, `valueInr`, `truePos`, `trueVelocity`, `emitsRf`, `remoteId`, `iff`, `spawnTMs`, `waypoints`) MUST NOT be imported or received by `render/`, `ui/` or `store/`. Live renderers (2D Radar PPI, 2D EO/IR HUD, 2D RF Direction Finder, 3D Three.js Viewport) and operator UI components (`UiTrackRow`, `TrackTable`, `EngagementPanel`) consume ONLY `OperatorTrackView` and `SafeTrackView` produced by `TrackEstimator` with estimated coordinates and neutral airframe morphologies. Telemetry in operator views is explicitly indicated as estimated (`~RNG`, `~SPD`, `EST ~...m`). The AAR displays ground truth strictly in post-session debriefing after the session has completed.
 
 **R3.4 — Symbology reflects the trainee's label, never truth** (`DESIGN.md` §3): `null` → dashed amber `?`; `UNKNOWN_EVIDENCE_INSUFFICIENT` → solid amber `?`; hostile labels → crimson diamonds; `CIVIL_UAS`/`BIRD` → green squares; `FRIENDLY` → cyan circle. Symbols come from `src/render/symbols.ts` only. Describe the scheme as "NATO-inspired"; never as APP-6 or MIL-STD-2525 compliant.
 

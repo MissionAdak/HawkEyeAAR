@@ -494,4 +494,40 @@ Files: `src/sim/operatorFeedback.ts`, `src/sim/engine.ts`, `src/store/sessionSto
 - [x] Actionable Metrics: Measured vs required telemetry (`actual: 45%, required: >= 60%`), title, cause, and recommended operator action.
 - [x] Anti-Spam Throttling: Suppresses repeated duplicate blocks within 1.5s window. Non-blocking HUD toast with auto-expiry (5s) and manual dismiss.
 
+---
+
+## Phase 10 — Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18)
+
+### TASK-18-01 — Keyed Gaussian Noise & Stream Independence · P0 · A/B · 1.5 h
+Files: `src/sim/rng.ts`, `tests/unit/measurements.spec.ts`
+- [x] `keyedGaussian(seed, label, a, b)`: Implements Box-Muller transformation using independent orthogonal uniform PRNG draws, clamped to $[-3.5\sigma, 3.5\sigma]$.
+- [x] Dedicated Stream Labels: Registered stream identifiers (`meas_radar_rng`, `meas_radar_az`, `meas_eoir_az`, `meas_eoir_el`, `meas_eoir_rng`, `meas_rf_brg`) that prevent perturbing the existing `traj`, `sense`, and `kill` streams, preserving 100% bitwise parity on golden scenarios.
+
+### TASK-18-02 — Synthetic Sensor Measurement Contracts & Producers · P0 · B · 2.0 h
+Files: `src/sim/measurementTypes.ts`, `src/sim/sensorMeasurement.ts`
+- [x] Explicit Measurement Contracts: `RadarMeasurement`, `EoirMeasurement`, `RfMeasurement` with notional training parameters warning.
+- [x] Fail-Closed Sensor Health Semantics: When sensor health is `OUT`, sensor measurement generation returns `null` (zero synthetic observations produced). Degraded sensors (`DEG`) scale measurement uncertainty accordingly.
+- [x] Pure Line-of-Bearing for RF: `RfMeasurement` provides direction-finding bearing without Cartesian range or 3D position.
+
+### TASK-18-03 — Multi-Sensor Alpha-Beta Track Estimator · P0 · B · 2.5 h
+Files: `src/sim/trackerTypes.ts`, `src/sim/tracker.ts`, `tests/unit/tracker.spec.ts`
+- [x] Alpha-Beta Kinematic Filter: 20 Hz state prediction ($dt = 0.05$ s), velocity innovation ($\alpha = 0.65, \beta = 0.30$), and $5\sigma$ innovation gating for outlier rejection.
+- [x] Coasting & Uncertainty Dynamics: Coasting entered after radar sweep timeout ($> 2200$ ms); uncertainty grows monotonically at notional rate $\gamma = 8.0$ m/s up to 300 m cap. Reacquisition resets coasting and contracts uncertainty.
+- [x] Multi-Sensor Fusion: Integrates EO/IR optical line-of-bearing / laser range smoothing and RF bearing detection tracking.
+
+### TASK-18-04 — Full Operator Presentation & Ground-Truth Decoupling · P0 · B/D · 3.0 h
+Files: `src/sim/engine.ts`, `src/render/radarLayer.ts`, `src/render/eoirLayer.ts`, `src/render/rfLayer.ts`, `src/render/renderer.ts`, `src/ui/Console.tsx`, `src/ui/TrackTable.tsx`, `src/ui/EngagementPanel.tsx`, `src/ui/aar/aarReplayData.ts`
+- [x] Three Decoupled Domains:
+  - Domain A (Internal Truth): Authoritative `TrackEntity` in `SimEngine` for physics, radar detection Pd, 2-of-3 initiation, Pk, scoring, and post-session AAR.
+  - Domain B (Sensor Measurements): Keyed noisy measurements produced deterministically on simulation ticks.
+  - Domain C (Track Estimates & Operator Projections): `OperatorTrackView`, `SafeTrackView`, and `UiTrackRow` derive positions, range, bearing, and speed strictly from estimates with zero ground truth leakage.
+- [x] Explicit Estimated Telemetry UI: Track Table headers (`~RNG`, `~SPD`), Engagement Panel telemetry (`EST RANGE / BRG`, `EST SPD / ~PNR`), and EO/IR HUD overlay (`EST ~...m`).
+- [x] Post-Session AAR Comparison: AAR replay preserves both ground truth and estimated tracks for operator review and estimation error debriefing.
+
+### TASK-18-05 — Browser-Level E2E Verification & Test Bridge Decoupling · P0 · A/B · 2.0 h
+Files: `src/testBridge/drishtiTestBridge.ts`, `tests/e2e/task18_trackerEstimation.spec.ts`
+- [x] Automated E2E Test Suite: 7 comprehensive Playwright tests verifying zero truth leakage across live operator views, radar PPI estimated tracks, coasting uncertainty circles, EO/IR estimated range HUD and neutral morphologies, 3D viewport safe tracks, AAR comparison replay, and production debug window isolation (`hasLeaks: false`).
+- [x] Strict Airgap & Bundle Budget: Production bundle size verified at 1.71 MB (< 2.0 MB budget), zero network requests (`connect-src 'none'`), zero debug globals in production build.
+
+
 

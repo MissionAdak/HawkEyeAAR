@@ -22,6 +22,10 @@ export interface AarReplayTruthTrack {
   coastingSinceMs?: number | null;
   ghostSigmaM?: number;
   formation?: FormationMemberSpec;
+  // Estimated trajectory and uncertainty comparison (Task 18 AAR Ground Truth vs Operator Estimate)
+  estPos?: { x: number; y: number; z: number };
+  estTrail?: Array<{ x: number; y: number; z: number; tMs: number }>;
+  estUncertM?: number;
 }
 
 export interface AarMaskingEventMarker {

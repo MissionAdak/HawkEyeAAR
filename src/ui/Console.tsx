@@ -16,6 +16,7 @@ import { TargetRecognitionModal } from './TargetRecognitionModal';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
+import type { OperatorTrackView } from '@/sim/trackerTypes';
 import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo, TargetDisplayMode } from '@/render3d/types';
 import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
@@ -27,36 +28,47 @@ import {
 import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
 
 /**
- * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3, D-37 & Task 17.3 §2).
+ * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3, D-37 & Task 18 §2.C).
  * Filters out undetected tracks and strictly excludes all truth properties:
  * (trueClass, droneType, valueInr, hidden waypoints, secret composition, seeded kill draws).
- * Optical airframe signatures are generated via evaluateSensorObservation only when sensor conditions permit.
+ * Positions and velocities are derived purely from estimated tracker state, not raw ground truth.
  */
 export function projectSafeTracks(
-  curr: TrackEntity[],
+  tracks: (OperatorTrackView | TrackEntity)[],
   selectedTrackNo: string | null,
   sensorContext?: SensorObservationPipelineContext | null
 ): SafeTrackView[] {
-  return curr
+  return tracks
     .filter(
-      (e) =>
-        e.trackNo &&
-        e.step !== 'UNDETECTED' &&
-        (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
+      (t) =>
+        t.trackNo &&
+        t.step !== 'UNDETECTED' &&
+        (t.lifecycle === 'ACTIVE' || t.lifecycle === 'LEAKED' || t.lifecycle === 'NEUTRALISED')
     )
-    .map((e) => ({
-      trackNo: e.trackNo!,
-      pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
-      vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
-      traineeLabel: e.traineeLabel,
-      step: e.step,
-      q: e.q,
-      masked: e.masked,
-      ghostSigmaM: e.ghostSigmaM,
-      isSelected: e.trackNo === selectedTrackNo,
-      lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
-      sensorObservation: sensorContext ? evaluateSensorObservation(e, sensorContext) : null,
-    }));
+    .map((t) => {
+      const isOperator = 'estPos' in t;
+      const pos = isOperator ? { ...t.estPos } : { ...t.pos };
+      const vel = isOperator ? { ...t.estVel } : { ...t.vel };
+      const masked = isOperator ? t.isCoasting : t.masked;
+      const ghostSigmaM = isOperator ? t.uncertaintyM : t.ghostSigmaM;
+      const observation = isOperator
+        ? (t.sensorObservation ?? null)
+        : (sensorContext ? evaluateSensorObservation(t as TrackEntity, sensorContext) : null);
+
+      return {
+        trackNo: t.trackNo!,
+        pos,
+        vel,
+        traineeLabel: t.traineeLabel,
+        step: t.step,
+        q: t.q,
+        masked,
+        ghostSigmaM,
+        isSelected: t.trackNo === selectedTrackNo,
+        lifecycle: t.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+        sensorObservation: observation,
+      };
+    });
 }
 
 function computeCursorCoords(
@@ -77,23 +89,25 @@ function computeCursorCoords(
   return { brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) };
 }
 
-function findNearestTrackNo(
+export function findNearestTrackNo(
   clickX: number,
   clickY: number,
-  entities: TrackEntity[],
+  tracks: (OperatorTrackView | TrackEntity)[],
   scale: number = 245 / 5000
 ): string | null {
   let nearestTrackNo: string | null = null;
   let nearestDist = 15;
 
-  for (const entity of entities) {
-    if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
-    const ex = entity.pos.x * scale;
-    const ey = entity.pos.y * scale;
+  for (const track of tracks) {
+    if (!track.trackNo || track.lifecycle !== 'ACTIVE' || track.step === 'UNDETECTED') continue;
+    const px = 'estPos' in track ? track.estPos.x : track.pos.x;
+    const py = 'estPos' in track ? track.estPos.y : track.pos.y;
+    const ex = px * scale;
+    const ey = py * scale;
     const d = Math.hypot(clickX - ex, clickY - ey);
     if (d < nearestDist) {
       nearestDist = d;
-      nearestTrackNo = entity.trackNo;
+      nearestTrackNo = track.trackNo;
     }
   }
 
@@ -586,8 +600,9 @@ export const Console: React.FC = () => {
         currentSimMs,
       };
 
+      const opTracks = engineInstance.getOperatorTracks();
       return {
-        tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo, sensorContext),
+        tracks: projectSafeTracks(opTracks, engineInstance.selectedTrackNo, sensorContext),
         selectedTrackNo: engineInstance.selectedTrackNo,
       };
     });
@@ -619,17 +634,18 @@ export const Console: React.FC = () => {
 
     r3d.setEffectorProvider(() => {
       const currentSimMs = engineInstance.tickIndex * 50;
-      const selectedEntity = engineInstance.selectedTrackNo
-        ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
+      const opTracks = engineInstance.getOperatorTracks();
+      const selectedTrack = engineInstance.selectedTrackNo
+        ? opTracks.find((t) => t.trackNo === engineInstance.selectedTrackNo)
         : null;
 
       return {
         activeEffector: useSessionStore.getState().ui.activeEffector,
-        selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
+        selectedTrack: selectedTrack && selectedTrack.step !== 'UNDETECTED'
           ? {
-              trackNo: selectedEntity.trackNo!,
-              pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
-              q: selectedEntity.q,
+              trackNo: selectedTrack.trackNo,
+              pos: { x: selectedTrack.estPos.x, y: selectedTrack.estPos.y, z: selectedTrack.estPos.z },
+              q: selectedTrack.q,
             }
           : null,
         sensorHealth: engineInstance.sensorHealth,
@@ -784,7 +800,7 @@ export const Console: React.FC = () => {
     const clickX = e.clientX - rect.left - 260;
     const clickY = 260 - (e.clientY - rect.top);
 
-    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.curr);
+    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.getOperatorTracks());
     if (nearestTrackNo) {
       designate(nearestTrackNo, 'CLICK');
     }

@@ -14,6 +14,11 @@ interface RawSnapshotEntity {
   x: number;
   y: number;
   z: number;
+  estX?: number;
+  estY?: number;
+  estZ?: number;
+  estUncertM?: number;
+  isCoasting?: boolean;
   step: string;
   q: number;
   lbl: string;
@@ -262,6 +267,11 @@ export function reconstructAarReplayState(
       spec?.threats.find((th) => th.id === raw.id) ??
       spec?.decoys?.find((d) => d.id === raw.id);
 
+    const estPos =
+      typeof raw.estX === 'number' && typeof raw.estY === 'number'
+        ? { x: raw.estX, y: raw.estY, z: raw.estZ ?? raw.z }
+        : undefined;
+
     return {
       id: raw.id,
       trackNo: raw.tNo,
@@ -274,6 +284,8 @@ export function reconstructAarReplayState(
       isMasked,
       coastingSinceMs,
       formation: matchingSpawn?.formation,
+      estPos,
+      estUncertM: raw.estUncertM,
     };
   });
 

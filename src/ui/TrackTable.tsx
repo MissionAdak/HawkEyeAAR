@@ -46,7 +46,7 @@ export const TrackTable: React.FC = () => {
   };
 
   return (
-    <aside className="w-[240px] h-full bg-carbon-900 border-r border-line flex flex-col font-mono text-xs select-none">
+    <aside data-testid="track-table" className="w-[240px] h-full bg-carbon-900 border-r border-line flex flex-col font-mono text-xs select-none">
       {/* Exercise / Scenario Selector Card */}
       <div className="px-2 py-1.5 border-b border-line bg-carbon-950 flex flex-col gap-1 shrink-0">
         <div className="flex items-center justify-between text-[10px]">
@@ -116,9 +116,9 @@ export const TrackTable: React.FC = () => {
       <div className="h-[22px] px-1 flex items-center text-[10px] text-text-dim border-b border-line bg-carbon-950 font-mono">
         <div className="w-[44px] text-left pl-1">TRK</div>
         <div className="w-[28px] text-center">LBL</div>
-        <div className="w-[46px] text-right">RNG</div>
-        <div className="w-[36px] text-right">BRG</div>
-        <div className="w-[34px] text-right">SPD</div>
+        <div className="w-[46px] text-right" title="Estimated Range (km)">~RNG</div>
+        <div className="w-[36px] text-right" title="Estimated Bearing (deg)">BRG</div>
+        <div className="w-[34px] text-right" title="Estimated Speed (m/s)">~SPD</div>
         <div className="w-[52px] text-center">ST</div>
       </div>
 

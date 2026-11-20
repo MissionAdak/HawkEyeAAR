@@ -828,31 +828,68 @@ The native 2D Canvas console is the authoritative, guaranteed baseline. The Thre
 5. **2D baseline resilience:** If WebGL2 is missing, chunk loading fails, or context is lost (`webglcontextlost`), the application seamlessly falls back to 2D Canvas with zero simulation interruption.
 6. **VR as experimental extension:** WebXR VR is classified as experimental and decoupled from desktop 3D milestones until verified on physical headsets.
 
-### 8.2 Safe Track View-Model Boundary
+### 8.2 Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18)
 
-To prevent ground-truth leakage through `TrackEntity` (which contains `trueClass`, `droneType`, and true `pos`), live renderers consume a redacted `SafeTrackView`:
+To eliminate ground-truth exposure and enforce strict operator-facing sensor fidelity, the architecture enforces three strictly decoupled data domains (TASK 18 / Resolution of OQ-09):
+
+```
++-----------------------------------------------------------------------------------+
+| DOMAIN A: Authoritative Simulation Ground Truth (SimEngine)                       |
+| - TrackEntity (exact pos, vel, trueClass, droneType, valueInr, secret waypoints)  |
+| - Radar Pd detection, 2-of-3 track initiation, combat Pk, PNR, scoring, AAR       |
++----------------------------------------+------------------------------------------+
+                                         |
+                                         | Deterministic Keyed PRNG Draws
+                                         v
++-----------------------------------------------------------------------------------+
+| DOMAIN B: Synthetic Sensor Measurements (sensorMeasurement.ts)                   |
+| - RadarMeasurement: noisy range (sigma=15m/35m), azimuth (sigma=0.8°/2.0°)        |
+| - EoirMeasurement: optical LOS az/el (sigma=0.15°), laser range, ApprovedObs      |
+| - RfMeasurement: line-of-bearing (sigma=4.5°), freq, dBm, zero range              |
+| * NOTIONAL TRAINING PARAMETERS — NOT CALIBRATED REAL SENSOR HARDWARE              |
++----------------------------------------+------------------------------------------+
+                                         |
+                                         | Alpha-Beta Filter & Gating (20 Hz)
+                                         v
++-----------------------------------------------------------------------------------+
+| DOMAIN C: Track Estimates & Operator Projections (tracker.ts / OperatorTrackView) |
+| - TrackEstimate: smoothed estPos, estVel, estRangeM, estBearingDeg, uncertaintyM  |
+| - Coasting: linear growth (8 m/s, cap 300m) upon radar dropout, gating rejection  |
+| - Operator Projections (OperatorTrackView, SafeTrackView, UiTrackRow):             |
+|   Strict whitelist — zero reference identity or property leakage of Domain A      |
++-----------------------------------------------------------------------------------+
+```
+
+#### SafeTrackView & OperatorTrackView Projection Invariants
+
+Live renderers (2D Radar, 2D EO/IR, 2D RF, and 3D Viewport) and UI controls consume only sanitized operator projections:
 
 ```ts
-export interface SafeTrackView {
+export interface OperatorTrackView {
   trackNo: string;
-  operatorLabel: TrackClass | null;
-  step: F2T2EAStep;
-  // Estimated kinematics from sensor tracker (not ground truth)
+  estPos: Vec3;
+  estVel: Vec3;
+  prevEstPos: Vec3;
   estRangeM: number;
   estBearingDeg: number;
   estSpeedMps: number;
-  estAltBand: 'LOW' | 'MED' | 'HIGH'; // Discretized altitude band
-  // Sensor observation states
-  q: number;                          // Fused track quality [0, 1]
-  cCls: number;                       // Classification confidence [0, 1]
+  estAltBand: 'LOW' | 'MED' | 'HIGH';
+  uncertaintyM: number;
   isCoasting: boolean;
-  ghostSigmaM: number;                // Uncertainty radius
-  rfBearingDeg: number | null;
+  coastingSinceMs: number | null;
+  lastMeasurementMs: number;
+  sensorSources: ('RADAR' | 'EOIR' | 'RF')[];
+  q: number;
+  cCls: number;
+  traineeLabel: TrackClass | null;
+  step: F2T2EAStep;
+  lifecycle: 'ACTIVE' | 'LEAKED' | 'NEUTRALISED';
+  sensorObservation: ApprovedSensorObservation | null;
 }
 ```
 
-> [!IMPORTANT]
-> **Live Tracker Blocker:** In the current implementation (`src/sim/engine.ts`), track positions in `UiTrackRow` are derived directly from ground-truth `pos.x, pos.y` without measurement noise. Before 3D can claim full sensor-noise fidelity, a formal observation estimation filter (Kalman/alpha-beta tracker) must decouple estimated coordinates from ground truth.
+> [!NOTE]
+> **Resolution of Live Tracker Blocker (OQ-09):** All operator displays (2D radar PPI, EO/IR HUD overlay, RF direction finder, Track Directory table `~RNG`/`~SPD`, and 3D viewport airframes/symbols) derive positions and kinematics strictly from `TrackEstimator` estimates. The authoritative ground truth remains isolated in `SimEngine` for combat resolution and post-session AAR debriefing.
 
 ### 8.3 Simulation Mathematics Invariant (Ground Range vs Slant Range)
 
