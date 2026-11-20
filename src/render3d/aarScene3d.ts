@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { toThree } from './coords';
-import type { ZoneSpec, TrueClass } from '@/sim/types';
+import type { ZoneSpec, TrueClass, SimEvent } from '@/sim/types';
 import type { AarReplayState, AarReplayTruthTrack } from '@/ui/aar/aarReplayTypes';
+import { RadarSweep3D } from './radarSweep3d';
+import { EngagementEffectManager } from './effects';
 
 // Tactical colors matching tokens in DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -33,6 +35,8 @@ export class AarScene3D {
   private readonly zonesGroup: THREE.Group;
   private readonly tracksGroup: THREE.Group;
   private readonly eventMarkersGroup: THREE.Group;
+  public readonly radarSweep3d: RadarSweep3D;
+  public readonly engagementEffectManager: EngagementEffectManager;
 
   private readonly trackMeshMap: Map<string, AarTrackMeshRecord> = new Map();
 
@@ -76,6 +80,12 @@ export class AarScene3D {
     this.scene.add(this.zonesGroup);
     this.scene.add(this.tracksGroup);
     this.scene.add(this.eventMarkersGroup);
+
+    this.radarSweep3d = new RadarSweep3D({ radiusM: maxRangeM });
+    this.engagementEffectManager = new EngagementEffectManager();
+
+    this.scene.add(this.radarSweep3d.group);
+    this.scene.add(this.engagementEffectManager.group);
 
     this.geometries = {
       octahedron: new THREE.OctahedronGeometry(22, 0),
@@ -419,6 +429,25 @@ export class AarScene3D {
 
     // 2. Render Active Masking Marker & Engagement Reticle
     this.updateEventMarkers(state);
+
+    // 3. Update 3D Tactical Radar Sweep
+    this.radarSweep3d.update(state.tMs);
+
+    // 4. Update Engagement Animations if events are present
+    const simEvents = (state as unknown as { events?: SimEvent[] }).events;
+    if (simEvents && simEvents.length > 0) {
+      this.engagementEffectManager.syncEvents(simEvents, state.tMs, (trk) => this.getTrackWorldPosition(trk));
+      this.engagementEffectManager.update({ simMs: state.tMs, isFogActive: false, isNight: false });
+    }
+  }
+
+  public getTrackWorldPosition(trackNo: string): THREE.Vector3 | null {
+    for (const record of this.trackMeshMap.values()) {
+      if (record.labelKey.includes(`TRK ${trackNo}`) || record.labelKey.includes(`${trackNo}|`)) {
+        return record.group.position.clone();
+      }
+    }
+    return null;
   }
 
   private updateEventMarkers(state: AarReplayState): void {
@@ -476,5 +505,8 @@ export class AarScene3D {
     // Clean materials and geometries
     Object.values(this.materials).forEach((m) => m.dispose());
     Object.values(this.geometries).forEach((g) => g.dispose());
+
+    this.radarSweep3d.dispose();
+    this.engagementEffectManager.dispose();
   }
 }

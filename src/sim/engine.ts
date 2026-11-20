@@ -18,6 +18,7 @@ import { resolveEngagement } from './effectors';
 import { aggregateAARMetrics } from './metrics';
 import { calculateRadarPd, computeCoastingState } from './sensors';
 import { evaluateMasking } from './masking';
+import { type OperatorFeedback, createOperatorFeedback } from './operatorFeedback';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
@@ -67,6 +68,11 @@ export class SimEngine {
   public inputQueue: InputQueue = new InputQueue();
 
   public onEvent: ((event: SimEvent) => void) | null = null;
+  public onFeedback: ((feedback: OperatorFeedback) => void) | null = null;
+
+  public emitFeedback(feedback: OperatorFeedback): void {
+    this.onFeedback?.(feedback);
+  }
 
   public activeSensor: SensorMode = 'RADAR';
   public selectedTrackNo: string | null = null;
@@ -669,9 +675,52 @@ export class SimEngine {
   }
 
   private handleFire(action: { trackNo: string }, tRawMs?: number): void {
+    const currentSimMs = this.tickIndex * 50;
     const target = this.curr.find((e) => e.trackNo === action.trackNo);
-    if (!target) return;
-    if (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS') {
+    if (!target) {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: 'TRACK_NOT_FOUND',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+        })
+      );
+      return;
+    }
+    if (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED') {
+      const reason = target.lifecycle !== 'ACTIVE' ? 'INACTIVE_TARGET' : 'PNR_VIOLATION';
+      this.appendEvent(
+        'RELEASE_BLOCKED',
+        { reason, effector: this.activeEffector, rangeM: Math.hypot(target.pos.x, target.pos.y) },
+        action.trackNo,
+        target.id,
+        tRawMs
+      );
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: reason,
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM: Math.hypot(target.pos.x, target.pos.y),
+        })
+      );
+      return;
+    }
+
+    if (target.step === 'ASSESS') {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: 'DUPLICATE_PENDING_FIRE',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+        })
+      );
       return;
     }
 
@@ -691,12 +740,47 @@ export class SimEngine {
 
     // Hard blocks prevent fire entirely
     if (gating.isHardBlocked) {
+      const reason = gating.hardBlockReason || 'OUT_OF_ENVELOPE';
+      this.appendEvent(
+        'RELEASE_BLOCKED',
+        {
+          reason,
+          effector: this.activeEffector,
+          rangeM,
+          q: target.q,
+        },
+        action.trackNo,
+        target.id,
+        tRawMs
+      );
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: reason,
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          targetQ: target.q,
+          rangeM,
+          isJammingActive,
+        })
+      );
       return;
     }
 
     // 2. Log soft ROE violations
     for (const v of gating.violations) {
       this.appendEvent('ROE_VIOLATION', { reason: v, trackNo: action.trackNo }, action.trackNo, target.id);
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'ROE_WARNING',
+          reasonCode: v,
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM,
+        })
+      );
     }
 
     // 3. Log live CER / Unfavourable exchange flag if CER > 10
@@ -744,6 +828,31 @@ export class SimEngine {
     target.step = killDraw.killed ? 'ASSESS' : 'TARGET';
     if (killDraw.killed) target.lifecycle = 'NEUTRALISED';
     this.appendEvent('ENGAGE_RESULT', { killed: killDraw.killed, u: killDraw.u, pk: killDraw.pk }, action.trackNo, target.id);
+
+    // Operator feedback on outcome
+    if (killDraw.killed) {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'NEUTRALIZATION_INDICATED',
+          reasonCode: 'NEUTRALIZATION_INDICATED',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM,
+        })
+      );
+    } else {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'ENGAGEMENT_UNSUCCESSFUL',
+          reasonCode: 'ENGAGEMENT_UNSUCCESSFUL',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM,
+        })
+      );
+    }
   }
 
   private handleCycleTrack(direction: 'NEXT' | 'PREV'): void {

@@ -169,6 +169,7 @@ export type SimEventType =
   | 'CLASSIFY'
   | 'ENGAGE'
   | 'ENGAGE_RESULT'
+  | 'RELEASE_BLOCKED'
   | 'ASSESS'
   | 'CHAOS_ON'
   | 'CHAOS_OFF'

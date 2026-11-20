@@ -4,6 +4,7 @@ import { RfLayer } from './rfLayer';
 import { engineInstance, clockInstance, useSessionStore } from '@/store/sessionStore';
 import { CONFIG } from '@/config';
 import { type FrameDriver, windowDriver } from '@/sim/frameDriver';
+import { calculateRadarSweepAngle } from '@/sim/radarMath';
 
 export class ConsoleRenderer {
   private readonly canvas: HTMLCanvasElement;
@@ -144,10 +145,7 @@ export class ConsoleRenderer {
     const activeSensor = engineInstance.activeSensor;
 
     if (activeSensor === 'RADAR') {
-      const sweepPeriodMs = CONFIG.thresholds.radarSweepPeriodMs || 2000;
-      const sweepProgress = (currentSimMs % sweepPeriodMs) / sweepPeriodMs;
-      // 0 rad is at 3 o'clock (090 deg), sweep starts at 12 o'clock (000 deg = -PI/2) and turns clockwise
-      const sweepAngleRad = -Math.PI / 2 + sweepProgress * Math.PI * 2;
+      const { sweepAngleRad } = calculateRadarSweepAngle(currentSimMs);
 
       this.radarLayer.renderDynamic(this.ctx, width, height, {
         sweepAngleRad,

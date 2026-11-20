@@ -456,4 +456,42 @@ Files: `src/render3d/environment/weather.ts`, `src/ui/MissionBriefing.tsx`, `src
 - [x] Mission Briefing Card: Tactical Environment & Weather summary card with preset badges, lighting, atmosphere, and radar reach advisory.
 - [x] Low-Fidelity Mode [L]: Reduced particle counts and simplified geometries for low-end hardware target (i3, 4GB RAM, integrated GPU).
 
+---
+
+## Phase 9 — 3D Engagement Animations, Target Diversity, Tactical Radar & Operator Feedback (TASK 17)
+
+### TASK-17-01 — Target Model Diversity & Ground-Truth Protection · P0 · B/D · 2.5 h
+Files: `src/render3d/targets/*`, `src/render3d/scene3d.ts`, `tests/unit/targetModels.spec.ts`
+- [x] Full Target Model Diversity: Procedural 3D models for all operational categories: FPV Attack Drone (canted forward snout, X-frame, rotor guards), Recon Quadcopter (underslung gimbal, wide frame), Swarm Element (compact quadrotor, high-RPM discs), Loitering Munition (canted delta wing, pusher prop), Civilian Drone (consumer white quadcopter), Friendly UAV (transponder beacon, standard quad), and Bird (organic winged silhouette).
+- [x] Strict Ground-Truth Protection (Rules R3.3 & R3.4): Live 3D view strictly visualizes contacts based on operator trainee assessment (`traineeLabel`). Misclassifying an attack drone as civil renders a civilian quadcopter model, confirming the operator's current hypothesis without truth leaks. Secret ground truth (`trueClass`, `droneType`, value, waypoints) is only projected during post-session AAR when explicitly authorized.
+- [x] Forgiving 3D Raycasting Hit Proxies: Generous bounding hit proxies and meshes tagged with `userData.trackNo` and `userData.targetCategory` for reliable single-click and double-click targeting.
+
+### TASK-17-02 — 3D Engagement Visual Effects & AAR Scrubbing · P0 · A/B · 3.0 h
+Files: `src/render3d/effects/*`, `src/render3d/scene3d.ts`, `src/render3d/aarScene3d.ts`, `tests/unit/engagementEffects.spec.ts`
+- [x] Realistic Weapon Engagement Visuals:
+  - `GUN`: Muzzle flash burst at battery, 3 high-velocity staggered tracer rounds.
+  - `LASER`: Instantaneous coherent directed-energy beam with atmospheric fog scatter and target thermal burn glow.
+  - `RF_SOFTKILL`: Strictly non-kinetic expanding directional electromagnetic wavefront ripple rings and target electronic interference shell.
+  - `INTERCEPTOR`: Friendly counter-drone launch and ballistic trajectory intercept.
+  - `MISSILE`: Launch flash, high-speed rocket motor body, flame, and lingering smoke trail.
+- [x] Restrained Non-Graphic Outcomes: Tactical energy dissipation spark ring on neutralization; deflected tracer bounce or fizzle on ineffective engagement.
+- [x] 100% Deterministic simMs Scrubbing: Effect lifecycle driven strictly by `simMs` clock. Scrubbing backward in post-session AAR purges future effects and re-syncs forward events deterministically. Blocked releases (`RELEASE_BLOCKED`) never trigger weapon fire animation.
+
+### TASK-17-03 — Randomized Environment Structure Scatter · P0 · B · 1.5 h
+Files: `src/render3d/environment/buildings.ts`, `tests/unit/environmentScatter.spec.ts`
+- [x] Seeded Deterministic Scatter: Procedural buildings placed via dedicated PRNG (`mulberry32`) avoiding rigid uniform grids.
+- [x] Exclusion Zones & Collision Avoidance: Central C2 command post (150m radius), surveillance radar mast, secondary RF towers, and coastal airfield runway corridors strictly excluded from obstruction placement.
+- [x] Stable Inspectable IDs: All scattered buildings tagged with permanent IDs (`BLD-${zone.id}-${index}`) for Environment Inspector picking.
+
+### TASK-17-04 — 3D Tactical Radar Sweep Visualization · P0 · A/B · 1.5 h
+Files: `src/render3d/radarSweep3d.ts`, `src/sim/radarMath.ts`, `src/render3d/scene3d.ts`, `src/render3d/aarScene3d.ts`, `tests/unit/radarSweep3d.spec.ts`
+- [x] 100% Rotational Synchronization: 3D rotating antenna dish atop primary C2 mast and translucent ground scan sector synchronized with 2D Canvas sweep line (30 RPM = 2.0s period) via shared `calculateRadarSweepAngle(simMs)`.
+- [x] Sensor Health Integration: Scan beam adapts dynamically: NOMINAL (phosphor green), DEGRADED (amber warning), OUT (hidden during radar dropout or jamming).
+
+### TASK-17-05 — Intelligent Tactical Operator Feedback System · P0 · B/D · 2.0 h
+Files: `src/sim/operatorFeedback.ts`, `src/sim/engine.ts`, `src/store/sessionStore.ts`, `src/ui/OperatorFeedbackToast.tsx`, `src/ui/Console.tsx`, `tests/unit/operatorFeedback.spec.ts`
+- [x] Typed Non-Disruptive Operator Feedback: Real-time feedback explaining all hard blocks (`Q_MIN_VIOLATION`, `PNR_VIOLATION`, `INACTIVE_TARGET`, `OUT_OF_ENVELOPE`, `RF_JAMMING_ACTIVE`, `RF_SILENT_TARGET`), soft ROE warnings (`KINETIC_OVER_DENSE_ZONE`, `ROE_CONFIRMATION_REQUIRED`), and engagement outcomes.
+- [x] Actionable Metrics: Measured vs required telemetry (`actual: 45%, required: >= 60%`), title, cause, and recommended operator action.
+- [x] Anti-Spam Throttling: Suppresses repeated duplicate blocks within 1.5s window. Non-blocking HUD toast with auto-expiry (5s) and manual dismiss.
+
 

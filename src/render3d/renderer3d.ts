@@ -9,7 +9,7 @@ import type {
   EffectorVisualOptions,
   EnvironmentObjectInfo,
 } from './types';
-import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec } from '@/sim/types';
+import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent } from '@/sim/types';
 import { attachContextLossHandler } from './capability';
 import { toThree } from './coords';
 import { getScenarioEnvironmentDescriptor } from './environment';
@@ -44,6 +44,7 @@ export class Renderer3D {
   private getCoverage?: () => SensorCoverageState;
   private getEffectorOptions?: () => EffectorVisualOptions;
   private getSimTime?: () => { simMs: number; chaosList?: ChaosSpec[] };
+  private getEvents?: () => SimEvent[];
 
   private showLos: boolean = true;
   private showClusters: boolean = true;
@@ -52,6 +53,10 @@ export class Renderer3D {
 
   public setTrackProvider(fn: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null }): void {
     this.getTracks = fn;
+  }
+
+  public setEventsProvider(fn: () => SimEvent[]): void {
+    this.getEvents = fn;
   }
 
   public setCoverageProvider(fn: () => SensorCoverageState): void {
@@ -488,10 +493,30 @@ export class Renderer3D {
         const effOpts = this.getEffectorOptions();
         this.updateEffectorEnvelopes(effOpts);
       }
+      let currentSimMs = 0;
+      let isFog = false;
+      let isNight = false;
+
       if (this.getSimTime) {
         const { simMs, chaosList } = this.getSimTime();
+        currentSimMs = simMs;
         this.scene3d.updateEnvironment(simMs, chaosList);
+        isFog = this.scene3d.getEnvironmentManager().isFogActive();
+        isNight = this.scene3d.getEnvironmentManager().isNightTime();
       }
+
+      if (this.getEvents) {
+        const events = this.getEvents();
+        this.scene3d.syncEngagementEvents(events, currentSimMs);
+      }
+
+      this.scene3d.updateEngagementEffects({
+        simMs: currentSimMs,
+        isFogActive: isFog,
+        isNight: isNight,
+      });
+
+      this.scene3d.updateRadarSweep(currentSimMs);
 
       // Update camera smooth focus transition
       this.cameraController.updateTransition();

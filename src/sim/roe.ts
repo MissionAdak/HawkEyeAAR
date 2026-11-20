@@ -178,8 +178,11 @@ function checkHardBlocks(
   if (target.q < qMin) {
     return { isHardBlocked: true, hardBlockReason: 'Q_MIN_VIOLATION' };
   }
-  if (rangeM <= rMin || target.lifecycle !== 'ACTIVE') {
-    return { isHardBlocked: true, hardBlockReason: 'PNR_OR_INACTIVE' };
+  if (rangeM <= rMin) {
+    return { isHardBlocked: true, hardBlockReason: 'PNR_VIOLATION' };
+  }
+  if (target.lifecycle !== 'ACTIVE') {
+    return { isHardBlocked: true, hardBlockReason: 'INACTIVE_TARGET' };
   }
   if (!eff || rangeM < eff.envelopeMinM || rangeM > eff.envelopeMaxM) {
     return { isHardBlocked: true, hardBlockReason: 'OUT_OF_ENVELOPE' };

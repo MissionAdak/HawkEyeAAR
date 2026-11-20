@@ -17,6 +17,7 @@ import {
   generateLocalSeed,
 } from '@/director/catalog';
 import { validate } from '@/director/validate';
+import { type OperatorFeedback, createOperatorFeedback } from '@/sim/operatorFeedback';
 
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
@@ -67,6 +68,11 @@ export interface SessionState {
   currentScenarioId: string;
   selectedScenarioId: string;
   simSpeed: number;
+
+  // Intelligent Operator Feedback
+  feedbackList: OperatorFeedback[];
+  activeFeedback: OperatorFeedback | null;
+  dismissFeedback: (id?: string) => void;
 
   // Actions pushing onto InputQueue
   designate: (trackNo: string, via?: 'KEY' | 'CLICK') => void;
@@ -124,6 +130,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isScenarioModalOpen: false,
   currentScenarioId: DEFAULT_SCENARIO_ID,
   simSpeed: 1.0,
+  feedbackList: [],
+  activeFeedback: null,
+
+  dismissFeedback: (id?: string) => {
+    set((state) => {
+      if (!id || state.activeFeedback?.id === id) {
+        return { activeFeedback: null };
+      }
+      return {};
+    });
+  },
 
   designate: (trackNo: string, via: 'KEY' | 'CLICK' = 'KEY') => {
     const tick = getQuantisedTick();
@@ -156,14 +173,48 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   fire: (trackNo: string) => {
+    const currentSimMs = engineInstance.tickIndex * 50;
+    if (!trackNo) {
+      const fb = createOperatorFeedback({
+        category: 'RELEASE_BLOCKED',
+        reasonCode: 'NO_TARGET_SELECTED',
+        timestampMs: currentSimMs,
+      });
+      set((state) => ({
+        feedbackList: [fb, ...state.feedbackList].slice(0, 20),
+        activeFeedback: fb,
+      }));
+      return;
+    }
     const target = engineInstance.curr.find((e) => e.trackNo === trackNo);
     if (
       target &&
       (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS')
     ) {
+      const reasonCode = target.step === 'ASSESS' ? 'DUPLICATE_PENDING_FIRE' : 'INACTIVE_TARGET';
+      const fb = createOperatorFeedback({
+        category: 'RELEASE_BLOCKED',
+        reasonCode,
+        timestampMs: currentSimMs,
+        trackNo,
+      });
+      set((state) => ({
+        feedbackList: [fb, ...state.feedbackList].slice(0, 20),
+        activeFeedback: fb,
+      }));
       return;
     }
     if (engineInstance.inputQueue.hasPendingFire(trackNo)) {
+      const fb = createOperatorFeedback({
+        category: 'RELEASE_BLOCKED',
+        reasonCode: 'DUPLICATE_PENDING_FIRE',
+        timestampMs: currentSimMs,
+        trackNo,
+      });
+      set((state) => ({
+        feedbackList: [fb, ...state.feedbackList].slice(0, 20),
+        activeFeedback: fb,
+      }));
       return;
     }
     const tick = getQuantisedTick();
@@ -353,6 +404,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         await activeRecorder.stop();
         activeRecorder = null;
         engineInstance.onEvent = null;
+        engineInstance.onFeedback = null;
       } catch (error) {
         console.error('[Recorder Error] Failed to persist previous session events:', error);
         isFinalizingSession = false;
@@ -378,6 +430,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           console.error('[Recorder] Failed to finish session:', error);
         });
       }
+    };
+
+    engineInstance.onFeedback = (feedback) => {
+      set((state) => ({
+        feedbackList: [feedback, ...state.feedbackList].slice(0, 20),
+        activeFeedback: feedback,
+      }));
     };
 
     recorderForSession.start();

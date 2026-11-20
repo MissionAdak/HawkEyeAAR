@@ -152,11 +152,52 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
   });
 
   // ---------------------------------------------------------
-  // B. Scenario Zones Integration: Procedural Structures Inside Zones
+  // B. Scenario Zones Integration: Deterministic Seeded Scatter Placement (Task 17 Phase 4)
   // ---------------------------------------------------------
+  // Dedicated renderer-only PRNG (mulberry32). Does not consume simulation RNG streams.
+  let rngState = (descriptor.seed ^ 0x9e3779b9) >>> 0;
+  function nextRng(): number {
+    rngState = (rngState + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(rngState ^ (rngState >>> 15), 1 | rngState);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  // Record placed footprint bounding circles to enforce non-overlap (minimum separation)
+  interface PlacedFootprint {
+    x: number;
+    y: number;
+    radius: number;
+  }
+  const placedFootprints: PlacedFootprint[] = [
+    // Central C2 complex exclusion circle
+    { x: 0, y: 0, radius: 150 },
+    // Secondary RF tower exclusion circle
+    { x: -400, y: 300, radius: 60 },
+  ];
+
+  if (preset === 'COASTAL_AIRFIELD') {
+    // Airfield runway corridor exclusion [-1600, -100] to [1600, 100]
+    placedFootprints.push(
+      { x: -800, y: 0, radius: 250 },
+      { x: 0, y: 0, radius: 250 },
+      { x: 800, y: 0, radius: 250 },
+      { x: 350, y: 500, radius: 80 }
+    );
+  }
+
+  function isOverlapping(x: number, y: number, radius: number): boolean {
+    for (const fp of placedFootprints) {
+      const dist = Math.hypot(x - fp.x, y - fp.y);
+      if (dist < fp.radius + radius) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   for (const zone of zones) {
     if (zone.type === 'URBAN') {
-      // Build distinct high-rise and mid-rise structures within the zone polygon
       const minX = Math.min(...zone.polygon.map((p) => p[0]));
       const maxX = Math.max(...zone.polygon.map((p) => p[0]));
       const minY = Math.min(...zone.polygon.map((p) => p[1]));
@@ -164,44 +205,77 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
 
       const width = maxX - minX;
       const depth = maxY - minY;
-      const centerY = (minY + maxY) / 2;
+      const targetBldCount = Math.min(10, Math.max(4, Math.floor(Math.sqrt(width * depth) / 120)));
 
-      // Create a prominent building cluster representing the urban core
-      const bldCount = Math.min(8, Math.max(3, Math.floor(width / 180)));
-      const stepX = width / (bldCount + 1);
+      let placedInZone = 0;
+      let attempts = 0;
+      const maxAttempts = targetBldCount * 12;
 
-      for (let bi = 0; bi < bldCount; bi++) {
-        const offsetSimX = minX + stepX * (bi + 1) + ((bi * 37) % 40) - 20;
-        const offsetSimY = centerY + (((bi * 53) % depth) - depth / 2) * 0.7;
-        const bldHeight = Math.max(20, Math.min(zone.heightM, zone.heightM * 0.75 + (bi % 3) * 8));
-        const bldSizeX = Math.max(45, Math.min(85, stepX * 0.7));
-        const bldSizeZ = Math.max(45, Math.min(85, depth * 0.25));
+      while (placedInZone < targetBldCount && attempts < maxAttempts) {
+        attempts++;
+        const candidateX = minX + 35 + nextRng() * Math.max(20, width - 70);
+        const candidateY = minY + 35 + nextRng() * Math.max(20, depth - 70);
+
+        const bldSizeX = 35 + nextRng() * 45; // 35m to 80m
+        const bldSizeZ = 35 + nextRng() * 45; // 35m to 80m
+        const footRadius = Math.hypot(bldSizeX, bldSizeZ) / 2 + 10; // 10m margin
+
+        if (isOverlapping(candidateX, candidateY, footRadius)) {
+          continue;
+        }
+
+        const bldHeight = Math.max(
+          18,
+          Math.min(zone.heightM, zone.heightM * 0.65 + nextRng() * (zone.heightM * 0.35))
+        );
 
         const bldGeom = new THREE.BoxGeometry(bldSizeX, bldHeight, bldSizeZ);
         geometries.push(bldGeom);
 
-        const bldMat = bi % 2 === 0 ? bldMatConcrete : bldMatDark;
+        const bldMat = placedInZone % 2 === 0 ? bldMatConcrete : bldMatDark;
         const bldMesh = new THREE.Mesh(bldGeom, bldMat);
 
-        const bldThree = toThree(offsetSimX, offsetSimY, 0);
+        const bldThree = toThree(candidateX, candidateY, 0);
         bldMesh.position.set(bldThree.x, bldHeight / 2, bldThree.z);
+
+        // Variable orientation (yaw rotation)
+        const yawAngle = (nextRng() - 0.5) * 0.5;
+        bldMesh.rotation.y = yawAngle;
         group.add(bldMesh);
 
-        // Add wireframe rooftop outline for clarity
+        // Add wireframe rooftop outline for tactical visual definition
         const wireGeom = new THREE.EdgesGeometry(bldGeom);
         geometries.push(wireGeom);
         const wire = new THREE.LineSegments(wireGeom, towerWireMat);
         wire.position.copy(bldMesh.position);
+        wire.rotation.copy(bldMesh.rotation);
         group.add(wire);
 
-        const bldId = `BLD-${zone.id}-${bi + 1}`;
+        // Rooftop HVAC unit
+        if (bldHeight > 25 && nextRng() > 0.3) {
+          const hvacGeom = new THREE.BoxGeometry(bldSizeX * 0.3, 3, bldSizeZ * 0.3);
+          geometries.push(hvacGeom);
+          const hvacMesh = new THREE.Mesh(hvacGeom, radarMat);
+          hvacMesh.position.set(
+            bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.3,
+            bldHeight + 1.5,
+            bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.3
+          );
+          hvacMesh.rotation.copy(bldMesh.rotation);
+          group.add(hvacMesh);
+        }
+
+        placedFootprints.push({ x: candidateX, y: candidateY, radius: footRadius });
+        placedInZone++;
+
+        const bldId = `BLD-${zone.id}-${placedInZone}`;
         registerBuilding(bldMesh, {
           id: bldId,
-          name: `Urban Commercial Complex ${zone.id}-${bi + 1}`,
+          name: `Urban Commercial Complex ${zone.id}-${placedInZone}`,
           category: 'BUILDING',
           preset,
           zoneId: zone.id,
-          position: { x: offsetSimX, y: offsetSimY, z: 0 },
+          position: { x: candidateX, y: candidateY, z: 0 },
           heightM: bldHeight,
           elevationM: bldHeight,
           maskingProperties: {
@@ -211,7 +285,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
             zoneType: zone.type,
           },
           isObstructionEnvelope: false,
-          description: `Reinforced multi-story concrete structure inside ${zone.id}. Casts authoritative ${zone.shadowM}m radar shadow.`,
+          description: `Reinforced concrete commercial structure in ${zone.id}. Casts authoritative ${zone.shadowM}m radar shadow.`,
         });
       }
     }

@@ -13,9 +13,14 @@ import {
   calculateAircraftOrientation,
 } from './aircraftModel';
 import type { SafeTrackView, Scene3DOptions } from './types';
-import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec } from '@/sim/types';
+import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent } from '@/sim/types';
 import { EnvironmentManager, getScenarioEnvironmentDescriptor } from './environment';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
+import { TargetModelFactory, resolveTargetModelCategory } from './targets';
+import type { TargetModelCategory, BuiltTargetModel } from './targets';
+import { EngagementEffectManager } from './effects';
+import type { EngagementEffectContext } from './effects';
+import { RadarSweep3D } from './radarSweep3d';
 
 // Tactical Color Tokens adhering to DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -42,6 +47,8 @@ export interface TrackMeshRecord {
   labelSprite: THREE.Sprite;
   selectionBox: THREE.LineSegments | null;
   lastHeadingRad: number;
+  currentCategory?: TargetModelCategory;
+  targetModelInstance?: BuiltTargetModel;
 }
 
 export class Scene3D {
@@ -54,6 +61,9 @@ export class Scene3D {
   public readonly losVisualizer3d: LosVisualizer3D;
   public readonly clusterOverlay3d: ClusterOverlay3D;
   public readonly trainingAid3d: TrainingAid3D;
+  public readonly targetModelFactory: TargetModelFactory;
+  public readonly engagementEffectManager: EngagementEffectManager;
+  public readonly radarSweep3d: RadarSweep3D;
   public environmentManager: EnvironmentManager;
   private readonly zones: ZoneSpec[];
 
@@ -107,6 +117,14 @@ export class Scene3D {
     this.scene.add(this.losVisualizer3d.group);
     this.scene.add(this.clusterOverlay3d.group);
     this.scene.add(this.trainingAid3d.group);
+
+    // Initialize Target Model Factory, Engagement Effects, and Radar Sweep
+    this.targetModelFactory = new TargetModelFactory();
+    this.engagementEffectManager = new EngagementEffectManager();
+    this.radarSweep3d = new RadarSweep3D({ radiusM: options.maxRangeM });
+
+    this.staticGroup.add(this.radarSweep3d.group);
+    this.tracksGroup.add(this.engagementEffectManager.group);
 
     if (options.showTrainingAid && options.mode !== 'EVAL') {
       this.trainingAid3d.setVisible(true);
@@ -397,7 +415,7 @@ export class Scene3D {
     return sprite;
   }
 
-  private getOrCreateTrackRecord(trackNo: string): TrackMeshRecord {
+  private getOrCreateTrackRecord(trackNo: string, initialCategory: TargetModelCategory = 'UNKNOWN'): TrackMeshRecord {
     let record = this.trackMeshMap.get(trackNo);
     if (record) return record;
 
@@ -411,20 +429,9 @@ export class Scene3D {
     // Aircraft group containing vehicle body, accents, and hit proxy with dynamic orientation and scaling
     const aircraftGroup = new THREE.Group();
 
-    // 1. Solid aircraft body
-    const bodyMesh = new THREE.Mesh(this.sharedGeometries.aircraftBody, this.sharedMaterials.aircraftBody);
-    bodyMesh.userData = { trackNo };
-    aircraftGroup.add(bodyMesh);
-
-    // 2. Aircraft symbology accent (nose turret, canopy)
-    const accentMesh = new THREE.Mesh(this.sharedGeometries.aircraftAccent, this.sharedMaterials.unknown);
-    accentMesh.userData = { trackNo };
-    aircraftGroup.add(accentMesh);
-
-    // 3. Forgiving invisible hit proxy for reliable 3D raycasting
-    const hitProxy = new THREE.Mesh(this.sharedGeometries.aircraftHitProxy, this.sharedMaterials.hitProxy);
-    hitProxy.userData = { trackNo };
-    aircraftGroup.add(hitProxy);
+    // Build procedural 3D target model matching initial category
+    const builtModel = this.targetModelFactory.createModel(initialCategory, trackNo);
+    aircraftGroup.add(builtModel.group);
 
     modelAnchor.add(aircraftGroup);
 
@@ -450,15 +457,17 @@ export class Scene3D {
       group,
       modelAnchor,
       aircraftGroup,
-      bodyMesh,
-      accentMesh,
-      hitProxy,
-      marker: bodyMesh,
+      bodyMesh: builtModel.bodyMesh,
+      accentMesh: builtModel.accentMesh,
+      hitProxy: builtModel.hitProxy,
+      marker: builtModel.bodyMesh,
       stem,
       ghostRing: null,
       labelSprite: sprite,
       selectionBox,
       lastHeadingRad: 0,
+      currentCategory: initialCategory,
+      targetModelInstance: builtModel,
     };
 
     this.trackMeshMap.set(trackNo, record);
@@ -526,7 +535,25 @@ export class Scene3D {
 
     for (const track of tracks) {
       activeTrackNos.add(track.trackNo);
-      const record = this.getOrCreateTrackRecord(track.trackNo);
+      const targetCategory = resolveTargetModelCategory(track);
+      let record = this.trackMeshMap.get(track.trackNo);
+
+      if (!record) {
+        record = this.getOrCreateTrackRecord(track.trackNo, targetCategory);
+      } else if (record.currentCategory !== targetCategory) {
+        // Trainee classification changed -> swap procedural model
+        if (record.targetModelInstance) {
+          record.aircraftGroup.remove(record.targetModelInstance.group);
+        }
+        const newModel = this.targetModelFactory.createModel(targetCategory, track.trackNo);
+        record.aircraftGroup.add(newModel.group);
+        record.bodyMesh = newModel.bodyMesh;
+        record.accentMesh = newModel.accentMesh;
+        record.hitProxy = newModel.hitProxy;
+        record.marker = newModel.bodyMesh;
+        record.currentCategory = targetCategory;
+        record.targetModelInstance = newModel;
+      }
 
       // Compute Three.js position from estimated coordinates
       const threePos = toThree(track.pos.x, track.pos.y, track.pos.z);
@@ -589,10 +616,47 @@ export class Scene3D {
   }
 
   /**
-   * Updates model-faithful sensor coverage visualization.
+   * Looks up the current world position of a track in Three.js coordinates.
+   */
+  public getTrackWorldPosition(trackNo: string): THREE.Vector3 | null {
+    const record = this.trackMeshMap.get(trackNo);
+    if (!record) return null;
+    const worldPos = new THREE.Vector3();
+    record.aircraftGroup.getWorldPosition(worldPos);
+    return worldPos;
+  }
+
+  /**
+   * Updates model-faithful sensor coverage visualization and 3D radar sweep health.
    */
   public updateCoverage(coverageState: SensorCoverageState): void {
     this.coverage3d.update(coverageState);
+    const health = coverageState.radar.status === 'DROPOUT' ? 'OUT' : coverageState.radar.status;
+    this.radarSweep3d.setSensorHealth(
+      health,
+      coverageState.activeSensor
+    );
+  }
+
+  /**
+   * Synchronizes active engagement animations with the authoritative simulation event log.
+   */
+  public syncEngagementEvents(events: SimEvent[], simMs: number): void {
+    this.engagementEffectManager.syncEvents(events, simMs, (trackNo) => this.getTrackWorldPosition(trackNo));
+  }
+
+  /**
+   * Updates engagement animations (muzzle flash, tracer burst, beam, wavefront, missile flight, impact).
+   */
+  public updateEngagementEffects(ctx: EngagementEffectContext): void {
+    this.engagementEffectManager.update(ctx);
+  }
+
+  /**
+   * Updates rotating 3D radar dish and translucent ground sweep beam.
+   */
+  public updateRadarSweep(simMs: number): void {
+    this.radarSweep3d.update(simMs);
   }
 
   /**
@@ -673,6 +737,9 @@ export class Scene3D {
     this.losVisualizer3d.dispose();
     this.clusterOverlay3d.dispose();
     this.trainingAid3d.dispose();
+    this.radarSweep3d.dispose();
+    this.engagementEffectManager.dispose();
+    this.targetModelFactory.dispose();
 
     // 2. Dispose track resources
     for (const record of this.trackMeshMap.values()) {

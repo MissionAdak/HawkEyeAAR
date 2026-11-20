@@ -11,6 +11,7 @@ import { CrossSectionPanel } from './CrossSectionPanel';
 import { MissionBriefing } from './MissionBriefing';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EnvironmentInspector } from './EnvironmentInspector';
+import { OperatorFeedbackToast } from './OperatorFeedbackToast';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import type { SensorMode, TrackEntity } from '@/sim/types';
@@ -496,6 +497,8 @@ export const Console: React.FC = () => {
           chaosList: engineInstance.spec?.chaos,
         }));
 
+        r3d.setEventsProvider(() => engineInstance.events);
+
         r3d.setTrackProvider(() => ({
           tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
           selectedTrackNo: engineInstance.selectedTrackNo,
@@ -629,6 +632,8 @@ export const Console: React.FC = () => {
           simMs: engineInstance.tickIndex * 50,
           chaosList: engineInstance.spec?.chaos,
         }));
+
+        r3d.setEventsProvider(() => engineInstance.events);
 
         r3d.setTrackProvider(() => ({
           tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
@@ -1046,6 +1051,9 @@ export const Console: React.FC = () => {
         onConfirm={handleConfirmVr}
         onCancel={() => setIsVrModalOpen(false)}
       />
+
+      {/* 12. Intelligent Operator Tactical Feedback HUD Toast */}
+      <OperatorFeedbackToast />
     </div>
   );
 };

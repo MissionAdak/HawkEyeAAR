@@ -107,6 +107,10 @@ export {
 } from './cameraController';
 
 export * from './environment';
+export * from './targets';
+export * from './effects';
+export { RadarSweep3D } from './radarSweep3d';
+export type { RadarSweep3DOptions } from './radarSweep3d';
 
 
 

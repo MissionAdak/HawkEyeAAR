@@ -184,6 +184,14 @@ export class EnvironmentManager {
     return this.descriptor;
   }
 
+  public isFogActive(): boolean {
+    return this.descriptor.weather === 'FOG';
+  }
+
+  public isNightTime(): boolean {
+    return this.descriptor.dayNight === 'NIGHT';
+  }
+
   /**
    * Updates dynamic weather simulation.
    */

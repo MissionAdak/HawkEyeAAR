@@ -477,3 +477,27 @@ The 3D environment adheres strictly to the existing dark C2 palette (`DESIGN.md`
 3. Live track markers never display ground-truth class, type, or unobserved true positions.
 4. Masked tracks have zero live direct line-of-sight visualizer; coasting tracks display the uncertainty sphere.
 5. Missing WebGL2 cleanly displays a disabled badge and preserves the active 2D Canvas session.
+
+### 11.5 3D Target Model Silhouettes & Visual Diversity
+
+Procedural low-poly tactical drone models built from shared primitives strictly adhering to C-UAS operational scope:
+- **FPV Attack (`HOSTILE_ATTACK`):** Canted forward camera/warhead snout, low-profile carbon X-frame, rotor guards, crimson accent.
+- **Recon Quad (`HOSTILE_ISR`):** Wide motor arm span, underslung optical gimbal turret, high-contrast amber/crimson trim.
+- **Swarm Element (`SWARM_ELEMENT`):** Compact lightweight square frame, high-RPM rotor discs, tight cluster silhouette.
+- **Loitering Munition:** Canted delta wing, rear pusher propeller, forward optical dome.
+- **Civilian Drone (`CIVIL_UAS`):** Streamlined consumer white fuselage, landing skids, green phosphor accents.
+- **Friendly UAV (`FRIENDLY`):** Dual-antenna transponder beacon, balanced quadrotor frame, cyan friend accents.
+- **Bird (`BIRD`):** Organic wing sweep and fuselage shape, neutral matte gray.
+- **Unclassified Contact (`UNKNOWN`):** Geometrical rhomboid beacon with pulsing amber accent.
+
+### 11.6 Operator Tactical Feedback Toast HUD
+
+Non-disruptive, tactical feedback toast anchored at bottom-center of the console view:
+- **Style:** Chamfered tactical dark border (`border-carbon-800`), translucent carbon background (`bg-carbon-950/95`).
+- **Severity Tokens:**
+  - `ERROR`: Crimson border (`border-threat`), release hard blocks.
+  - `WARNING`: Amber border (`border-amber`), soft ROE warnings and ineffective engagements.
+  - `SUCCESS`: Phosphor green border (`border-phosphor`), confirmed neutralization.
+  - `INFO`: Cyan border (`border-friend`), tactical system notices.
+- **Telemetry Display:** Displays actual vs required values (e.g. `ACTUAL: 45% | REQUIRED: >= 60%`).
+- **Dismissal & Throttling:** Auto-expires after 5 seconds or via manual `[X]` dismiss button. Suppresses repeated identical block messages within 1.5 seconds.
