@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import {
   resolveTargetPresentation,
   type SensorObservationContext,
@@ -408,6 +409,9 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       const palette = factory.getPaletteForCategory('OBSERVED_MULTIROTOR');
       expect(palette.accent).toBeDefined();
       expect(palette.rotors).toBeDefined();
+      const accentMat = palette.accent as THREE.MeshBasicMaterial;
+      expect(accentMat.color.getHex()).toBe(0xffaa00);
+      expect(accentMat.color.getHex()).not.toBe(0xff0033);
       factory.dispose();
     });
   });

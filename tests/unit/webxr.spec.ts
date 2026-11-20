@@ -354,67 +354,52 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
   });
 
   describe('Truth Gating, EVAL Aids Lock & 2D/3D/VR Parity', () => {
+    function withRecordedPanel(mode: 'EVAL' | 'TRAIN', fn: (panel: WebXRPanel, drawnTexts: string[]) => void): void {
+      const spec: ScenarioSpec = {
+        ...(demo1Json as unknown as ScenarioSpec),
+        mode,
+      };
+      engineInstance.load(spec);
+
+      const drawnTexts: string[] = [];
+      const origCreateElement = document.createElement.bind(document);
+      let panel: WebXRPanel | null = null;
+      try {
+        document.createElement = ((_tagName: string) => {
+          const c = createMockCanvas();
+          const ctx = c.getContext('2d') as unknown as { fillText: (text: string, x: number, y: number) => void };
+          const origFill = ctx.fillText.bind(ctx);
+          ctx.fillText = (text: string, x: number, y: number) => {
+            drawnTexts.push(text);
+            return origFill(text, x, y);
+          };
+          return c;
+        }) as unknown as typeof document.createElement;
+
+        panel = new WebXRPanel();
+        panel.update();
+        fn(panel, drawnTexts);
+      } finally {
+        document.createElement = origCreateElement;
+        panel?.dispose();
+      }
+    }
+
     it('locks decision aids in EVAL mode on in-VR operator panel', () => {
       // 1. EVAL mode: verify decision-aid lockout through the panel's actual drawing path
-      const evalSpec: ScenarioSpec = {
-        ...(demo1Json as unknown as ScenarioSpec),
-        mode: 'EVAL',
-      };
-      engineInstance.load(evalSpec);
-
-      const drawnTextsEval: string[] = [];
-      const origCreateElement = document.createElement.bind(document);
-      document.createElement = ((_tagName: string) => {
-        const c = createMockCanvas();
-        const ctx = c.getContext('2d') as unknown as { fillText: (text: string, x: number, y: number) => void };
-        const origFill = ctx.fillText.bind(ctx);
-        ctx.fillText = (text: string, x: number, y: number) => {
-          drawnTextsEval.push(text);
-          return origFill(text, x, y);
-        };
-        return c;
-      }) as unknown as typeof document.createElement;
-
-      const evalPanel = new WebXRPanel();
-      evalPanel.update();
-
-      // Inspect panel mesh geometry & properties
-      expect(evalPanel.mesh).toBeDefined();
-      expect(evalPanel.mesh.geometry).toBeDefined();
-      expect(evalPanel.mesh.position.z).toBeCloseTo(-0.65, 2);
-
-      // Verify that EVAL locks decision aids via drawing output
-      expect(drawnTextsEval.some((t) => t.includes('[DECISION AIDS LOCKED IN EVAL MODE]'))).toBe(true);
-      expect(drawnTextsEval.some((t) => t.includes('TRAINING MODE'))).toBe(false);
-      evalPanel.dispose();
+      withRecordedPanel('EVAL', (evalPanel, drawnTextsEval) => {
+        expect(evalPanel.mesh).toBeDefined();
+        expect(evalPanel.mesh.geometry).toBeDefined();
+        expect(evalPanel.mesh.position.z).toBeCloseTo(-0.65, 2);
+        expect(drawnTextsEval.some((t) => t.includes('[DECISION AIDS LOCKED IN EVAL MODE]'))).toBe(true);
+        expect(drawnTextsEval.some((t) => t.includes('TRAINING MODE'))).toBe(false);
+      });
 
       // 2. TRAIN control case confirming decision aid is available
-      const trainSpec: ScenarioSpec = {
-        ...(demo1Json as unknown as ScenarioSpec),
-        mode: 'TRAIN',
-      };
-      engineInstance.load(trainSpec);
-
-      const drawnTextsTrain: string[] = [];
-      document.createElement = ((_tagName: string) => {
-        const c = createMockCanvas();
-        const ctx = c.getContext('2d') as unknown as { fillText: (text: string, x: number, y: number) => void };
-        const origFill = ctx.fillText.bind(ctx);
-        ctx.fillText = (text: string, x: number, y: number) => {
-          drawnTextsTrain.push(text);
-          return origFill(text, x, y);
-        };
-        return c;
-      }) as unknown as typeof document.createElement;
-
-      const trainPanel = new WebXRPanel();
-      trainPanel.update();
-
-      expect(drawnTextsTrain.some((t) => t.includes('TRAINING MODE'))).toBe(true);
-      expect(drawnTextsTrain.some((t) => t.includes('[DECISION AIDS LOCKED IN EVAL MODE]'))).toBe(false);
-      trainPanel.dispose();
-
-      document.createElement = origCreateElement;
+      withRecordedPanel('TRAIN', (_trainPanel, drawnTextsTrain) => {
+        expect(drawnTextsTrain.some((t) => t.includes('TRAINING MODE'))).toBe(true);
+        expect(drawnTextsTrain.some((t) => t.includes('[DECISION AIDS LOCKED IN EVAL MODE]'))).toBe(false);
+      });
     });
 
     it('preserves exact event and score parity regardless of presentation mode', () => {

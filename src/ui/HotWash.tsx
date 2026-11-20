@@ -56,6 +56,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   };
 
   const [inspectingEngagement, setInspectingEngagement] = useState<AarEngagementInspectionData | null>(null);
+  const [activeTab, setActiveTab] = useState<'SCORECARD' | 'REPLAY'>('SCORECARD');
 
   // Find all engaged tracks to show Oracle decision comparison
   const engagedTracks = engineInstance.curr.filter((e) => e.engagements > 0);
@@ -95,9 +96,37 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
           </button>
         </div>
 
+        {/* Modal Navigation Tabs */}
+        <div className="px-4 py-1.5 border-b border-line bg-carbon-800/60 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('SCORECARD')}
+            className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+              activeTab === 'SCORECARD'
+                ? 'bg-phosphor text-carbon-950 border-phosphor'
+                : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+            }`}
+          >
+            SCORECARD
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('REPLAY')}
+            className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+              activeTab === 'REPLAY'
+                ? 'bg-phosphor text-carbon-950 border-phosphor'
+                : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+            }`}
+          >
+            REPLAY
+          </button>
+        </div>
+
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-          {/* 1. Scorecard Hero Strip */}
+          {activeTab === 'SCORECARD' ? (
+            <>
+              {/* 1. Scorecard Hero Strip */}
           <div className="p-4 border border-line bg-carbon-950 flex items-center justify-between">
             <div className="flex items-center gap-6">
               <div>
@@ -308,13 +337,6 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </div>
           </div>
 
-          {/* Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */}
-          <AarReplaySection
-            events={engineInstance.events}
-            spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
-            zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
-          />
-
           {/* 4. Trainee vs Oracle Decision & Cost Regret */}
           <div>
             <div className="text-[11px] font-display font-semibold text-text-main mb-2 tracking-wider">
@@ -402,7 +424,16 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
               )}
             </div>
           </div>
-        </div>
+        </>
+      ) : (
+        /* Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */
+        <AarReplaySection
+          events={engineInstance.events}
+          spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
+          zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
+        />
+      )}
+    </div>
 
         {/* Modal Footer */}
         <div className="h-[46px] px-4 border-t border-line bg-carbon-800/80 flex items-center justify-between">

@@ -40,6 +40,21 @@ export interface DrishtiTestBridge {
     leakedProperties: string[];
   };
   getOperatorTracks: () => import('@/sim/trackerTypes').OperatorTrackView[];
+  getRecordedSnapshots: () => Array<{
+    tMs: number;
+    entities: Array<{
+      id: string;
+      tNo: string | null;
+      x: number;
+      y: number;
+      z: number;
+      estX?: number;
+      estY?: number;
+      estZ?: number;
+      estUncertM?: number;
+      isCoasting?: boolean;
+    }>;
+  }>;
   setSensorHealthOverride: (health: Record<string, unknown> | null) => boolean;
   setProducerHealthOverride: (health: Record<string, unknown> | null | undefined) => boolean;
   setSimTimeOverride: (timeOverride: number | 'MISSING' | 'INVALID' | null) => boolean;
@@ -443,6 +458,26 @@ export function installDrishtiTestBridge(
 
     getOperatorTracks(): import('@/sim/trackerTypes').OperatorTrackView[] {
       return engine.getOperatorTracks();
+    },
+
+    getRecordedSnapshots() {
+      return engine.events
+        .filter((e) => e.type === 'SNAPSHOT' && e.payload?.entities)
+        .map((e) => ({
+          tMs: e.tMs,
+          entities: (e.payload as { entities: Array<{
+            id: string;
+            tNo: string | null;
+            x: number;
+            y: number;
+            z: number;
+            estX?: number;
+            estY?: number;
+            estZ?: number;
+            estUncertM?: number;
+            isCoasting?: boolean;
+          }> }).entities,
+        }));
     },
   };
 

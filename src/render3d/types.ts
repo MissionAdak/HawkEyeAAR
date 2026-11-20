@@ -1,7 +1,22 @@
 import type { TrackClass, F2T2EAStep, ZoneSpec } from '@/sim/types';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
+import {
+  VALID_SENSOR_HEALTH_STATES,
+  VALID_TARGET_DISPLAY_MODES,
+  VALID_OPTICAL_RESOLUTION_LEVELS,
+  VALID_OPTICAL_VISIBILITY_STATES,
+  VALID_OBSERVED_AIRFRAME_SIGNATURES,
+} from './targets/targetObservation';
 
-export type TargetDisplayMode = 'AUTO' | 'RADAR' | 'AIRFRAME';
+export {
+  VALID_SENSOR_HEALTH_STATES,
+  VALID_TARGET_DISPLAY_MODES,
+  VALID_OPTICAL_RESOLUTION_LEVELS,
+  VALID_OPTICAL_VISIBILITY_STATES,
+  VALID_OBSERVED_AIRFRAME_SIGNATURES,
+};
+
+export type TargetDisplayMode = (typeof VALID_TARGET_DISPLAY_MODES)[number];
 
 /**
  * Legitimate physical appearance signatures observable by optical/EO sensors.
@@ -10,25 +25,12 @@ export type TargetDisplayMode = 'AUTO' | 'RADAR' | 'AIRFRAME';
  * These are physical airframe geometry signatures, NOT tactical threat classes.
  * An airframe shape (e.g. MULTIROTOR_COMPACT) does NOT prove hostile intent.
  */
-export type ObservedAirframeSignature =
-  | 'MULTIROTOR_COMPACT'
-  | 'MULTIROTOR_WITH_CAMERA_POD'
-  | 'MULTIROTOR_STANDARD'
-  | 'FIXED_WING_DELTA'
-  | 'BIRD_LIKE'
-  | 'UNRESOLVED_AIRFRAME';
+export type ObservedAirframeSignature = (typeof VALID_OBSERVED_AIRFRAME_SIGNATURES)[number];
 
-export type SensorHealthState = 'OK' | 'DEG' | 'OUT';
+export type SensorHealthState = (typeof VALID_SENSOR_HEALTH_STATES)[number];
 
-export type OpticalResolutionLevel = 'FULL' | 'DEGRADED' | 'UNRESOLVED';
-export type OpticalVisibilityState =
-  | 'CLEAR'
-  | 'DEGRADED'
-  | 'DEGRADED_FOG'
-  | 'DEGRADED_RAIN'
-  | 'DEGRADED_NIGHT_THERMAL'
-  | 'MASKED'
-  | 'OUT_OF_RANGE';
+export type OpticalResolutionLevel = (typeof VALID_OPTICAL_RESOLUTION_LEVELS)[number];
+export type OpticalVisibilityState = (typeof VALID_OPTICAL_VISIBILITY_STATES)[number];
 
 /**
  * Approved Sensor Observation Output.

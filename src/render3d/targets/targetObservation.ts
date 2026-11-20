@@ -1,13 +1,15 @@
-import type { SafeTrackView, TargetDisplayMode, ObservedAirframeSignature } from '../types';
+import type { SafeTrackView, ApprovedSensorObservation } from '../types';
 import type { SensorMode, DroneType } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
 import type { WeatherType } from '../environment/types';
-import type { ApprovedSensorObservation } from '../types';
 
 export const VALID_SENSOR_HEALTH_STATES = ['OK', 'DEG', 'OUT'] as const;
 export type SensorHealthState = (typeof VALID_SENSOR_HEALTH_STATES)[number];
 
 export const VALID_SENSOR_MODES = ['RADAR', 'EOIR', 'RF'] as const;
+
+export const VALID_TARGET_DISPLAY_MODES = ['AUTO', 'RADAR', 'AIRFRAME'] as const;
+export type TargetDisplayMode = (typeof VALID_TARGET_DISPLAY_MODES)[number];
 
 export const VALID_OPTICAL_RESOLUTION_LEVELS = ['FULL', 'DEGRADED', 'UNRESOLVED'] as const;
 export type OpticalResolutionLevel = (typeof VALID_OPTICAL_RESOLUTION_LEVELS)[number];
@@ -31,6 +33,7 @@ export const VALID_OBSERVED_AIRFRAME_SIGNATURES = [
   'BIRD_LIKE',
   'UNRESOLVED_AIRFRAME',
 ] as const;
+export type ObservedAirframeSignature = (typeof VALID_OBSERVED_AIRFRAME_SIGNATURES)[number];
 
 /**
  * Authoritative Deterministic Simulation Timestamp Tolerances at 20 Hz (50 ms / tick):

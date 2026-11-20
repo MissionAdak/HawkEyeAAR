@@ -121,6 +121,14 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     });
     expect(targetNo).toBeDefined();
 
+    // Record selected track's initial uncertainty
+    const initialUncertainty = await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      const opTrack = win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+      return opTrack?.uncertaintyM;
+    }, targetNo);
+    expect(initialUncertainty).toBeDefined();
+
     // Degrade/cut radar to OUT via test bridge
     const cutSuccess = await page.evaluate(() => {
       const win = window as unknown as WindowWithDrishti;
@@ -128,8 +136,23 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     });
     expect(cutSuccess).toBe(true);
 
-    // Wait for simulation time to advance past sweep timeout (2.5s)
-    await page.waitForTimeout(2600);
+    // Poll simulation state until sweep timeout has elapsed and coasting / uncertainty growth occur
+    await expect.poll(async () => {
+      return await page.evaluate((tNo) => {
+        const win = window as unknown as WindowWithDrishti;
+        const opTrack = win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+        if (!opTrack) return false;
+        return opTrack.isCoasting;
+      }, targetNo);
+    }, { timeout: 10000, intervals: [200, 500] }).toBe(true);
+
+    const coastingTrack = await page.evaluate((tNo) => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getOperatorTracks().find((t) => t.trackNo === tNo);
+    }, targetNo);
+    expect(coastingTrack).toBeDefined();
+    expect(coastingTrack?.isCoasting).toBe(true);
+    expect(coastingTrack!.uncertaintyM).toBeGreaterThan(initialUncertainty!);
 
     // Verify presentation state reports safe radar symbol or coasting
     const state = await page.evaluate((tNo) => {
@@ -234,13 +257,38 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     const aarModal = page.locator('[data-testid="aar-modal"], div.fixed.inset-0').first();
     await expect(aarModal).toBeVisible({ timeout: 5000 });
 
-    // Click Replay tab if present
-    const replayTab = page.getByRole('button', { name: /REPLAY/i });
-    if (await replayTab.isVisible()) {
-      await replayTab.click();
-      await page.waitForTimeout(500);
-    }
+    // Require REPLAY tab and switch to it
+    const replayTab = aarModal.getByRole('button', { name: /^REPLAY$/i });
+    await expect(replayTab).toBeVisible({ timeout: 5000 });
+    await replayTab.click();
 
+    // Verify REPLAY section is active
+    const replayHeading = aarModal.getByText(/SYNCHRONIZED AAR TIMELINE REPLAY/i);
+    await expect(replayHeading).toBeVisible({ timeout: 5000 });
+
+    // Assert that a recorded sample includes both truth and estimated coordinates
+    const snapshotSamples = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getRecordedSnapshots() ?? [];
+    });
+    expect(snapshotSamples.length).toBeGreaterThan(0);
+
+    // Find a snapshot sample containing an active track with both truth and estimated coordinates
+    const sampleWithEst = snapshotSamples
+      .flatMap((s) => s.entities)
+      .find((e) => e.tNo && typeof e.x === 'number' && typeof e.estX === 'number');
+
+    expect(sampleWithEst).toBeDefined();
+    expect(typeof sampleWithEst?.x).toBe('number');
+    expect(typeof sampleWithEst?.y).toBe('number');
+    expect(typeof sampleWithEst?.z).toBe('number');
+    expect(typeof sampleWithEst?.estX).toBe('number');
+    expect(typeof sampleWithEst?.estY).toBe('number');
+    expect(typeof sampleWithEst?.estZ).toBe('number');
+    expect(typeof sampleWithEst?.estUncertM).toBe('number');
+    expect(sampleWithEst?.estUncertM).toBeGreaterThanOrEqual(0);
+
+    // Keep screenshot as an additional artifact after the assertions
     await saveShot(page, 'task18_06_aar_truth_vs_estimate_replay.png');
   });
 
