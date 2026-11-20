@@ -39,6 +39,7 @@ export interface DrishtiTestBridge {
     leakedProperties: string[];
   };
   setSensorHealthOverride: (health: Record<string, unknown> | null) => boolean;
+  setSimTimeOverride: (timeOverride: number | 'MISSING' | 'INVALID' | null) => boolean;
   injectObservationOverride: (trackNo: string, obs: Partial<ApprovedSensorObservation> | null) => boolean;
   clearOverrides: () => void;
 }
@@ -66,6 +67,7 @@ export function installDrishtiTestBridge(
   }
 
   let sensorHealthOverride: Record<string, unknown> | null = null;
+  let simTimeOverride: number | 'MISSING' | 'INVALID' | null = null;
   const observationOverrides = new Map<string, Partial<ApprovedSensorObservation> | null>();
 
   const bridge: DrishtiTestBridge = {
@@ -192,6 +194,11 @@ export function installDrishtiTestBridge(
       return true;
     },
 
+    setSimTimeOverride(timeOverride: number | 'MISSING' | 'INVALID' | null): boolean {
+      simTimeOverride = timeOverride;
+      return true;
+    },
+
     injectObservationOverride(trackNo: string, obs: Partial<ApprovedSensorObservation> | null): boolean {
       observationOverrides.set(trackNo, obs);
       return true;
@@ -199,6 +206,7 @@ export function installDrishtiTestBridge(
 
     clearOverrides(): void {
       sensorHealthOverride = null;
+      simTimeOverride = null;
       observationOverrides.clear();
     },
 
@@ -231,20 +239,44 @@ export function installDrishtiTestBridge(
         return t;
       });
 
-      // Apply sensorHealthOverride if present
-      if (sensorHealthOverride !== null) {
-        const originalProvider = (r3d as unknown as { getSensorHealth?: () => unknown }).getSensorHealth;
-        (r3d as unknown as { setSensorHealthProvider: (fn: () => unknown) => void }).setSensorHealthProvider(
-          () => sensorHealthOverride
-        );
-        r3d.update(patchedTracks, null);
-        if (originalProvider) {
+      const originalHealthProvider = (r3d as unknown as { getSensorHealth?: () => unknown }).getSensorHealth;
+      const originalSimTimeProvider = (r3d as unknown as { getSimTime?: () => unknown }).getSimTime;
+
+      try {
+        // Apply sensorHealthOverride if present
+        if (sensorHealthOverride !== null) {
           (r3d as unknown as { setSensorHealthProvider: (fn: () => unknown) => void }).setSensorHealthProvider(
-            originalProvider
+            () => sensorHealthOverride
           );
         }
-      } else {
+
+        // Apply simTimeOverride if present
+        if (simTimeOverride !== null) {
+          if (simTimeOverride === 'MISSING') {
+            (r3d as unknown as { setSimTimeProvider: (fn?: unknown) => void }).setSimTimeProvider(undefined);
+          } else if (simTimeOverride === 'INVALID') {
+            (r3d as unknown as { setSimTimeProvider: (fn: () => unknown) => void }).setSimTimeProvider(
+              () => ({ simMs: NaN })
+            );
+          } else if (typeof simTimeOverride === 'number') {
+            (r3d as unknown as { setSimTimeProvider: (fn: () => unknown) => void }).setSimTimeProvider(
+              () => ({ simMs: simTimeOverride })
+            );
+          }
+        }
+
         r3d.update(patchedTracks, null);
+      } finally {
+        if (sensorHealthOverride !== null && originalHealthProvider) {
+          (r3d as unknown as { setSensorHealthProvider: (fn: () => unknown) => void }).setSensorHealthProvider(
+            originalHealthProvider
+          );
+        }
+        if (simTimeOverride !== null && originalSimTimeProvider) {
+          (r3d as unknown as { setSimTimeProvider: (fn?: unknown) => void }).setSimTimeProvider(
+            originalSimTimeProvider
+          );
+        }
       }
 
       const scene3d = r3d.getScene3D();

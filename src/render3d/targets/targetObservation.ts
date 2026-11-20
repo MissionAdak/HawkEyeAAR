@@ -51,8 +51,8 @@ export const MAX_OPTICAL_RANGE_M = 3800;
 export interface SensorObservationContext {
   activeSensor: SensorMode;
   displayMode: TargetDisplayMode;
+  currentSimMs: number;
   sensorHealth?: Record<SensorMode, SensorHealthState>;
-  currentSimMs?: number;
   weather?: WeatherType;
   isNight?: boolean;
   mode?: 'TRAIN' | 'EVAL' | 'DEMO';
@@ -163,8 +163,28 @@ export function validateObservationProvenance(
     }
   }
 
-  // 3. Validate timestampMs
-  if (typeof o.timestampMs !== 'number' || !Number.isFinite(o.timestampMs)) {
+  // 3. Authoritative simulation timestamp check (Task 17.5.2)
+  if (
+    context.currentSimMs === undefined ||
+    context.currentSimMs === null ||
+    typeof context.currentSimMs !== 'number' ||
+    !Number.isFinite(context.currentSimMs) ||
+    context.currentSimMs < 0
+  ) {
+    return {
+      isValid: false,
+      error: `Simulation timestamp context missing or invalid: ${String(context.currentSimMs)}`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // Validate observation timestampMs
+  if (
+    o.timestampMs === undefined ||
+    o.timestampMs === null ||
+    typeof o.timestampMs !== 'number' ||
+    !Number.isFinite(o.timestampMs)
+  ) {
     return {
       isValid: false,
       error: `Invalid observation timestampMs: ${String(o.timestampMs)} (must be finite number)`,
@@ -172,29 +192,25 @@ export function validateObservationProvenance(
     };
   }
 
-  // Authoritative simulation timestamp check
-  if (context.currentSimMs !== undefined) {
-    if (!Number.isFinite(context.currentSimMs)) {
-      return {
-        isValid: false,
-        error: `Invalid context currentSimMs: ${String(context.currentSimMs)}`,
-        fallbackState: 'OUT_OF_RANGE',
-      };
-    }
-    if (o.timestampMs > context.currentSimMs + MAX_OBSERVATION_FUTURE_TOLERANCE_MS) {
-      return {
-        isValid: false,
-        error: `Observation timestamp ${o.timestampMs}ms is in the future relative to sim ${context.currentSimMs}ms`,
-        fallbackState: 'OUT_OF_RANGE',
-      };
-    }
-    if (o.timestampMs < context.currentSimMs - MAX_OBSERVATION_AGE_MS) {
-      return {
-        isValid: false,
-        error: `Observation timestamp ${o.timestampMs}ms is stale relative to sim ${context.currentSimMs}ms`,
-        fallbackState: 'OUT_OF_RANGE',
-      };
-    }
+  // Exact boundary semantics (Task 17.5.2 Part C):
+  // observation timestamp <= currentSimMs + 50 -> ACCEPT
+  // observation timestamp > currentSimMs + 50  -> REJECT
+  if (o.timestampMs > context.currentSimMs + MAX_OBSERVATION_FUTURE_TOLERANCE_MS) {
+    return {
+      isValid: false,
+      error: `Observation timestamp ${o.timestampMs}ms exceeds future tolerance (+${MAX_OBSERVATION_FUTURE_TOLERANCE_MS}ms) relative to sim ${context.currentSimMs}ms`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  // observation timestamp >= currentSimMs - 1000 -> ACCEPT
+  // observation timestamp < currentSimMs - 1000  -> REJECT
+  if (o.timestampMs < context.currentSimMs - MAX_OBSERVATION_AGE_MS) {
+    return {
+      isValid: false,
+      error: `Observation timestamp ${o.timestampMs}ms is stale (max age ${MAX_OBSERVATION_AGE_MS}ms) relative to sim ${context.currentSimMs}ms`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
   }
 
   // 4. Validate confidence
@@ -436,6 +452,23 @@ export function resolveTargetPresentation(
     displayMode = 'AUTO',
     mode = 'TRAIN',
   } = context;
+
+  // Validate authoritative simulation clock strictly (Fail-Closed: Task 17.5.2 Part B)
+  if (
+    context.currentSimMs === undefined ||
+    context.currentSimMs === null ||
+    typeof context.currentSimMs !== 'number' ||
+    !Number.isFinite(context.currentSimMs) ||
+    context.currentSimMs < 0
+  ) {
+    return {
+      presentationCategory: 'RADAR_SYMBOL',
+      isVisuallyResolved: false,
+      observationState: 'OUT_OF_RANGE',
+      opticalConfidence: 0,
+      reason: `Simulation clock missing or invalid: ${String(context.currentSimMs)}`,
+    };
+  }
 
   // Validate context sensorHealth strictly (Fail-Closed: Task 17.5.1 Part B1)
   const healthValidation = validateSensorHealthRecord(context.sensorHealth);

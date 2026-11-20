@@ -86,7 +86,7 @@ export class Renderer3D {
     this.getEffectorOptions = fn;
   }
 
-  public setSimTimeProvider(fn: () => { simMs: number; chaosList?: ChaosSpec[] }): void {
+  public setSimTimeProvider(fn?: () => { simMs: number; chaosList?: ChaosSpec[] }): void {
     this.getSimTime = fn;
   }
 
@@ -469,7 +469,13 @@ export class Renderer3D {
     this.selectedTrackNo = selectedTrackNo;
     const health = this.getSensorHealth ? this.getSensorHealth() : undefined;
     const simTimeData = this.getSimTime ? this.getSimTime() : undefined;
-    const currentSimMs = simTimeData?.simMs ?? 0;
+    const rawSimMs = simTimeData?.simMs;
+    // Task 17.5.2: Strictly require authoritative simulation timestamp.
+    // If getSimTime is missing or returns invalid/non-finite/negative timestamp,
+    // pass rawSimMs (e.g. undefined/NaN) so observation validation fails closed to RADAR_SYMBOL.
+    const currentSimMs = (typeof rawSimMs === 'number' && Number.isFinite(rawSimMs) && rawSimMs >= 0)
+      ? rawSimMs
+      : (rawSimMs as unknown as number);
     const observationContext: SensorObservationContext = {
       activeSensor: this.activeSensor,
       displayMode: this.targetDisplayMode,

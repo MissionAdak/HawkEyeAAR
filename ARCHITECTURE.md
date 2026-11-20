@@ -953,3 +953,22 @@ To uphold the operator-facing information boundary, the production deployment (`
    - Enforces field consistency: EOIR `OUT` cannot produce `FULL` or `DEGRADED`; `sensorAvailability === false` cannot produce `FULL` or `CLEAR`; `resolutionLevel` and `resolution` must match; `signature` and `observedSignature` must match; `MASKED` or `OUT_OF_RANGE` cannot produce `FULL` resolution.
    - All 7 declared visibility states (`CLEAR`, `DEGRADED`, `DEGRADED_FOG`, `DEGRADED_RAIN`, `DEGRADED_NIGHT_THERMAL`, `MASKED`, `OUT_OF_RANGE`) are accepted and handled fail-closed.
 
+### 8.12 Mandatory Simulation Clock & Timestamp Boundary Hardening (Task 17.5.2)
+
+1. **Mandatory Simulation Time Contract (`SensorObservationContext.currentSimMs: number`):**
+   - Authoritative simulation timestamp `currentSimMs` is strictly mandatory across all observation resolution pathways.
+   - Missing, null, negative (< 0), NaN, or infinite simulation timestamps immediately fail closed to `RADAR_SYMBOL`.
+   - Never reads wall-clock `Date.now()` or `performance.now()` in observation validation; strictly enforces deterministic 20 Hz simulation time.
+2. **Renderer Fallback Elimination:**
+   - `Renderer3D.update()` eliminates the silent fallback `simTimeData?.simMs ?? 0`.
+   - When the simulation time provider is unavailable or returns an invalid timestamp, raw values propagate to the observation resolver, failing closed to `RADAR_SYMBOL` with an explicit diagnostic reason without crashing the simulation or 3D canvas.
+3. **Exact Timestamp Boundary Enforcement:**
+   - Permitted future tolerance boundary:
+     - `obs.timestampMs <= currentSimMs + 50 ms`: ACCEPT (1 simulation tick lookahead for sub-tick frame interpolation).
+     - `obs.timestampMs > currentSimMs + 50 ms`: REJECT fail-closed to `RADAR_SYMBOL`.
+   - Permitted staleness boundary:
+     - `obs.timestampMs >= currentSimMs - 1000 ms`: ACCEPT (20 simulation ticks / 1.0 second freshness window).
+     - `obs.timestampMs < currentSimMs - 1000 ms`: REJECT fail-closed to `RADAR_SYMBOL`.
+   - Observations with missing, NaN, or infinite timestamps fail closed immediately.
+
+

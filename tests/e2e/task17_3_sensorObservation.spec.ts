@@ -578,4 +578,167 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
 
     await saveShot(page, 'task17_5_03_fail_closed_provenance.png');
   });
+
+  test('Test L — Mandatory Simulation Clock & Timestamp Boundary Enforcement (Task 17.5.2)', async ({ page }) => {
+    await setupSession(page);
+
+    // Switch to EO/IR
+    const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
+    await eoirBtn.click();
+    await page.waitForTimeout(1000);
+
+    const tracks = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getTrackList();
+    });
+    expect(tracks.length).toBeGreaterThan(0);
+    const targetTrack = tracks[0].trackNo;
+
+    // Position target within clear optical reach (< 1000m)
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.positionTrack(trk, { x: 800, y: 800, z: 100 });
+    }, targetTrack);
+    await page.waitForTimeout(1000);
+
+    // 1. Normal valid clock allows optical model
+    const baseState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(baseState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
+
+    // 2. setSimTimeOverride('MISSING') forces RADAR_SYMBOL
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSimTimeOverride('MISSING');
+    });
+    const missingClockState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(missingClockState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // 3. setSimTimeOverride('INVALID') forces RADAR_SYMBOL
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSimTimeOverride('INVALID');
+    });
+    const invalidClockState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(invalidClockState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // 4. NaN observation timestamp forces RADAR_SYMBOL
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSimTimeOverride(null); // clear sim time override
+    });
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, { timestampMs: NaN });
+    }, targetTrack);
+    const nanTimeState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(nanTimeState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // Set fixed simulation time for exact boundary testing (currentSimMs = 5000)
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.setSimTimeOverride(5000);
+    });
+
+    // 5. Observation exactly 50 ms in future (5050 ms) is accepted
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, {
+        timestampMs: 5050,
+        signature: 'MULTIROTOR_COMPACT',
+        observedSignature: 'MULTIROTOR_COMPACT',
+        resolutionLevel: 'FULL',
+        resolution: 'FULL',
+        visibilityState: 'CLEAR',
+        confidence: 0.95,
+      });
+    }, targetTrack);
+    const futureExactState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(futureExactState.tracks[0].currentCategory).toBe('OBSERVED_MULTIROTOR');
+
+    // 6. Observation 51 ms in future (5051 ms) is rejected to RADAR_SYMBOL
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, {
+        timestampMs: 5051,
+        signature: 'MULTIROTOR_COMPACT',
+        observedSignature: 'MULTIROTOR_COMPACT',
+        resolutionLevel: 'FULL',
+        resolution: 'FULL',
+        visibilityState: 'CLEAR',
+        confidence: 0.95,
+      });
+    }, targetTrack);
+    const futureBeyondState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(futureBeyondState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // 7. Observation exactly 1000 ms old (4000 ms) is accepted
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, {
+        timestampMs: 4000,
+        signature: 'MULTIROTOR_COMPACT',
+        observedSignature: 'MULTIROTOR_COMPACT',
+        resolutionLevel: 'FULL',
+        resolution: 'FULL',
+        visibilityState: 'CLEAR',
+        confidence: 0.95,
+      });
+    }, targetTrack);
+    const ageExactState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(ageExactState.tracks[0].currentCategory).toBe('OBSERVED_MULTIROTOR');
+
+    // 8. Observation 1001 ms old (3999 ms) is rejected to RADAR_SYMBOL
+    await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.injectObservationOverride(trk, {
+        timestampMs: 3999,
+        signature: 'MULTIROTOR_COMPACT',
+        observedSignature: 'MULTIROTOR_COMPACT',
+        resolutionLevel: 'FULL',
+        resolution: 'FULL',
+        visibilityState: 'CLEAR',
+        confidence: 0.95,
+      });
+    }, targetTrack);
+    const ageBeyondState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(ageBeyondState.tracks[0].currentCategory).toBe('RADAR_SYMBOL');
+
+    // 9. Clearing test overrides restores normal optical presentation
+    await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      w.__DRISHTI_TEST__!.clearOverrides();
+    });
+    await page.waitForTimeout(500);
+    const restoredState = await page.evaluate((trk) => {
+      const w = window as unknown as WindowWithDrishti;
+      return w.__DRISHTI_TEST__!.getPresentationState(trk);
+    }, targetTrack);
+    expect(restoredState.tracks[0].currentCategory).not.toBe('RADAR_SYMBOL');
+
+    await saveShot(page, 'task17_5_04_mandatory_simulation_clock.png');
+  });
 });

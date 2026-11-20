@@ -881,4 +881,220 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       }
     });
   });
+
+  describe('12. Mandatory Simulation Clock & Exact Timestamp Boundaries (Task 17.5.2)', () => {
+    it('1. missing currentSimMs is rejected fail-closed to RADAR_SYMBOL', () => {
+      const track = makeTrack({ sensorObservation: makeObservation({ timestampMs: 5000 }) });
+      const contextWithoutSimTime = {
+        activeSensor: 'EOIR' as const,
+        displayMode: 'AUTO' as const,
+        sensorHealth: { RADAR: 'OK' as const, EOIR: 'OK' as const, RF: 'OK' as const },
+      } as unknown as SensorObservationContext;
+      const result = resolveTargetPresentation(track, contextWithoutSimTime);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Simulation clock missing or invalid');
+    });
+
+    it('2. null currentSimMs is rejected fail-closed to RADAR_SYMBOL', () => {
+      const track = makeTrack({ sensorObservation: makeObservation({ timestampMs: 5000 }) });
+      const contextNullSimTime = {
+        ...baseContext,
+        currentSimMs: null as unknown as number,
+      };
+      const result = resolveTargetPresentation(track, contextNullSimTime);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Simulation clock missing or invalid');
+    });
+
+    it('3. NaN currentSimMs is rejected fail-closed to RADAR_SYMBOL', () => {
+      const track = makeTrack({ sensorObservation: makeObservation({ timestampMs: 5000 }) });
+      const contextNanSimTime = {
+        ...baseContext,
+        currentSimMs: NaN,
+      };
+      const result = resolveTargetPresentation(track, contextNanSimTime);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Simulation clock missing or invalid');
+    });
+
+    it('4. Infinity currentSimMs is rejected fail-closed to RADAR_SYMBOL', () => {
+      const track = makeTrack({ sensorObservation: makeObservation({ timestampMs: 5000 }) });
+      for (const inf of [Infinity, -Infinity]) {
+        const contextInfSimTime = {
+          ...baseContext,
+          currentSimMs: inf,
+        };
+        const result = resolveTargetPresentation(track, contextInfSimTime);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('Simulation clock missing or invalid');
+      }
+    });
+
+    it('5. negative currentSimMs is rejected fail-closed to RADAR_SYMBOL', () => {
+      const track = makeTrack({ sensorObservation: makeObservation({ timestampMs: -50 }) });
+      const contextNegSimTime = {
+        ...baseContext,
+        currentSimMs: -100,
+      };
+      const result = resolveTargetPresentation(track, contextNegSimTime);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Simulation clock missing or invalid');
+    });
+
+    it('6. valid currentSimMs = 5000 is accepted when observation is valid', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          signature: 'FIXED_WING_DELTA',
+          observedSignature: 'FIXED_WING_DELTA',
+          timestampMs: 5000,
+        }),
+      });
+      const contextValid = {
+        ...baseContext,
+        currentSimMs: 5000,
+      };
+      const result = resolveTargetPresentation(track, contextValid);
+      expect(result.presentationCategory).toBe('OBSERVED_FIXED_WING');
+      expect(result.isVisuallyResolved).toBe(true);
+      expect(result.observationState).toBe('CLEAR_OPTICAL');
+    });
+
+    it('7. exact future boundary: observation timestamp = currentSimMs + 50 is accepted', () => {
+      const currentSimMs = 5000;
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          signature: 'MULTIROTOR_COMPACT',
+          observedSignature: 'MULTIROTOR_COMPACT',
+          timestampMs: currentSimMs + 50, // exactly +50ms
+        }),
+      });
+      const context = { ...baseContext, currentSimMs };
+      const result = resolveTargetPresentation(track, context);
+      expect(result.presentationCategory).toBe('OBSERVED_MULTIROTOR');
+      expect(result.isVisuallyResolved).toBe(true);
+      expect(result.observationState).toBe('CLEAR_OPTICAL');
+    });
+
+    it('8. future beyond boundary: observation timestamp = currentSimMs + 51 is rejected to RADAR_SYMBOL', () => {
+      const currentSimMs = 5000;
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          signature: 'MULTIROTOR_COMPACT',
+          observedSignature: 'MULTIROTOR_COMPACT',
+          timestampMs: currentSimMs + 51, // +51ms (> 50ms)
+        }),
+      });
+      const context = { ...baseContext, currentSimMs };
+      const result = resolveTargetPresentation(track, context);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('exceeds future tolerance');
+    });
+
+    it('9. exact age boundary: observation timestamp = currentSimMs - 1000 is accepted', () => {
+      const currentSimMs = 5000;
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          signature: 'FIXED_WING_DELTA',
+          observedSignature: 'FIXED_WING_DELTA',
+          timestampMs: currentSimMs - 1000, // exactly -1000ms
+        }),
+      });
+      const context = { ...baseContext, currentSimMs };
+      const result = resolveTargetPresentation(track, context);
+      expect(result.presentationCategory).toBe('OBSERVED_FIXED_WING');
+      expect(result.isVisuallyResolved).toBe(true);
+      expect(result.observationState).toBe('CLEAR_OPTICAL');
+    });
+
+    it('10. stale beyond boundary: observation timestamp = currentSimMs - 1001 is rejected to RADAR_SYMBOL', () => {
+      const currentSimMs = 5000;
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          signature: 'FIXED_WING_DELTA',
+          observedSignature: 'FIXED_WING_DELTA',
+          timestampMs: currentSimMs - 1001, // -1001ms (< -1000ms)
+        }),
+      });
+      const context = { ...baseContext, currentSimMs };
+      const result = resolveTargetPresentation(track, context);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('is stale');
+    });
+
+    it('11. missing observation timestamp is rejected to RADAR_SYMBOL', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: undefined as unknown as number,
+        }),
+      });
+      const result = resolveTargetPresentation(track, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Invalid observation timestampMs');
+    });
+
+    it('12. NaN observation timestamp is rejected to RADAR_SYMBOL', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          timestampMs: NaN,
+        }),
+      });
+      const result = resolveTargetPresentation(track, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.isVisuallyResolved).toBe(false);
+      expect(result.reason).toContain('Invalid observation timestampMs');
+    });
+
+    it('13. infinite observation timestamp is rejected to RADAR_SYMBOL', () => {
+      for (const inf of [Infinity, -Infinity]) {
+        const track = makeTrack({
+          sensorObservation: makeObservation({
+            timestampMs: inf,
+          }),
+        });
+        const result = resolveTargetPresentation(track, baseContext);
+        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+        expect(result.isVisuallyResolved).toBe(false);
+        expect(result.reason).toContain('Invalid observation timestampMs');
+      }
+    });
+
+    it('14. missing or invalid simulation clock never resolves OBSERVED_MULTIROTOR, OBSERVED_FIXED_WING, or BIRD', () => {
+      const opticalSignatures = ['MULTIROTOR_COMPACT', 'FIXED_WING_DELTA', 'BIRD_LIKE'] as const;
+      const invalidSimTimes = [undefined, null, NaN, Infinity, -Infinity, -1, -500];
+
+      for (const sig of opticalSignatures) {
+        for (const simTime of invalidSimTimes) {
+          const track = makeTrack({
+            sensorObservation: makeObservation({
+              signature: sig,
+              observedSignature: sig,
+              timestampMs: 5000,
+            }),
+          });
+          const context = {
+            ...baseContext,
+            currentSimMs: simTime as unknown as number,
+          };
+          const presentation = resolveTargetPresentation(track, context);
+          expect(presentation.isVisuallyResolved).toBe(false);
+          expect(presentation.presentationCategory).toBe('RADAR_SYMBOL');
+          expect(['OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING', 'BIRD']).not.toContain(
+            presentation.presentationCategory
+          );
+
+          // Also verify resolveTargetModelCategory fail-closed
+          const modelCat = resolveTargetModelCategory(track, { context });
+          expect(modelCat).toBe('RADAR_SYMBOL');
+        }
+      }
+    });
+  });
 });

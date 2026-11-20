@@ -33,12 +33,13 @@ export function resolveTargetModelCategory(
     return resolveTargetPresentation(track, options.context).presentationCategory;
   }
 
-  // If track has approved sensorObservation, use default sensor-aware presentation
+  // If track has approved sensorObservation, use sensor-aware presentation with context
   if (track.sensorObservation) {
-    return resolveTargetPresentation(track, {
-      activeSensor: 'EOIR',
-      displayMode: 'AUTO',
-    }).presentationCategory;
+    if (options?.context) {
+      return resolveTargetPresentation(track, options.context).presentationCategory;
+    }
+    // Fail closed: cannot resolve optical presentation without authoritative simulation time context
+    return 'RADAR_SYMBOL';
   }
 
   // Backward-compatible fallback for unobserved tracks without context
