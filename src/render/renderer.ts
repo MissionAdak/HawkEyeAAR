@@ -94,18 +94,6 @@ export class ConsoleRenderer {
     // 4. Visual Sensor Chaos Engine: check active environment chaos events
     const { fogSeverity, isJamming } = this.computeChaosState(currentSimMs);
 
-    // Keep sensor health updated based on active chaos state without clobbering explicit DEG / OUT states
-    if (fogSeverity > 0) {
-      engineInstance.sensorHealth.EOIR = 'DEG';
-    } else if (engineInstance.sensorHealth.EOIR !== 'DEG' && engineInstance.sensorHealth.EOIR !== 'OUT') {
-      engineInstance.sensorHealth.EOIR = 'OK';
-    }
-    if (isJamming) {
-      engineInstance.sensorHealth.RF = 'OUT';
-    } else if (engineInstance.sensorHealth.RF !== 'DEG' && engineInstance.sensorHealth.RF !== 'OUT') {
-      engineInstance.sensorHealth.RF = 'OK';
-    }
-
     // 5. Publish UI snapshot to Zustand once per frame if ticks occurred
     if (ticksToRun > 0) {
       useSessionStore.getState().setUiSnapshot(engineInstance.buildUiSnapshot());

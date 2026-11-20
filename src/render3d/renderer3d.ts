@@ -62,6 +62,10 @@ export class Renderer3D {
     this.getTracks = fn;
   }
 
+  public getCurrentTracks(): { tracks: SafeTrackView[]; selectedTrackNo: string | null } | null {
+    return this.getTracks ? this.getTracks() : null;
+  }
+
   public setSensorHealthProvider(fn: () => Record<SensorMode, SensorHealthStatus>): void {
     this.getSensorHealth = fn;
   }

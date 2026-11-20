@@ -260,3 +260,10 @@ All constants live in `/public/config.json` (schema in `ARCHITECTURE.md` §3.8).
 **R10.14 — Illustrative engagement labelling.** Effector flight visuals and engagement animations in 3D are illustrative representations of a discrete probability roll. Every visualizer must be captioned: `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`.
 
 **R10.15 — WebXR VR claims.** WebXR VR remains an experimental track until empirical validation on a physical VR headset is completed and logged in `MEMORY.md`. The UI must label VR as `EXPERIMENTAL`.
+
+**R10.16 — Zero production debug globals & controlled E2E bridge.** `window.__ENGINE__`, `window.__RENDERER_3D__`, and any direct simulation engine access MUST NOT exist in production builds. Controlled E2E test access is restricted strictly to an isolated test interface (`window.__DRISHTI_TEST__`), compiled into a separate `dist-e2e/` artifact via static build flag (`__DRISHTI_E2E_BUILD__`), with zero test bridge presence in production `dist/`.
+
+**R10.17 — Deterministic sensor-health lifecycle.** Sensor health is computed deterministically at each simulation tick by combining baseline hardware health with temporary environmental chaos under strict severity precedence ($\text{OK} < \text{DEG} < \text{OUT}$). Render loops MUST NOT mutate authoritative sensor health. When temporary fog or jamming ends, effective sensor health MUST automatically recover to baseline without modifying baseline health or repairing permanently damaged sensors.
+
+**R10.18 — Neutral physical airframe recognition taxonomy.** Observable airframe morphology MUST NOT be conflated with tactical threat intent. Physical signatures map to neutral observable categories (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`) with neutral tactical palettes. Operator classification labels (`traineeLabel`) represent operator assessment only and MUST NOT alter physical aircraft geometry or mesh identifiers.
+

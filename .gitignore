@@ -3,6 +3,7 @@ node_modules/
 
 # Production build artifacts
 dist/
+dist-e2e/
 
 # Playwright & test reports
 test-results/

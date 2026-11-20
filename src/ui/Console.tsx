@@ -24,6 +24,7 @@ import {
   evaluateSensorObservation,
   type SensorObservationPipelineContext,
 } from '@/sim/sensorObservation';
+import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
 
 /**
  * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3, D-37 & Task 17.3 §2).
@@ -503,17 +504,15 @@ export const Console: React.FC = () => {
     };
   }, []);
 
-  // Cleanup 3D Renderer and WebXR on unmount
+  // Cleanup 3D Renderer, WebXR and E2E Test Bridge on unmount
   useEffect(() => {
+    const uninstallTestBridge = installDrishtiTestBridge(engineInstance, () => renderer3dRef.current);
     return () => {
+      uninstallTestBridge();
       xrManagerRef.current?.dispose();
       xrManagerRef.current = null;
       renderer3dRef.current?.dispose();
       renderer3dRef.current = null;
-      if (typeof window !== 'undefined') {
-        (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__RENDERER_3D__ = null;
-        (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__ENGINE__ = null;
-      }
     };
   }, []);
 
@@ -646,10 +645,6 @@ export const Console: React.FC = () => {
     r3d.setTargetDisplayMode(targetDisplayMode);
     r3d.setActiveSensor(activeSensor);
     renderer3dRef.current = r3d;
-    if (typeof window !== 'undefined') {
-      (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__RENDERER_3D__ = r3d;
-      (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__ENGINE__ = engineInstance;
-    }
     return r3d;
   };
 

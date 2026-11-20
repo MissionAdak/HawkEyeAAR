@@ -114,9 +114,14 @@ export class TargetModelFactory {
 
   /**
    * Instantiates a specialized procedural 3D model for the given target category.
+   * If category is OBSERVED_MULTIROTOR, the observable physical signature selects the appropriate morphology variant.
    * Tags all pickable sub-meshes with userData.trackNo for seamless 3D raycast designation.
    */
-  public createModel(category: TargetModelCategory, trackNo: string): BuiltTargetModel {
+  public createModel(
+    category: TargetModelCategory,
+    trackNo: string,
+    signature?: string
+  ): BuiltTargetModel {
     const palette = this.getPaletteForCategory(category);
     let model: BuiltTargetModel;
 
@@ -144,7 +149,13 @@ export class TargetModelFactory {
         model = buildLoiteringMunitionModel(palette);
         break;
       case 'OBSERVED_MULTIROTOR':
-        model = buildReconQuadModel(palette);
+        if (signature === 'MULTIROTOR_COMPACT') {
+          model = buildFpvAttackModel(palette);
+        } else if (signature === 'MULTIROTOR_STANDARD') {
+          model = buildCivilUasModel(palette);
+        } else {
+          model = buildReconQuadModel(palette);
+        }
         break;
       case 'RADAR_SYMBOL':
         model = buildRadarContactSymbolModel(palette);

@@ -1,5 +1,6 @@
 import type {
   ScenarioSpec,
+  ChaosSpec,
   TrackEntity,
   SimEvent,
   SimEventType,
@@ -21,6 +22,47 @@ import { evaluateMasking } from './masking';
 import { type OperatorFeedback, createOperatorFeedback } from './operatorFeedback';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
+
+/**
+ * Combines baseline sensor health with environmental degradation using strict severity precedence:
+ * OK < DEG < OUT
+ */
+export function combineSensorHealth(
+  a: SensorHealthStatus,
+  b: SensorHealthStatus
+): SensorHealthStatus {
+  if (a === 'OUT' || b === 'OUT') return 'OUT';
+  if (a === 'DEG' || b === 'DEG') return 'DEG';
+  return 'OK';
+}
+
+/**
+ * Computes deterministic temporary environmental sensor degradation from active chaos events.
+ */
+export function computeEnvironmentalSensorHealth(
+  currentSimMs: number,
+  chaosList?: ChaosSpec[]
+): Record<SensorMode, SensorHealthStatus> {
+  let radar: SensorHealthStatus = 'OK';
+  let eoir: SensorHealthStatus = 'OK';
+  let rf: SensorHealthStatus = 'OK';
+
+  if (chaosList) {
+    for (const c of chaosList) {
+      if (currentSimMs >= c.tStartMs && currentSimMs <= c.tEndMs) {
+        if (c.type === 'FOG' && c.severity > 0) {
+          eoir = combineSensorHealth(eoir, 'DEG');
+        } else if (c.type === 'JAMMING') {
+          rf = combineSensorHealth(rf, 'OUT');
+        } else if (c.type === 'RADAR_DROPOUT') {
+          radar = combineSensorHealth(radar, 'OUT');
+        }
+      }
+    }
+  }
+
+  return { RADAR: radar, EOIR: eoir, RF: rf };
+}
 
 export interface UiTrackRow {
   trackNo: string;
@@ -79,15 +121,26 @@ export class SimEngine {
   public activeEffector: EffectorId = 'RF_SOFTKILL';
   public eoirAzimuthDeg: number = 0;
 
-  public sensorHealth: {
-    RADAR: SensorHealthStatus;
-    EOIR: SensorHealthStatus;
-    RF: SensorHealthStatus;
-  } = {
+  public baselineSensorHealth: Record<SensorMode, SensorHealthStatus> = {
     RADAR: 'OK',
     EOIR: 'OK',
     RF: 'OK',
   };
+
+  public sensorHealth: Record<SensorMode, SensorHealthStatus> = {
+    RADAR: 'OK',
+    EOIR: 'OK',
+    RF: 'OK',
+  };
+
+  public getEffectiveSensorHealth(currentSimMs: number): Record<SensorMode, SensorHealthStatus> {
+    const env = computeEnvironmentalSensorHealth(currentSimMs, this.spec?.chaos);
+    return {
+      RADAR: combineSensorHealth(this.baselineSensorHealth.RADAR, env.RADAR),
+      EOIR: combineSensorHealth(this.baselineSensorHealth.EOIR, env.EOIR),
+      RF: combineSensorHealth(this.baselineSensorHealth.RF, env.RF),
+    };
+  }
 
   private killRng: (() => number) | null = null;
   public sessionEnded: boolean = false;
@@ -111,6 +164,8 @@ export class SimEngine {
     this.eoirAzimuthDeg = 0;
     this.trainingAidActive = false;
     this.trainingAidTicks = 0;
+    this.baselineSensorHealth = { RADAR: 'OK', EOIR: 'OK', RF: 'OK' };
+    this.sensorHealth = this.getEffectiveSensorHealth(0);
     this.killRng = mulberry32(streamSeed(spec.seed, 'kill'));
     clockInstance.reset();
 
@@ -238,6 +293,7 @@ export class SimEngine {
 
     this.tickIndex += 1;
     const currentSimMs = this.tickIndex * 50;
+    this.sensorHealth = this.getEffectiveSensorHealth(currentSimMs);
 
     if (this.trainingAidActive && this.mode !== 'EVAL') {
       this.trainingAidTicks += 1;

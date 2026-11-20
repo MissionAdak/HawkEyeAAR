@@ -129,8 +129,8 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
 
     // 7. Designate target by clicking it directly in the 3D canvas
     const coords = await page.evaluate(() => {
-      const r3d = (window as unknown as { __RENDERER_3D__?: { getTrackScreenCoords: (id: string) => { clientX: number; clientY: number } | null } }).__RENDERER_3D__;
-      return r3d?.getTrackScreenCoords('T-01') ?? null;
+      const bridge = (window as unknown as { __DRISHTI_TEST__?: { getTrackScreenCoords: (id: string) => { clientX: number; clientY: number } | null } }).__DRISHTI_TEST__;
+      return bridge?.getTrackScreenCoords('T-01') ?? null;
     });
     expect(coords).not.toBeNull();
     if (coords) {

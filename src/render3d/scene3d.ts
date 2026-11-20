@@ -48,6 +48,7 @@ export interface TrackMeshRecord {
   selectionBox: THREE.LineSegments | null;
   lastHeadingRad: number;
   currentCategory?: TargetModelCategory;
+  currentSignature?: string;
   targetModelInstance?: BuiltTargetModel;
   currentLabelText?: string;
 }
@@ -416,7 +417,11 @@ export class Scene3D {
     return sprite;
   }
 
-  private getOrCreateTrackRecord(trackNo: string, initialCategory: TargetModelCategory = 'UNKNOWN'): TrackMeshRecord {
+  private getOrCreateTrackRecord(
+    trackNo: string,
+    initialCategory: TargetModelCategory = 'UNKNOWN',
+    initialSignature?: string
+  ): TrackMeshRecord {
     let record = this.trackMeshMap.get(trackNo);
     if (record) return record;
 
@@ -431,7 +436,7 @@ export class Scene3D {
     const aircraftGroup = new THREE.Group();
 
     // Build procedural 3D target model matching initial category
-    const builtModel = this.targetModelFactory.createModel(initialCategory, trackNo);
+    const builtModel = this.targetModelFactory.createModel(initialCategory, trackNo, initialSignature);
     aircraftGroup.add(builtModel.group);
 
     modelAnchor.add(aircraftGroup);
@@ -468,6 +473,7 @@ export class Scene3D {
       selectionBox,
       lastHeadingRad: 0,
       currentCategory: initialCategory,
+      currentSignature: initialSignature,
       targetModelInstance: builtModel,
     };
 
@@ -603,21 +609,23 @@ export class Scene3D {
         context: observationContext,
       });
       let record = this.trackMeshMap.get(track.trackNo);
+      const obsSignature = track.sensorObservation?.signature ?? track.sensorObservation?.observedSignature;
 
       if (!record) {
-        record = this.getOrCreateTrackRecord(track.trackNo, targetCategory);
-      } else if (record.currentCategory !== targetCategory) {
+        record = this.getOrCreateTrackRecord(track.trackNo, targetCategory, obsSignature);
+      } else if (record.currentCategory !== targetCategory || record.currentSignature !== obsSignature) {
         // Observation / classification state changed -> swap procedural model
         if (record.targetModelInstance) {
           record.aircraftGroup.remove(record.targetModelInstance.group);
         }
-        const newModel = this.targetModelFactory.createModel(targetCategory, track.trackNo);
+        const newModel = this.targetModelFactory.createModel(targetCategory, track.trackNo, obsSignature);
         record.aircraftGroup.add(newModel.group);
         record.bodyMesh = newModel.bodyMesh;
         record.accentMesh = newModel.accentMesh;
         record.hitProxy = newModel.hitProxy;
         record.marker = newModel.bodyMesh;
         record.currentCategory = targetCategory;
+        record.currentSignature = obsSignature;
         record.targetModelInstance = newModel;
       }
 

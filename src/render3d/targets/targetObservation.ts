@@ -8,7 +8,7 @@ export type SensorHealthState = 'OK' | 'DEG' | 'OUT';
 export interface SensorObservationContext {
   activeSensor: SensorMode;
   displayMode: TargetDisplayMode;
-  sensorHealth?: Record<SensorMode, SensorHealthState> | { radarOk?: boolean; eoirOk?: boolean; rfOk?: boolean };
+  sensorHealth?: Record<SensorMode, SensorHealthState>;
   weather?: WeatherType;
   isNight?: boolean;
   mode?: 'TRAIN' | 'EVAL' | 'DEMO';
@@ -16,12 +16,10 @@ export interface SensorObservationContext {
 }
 
 export function getEoirHealth(
-  health?: Record<SensorMode, SensorHealthState> | { radarOk?: boolean; eoirOk?: boolean; rfOk?: boolean }
+  health?: Record<SensorMode, SensorHealthState>
 ): SensorHealthState {
   if (!health) return 'OK';
-  if ('EOIR' in health && health.EOIR) return health.EOIR;
-  if ('eoirOk' in health) return health.eoirOk ? 'OK' : 'OUT';
-  return 'OK';
+  return health.EOIR ?? 'OK';
 }
 
 export type ObservationState =
@@ -53,8 +51,9 @@ export const CLEAR_OPTICAL_RANGE_M = 2400;
 export const MAX_OPTICAL_RANGE_M = 3800;
 
 /**
- * Maps legitimate observable physical airframe type to procedural target model category.
- * Note: This maps physical aircraft geometry, NOT tactical threat intent (trueClass).
+ * Maps legitimate observable physical airframe type to neutral procedural target model category (Task 17.5 §5).
+ * Invariant: Physical appearance signatures represent observable physical airframe geometry ONLY.
+ * They do NOT represent threat intent or tactical classification.
  */
 export function mapSignatureToCategory(
   signature?: ObservedAirframeSignature | DroneType | string
@@ -62,20 +61,16 @@ export function mapSignatureToCategory(
   switch (signature) {
     case 'MULTIROTOR_COMPACT':
     case 'FPV_ATTACK':
-      return 'HOSTILE_ATTACK';
     case 'MULTIROTOR_WITH_CAMERA_POD':
     case 'RECON_QUAD':
-      return 'HOSTILE_ISR';
     case 'SWARM_ELEMENT':
-      return 'SWARM_ELEMENT';
-    case 'FIXED_WING_DELTA':
-    case 'LOITERING_MUNITION':
-      return 'LOITERING_MUNITION';
     case 'MULTIROTOR_STANDARD':
     case 'CIVIL_UAS':
-      return 'CIVIL_UAS';
     case 'FRIENDLY_UAS':
-      return 'FRIENDLY';
+      return 'OBSERVED_MULTIROTOR';
+    case 'FIXED_WING_DELTA':
+    case 'LOITERING_MUNITION':
+      return 'OBSERVED_FIXED_WING';
     case 'BIRD_LIKE':
     case 'BIRD':
       return 'BIRD';
@@ -88,7 +83,7 @@ export function mapSignatureToCategory(
 export const mapAirframeToCategory = mapSignatureToCategory;
 
 /**
- * Resolves sensor-aware 3D target visual presentation (Task 17.2, Task 17.3).
+ * Resolves sensor-aware 3D target visual presentation (Task 17.2, Task 17.3, Task 17.5).
  *
  * Rules:
  * 1. RADAR mode / displayMode RADAR: strictly produces RADAR_SYMBOL (high-contrast diamond reticle).
@@ -111,7 +106,7 @@ export function resolveTargetPresentation(
   const {
     activeSensor,
     displayMode = 'AUTO',
-    sensorHealth = { radarOk: true, eoirOk: true, rfOk: true },
+    sensorHealth = { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
     mode = 'TRAIN',
   } = context;
 
@@ -137,7 +132,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 3. Sensor Health Check for EO/IR (Task 17.3 §7, Task 17.4 §1)
+  // 3. Sensor Health Check for EO/IR (Task 17.3 §7, Task 17.4 §1, Task 17.5 §4)
   const eoirHealth = getEoirHealth(sensorHealth);
   if (activeSensor === 'EOIR' && eoirHealth === 'OUT') {
     return {
@@ -172,7 +167,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 5. Approved Sensor Observation Dispatch (Task 17.3 §3, §4, Task 17.4 §1, §2)
+  // 5. Approved Sensor Observation Dispatch (Task 17.3 §3, §4, Task 17.4 §1, §2, Task 17.5 §6)
   if (!track.sensorObservation) {
     // Both null and undefined observations must produce a safe unresolved presentation (Task 17.4 §2)
     return {
@@ -185,6 +180,27 @@ export function resolveTargetPresentation(
   }
 
   const obs = track.sensorObservation;
+
+  // Strict observation provenance validation at renderer boundary (Task 17.5 §6)
+  const isProvenanceValid =
+    obs.sensorSource === 'EOIR' &&
+    typeof obs.timestampMs === 'number' &&
+    obs.confidence >= 0 &&
+    obs.confidence <= 1 &&
+    (obs.resolutionLevel === 'FULL' || obs.resolutionLevel === 'DEGRADED' || obs.resolutionLevel === 'UNRESOLVED' ||
+      obs.resolution === 'FULL' || obs.resolution === 'DEGRADED' || obs.resolution === 'UNRESOLVED') &&
+    (obs.visibilityState === 'CLEAR' || obs.visibilityState === 'DEGRADED' || obs.visibilityState === 'MASKED');
+
+  if (!isProvenanceValid) {
+    return {
+      presentationCategory: 'RADAR_SYMBOL',
+      isVisuallyResolved: false,
+      observationState: 'OUT_OF_RANGE',
+      opticalConfidence: 0,
+      reason: 'Sensor observation failed provenance validation',
+    };
+  }
+
   const signature = obs.signature ?? obs.observedSignature ?? 'UNRESOLVED_AIRFRAME';
   const resolution = obs.resolutionLevel ?? obs.resolution ?? 'UNRESOLVED';
   const obsHealth = obs.sensorHealth ?? (obs.sensorAvailability ? 'OK' : 'OUT');

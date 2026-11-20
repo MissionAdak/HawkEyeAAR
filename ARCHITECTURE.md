@@ -908,3 +908,32 @@ $$\operatorname{toThree}(x, y, z) = (x, z, -y)$$
 | **F15 — 3D Engagement Visual Effects** | Realistic procedural weapon animations (`GUN` tracers, `LASER` coherent beam, `RF_SOFTKILL` directional wavefront, `INTERCEPTOR` drone launch, `MISSILE` rocket motor/smoke) with restrained non-graphic neutralization/ineffective outcomes and deterministic AAR timeline scrubbing. | Class A (Operator Visible) |
 | **F16 — 3D Tactical Radar Sweep** | 3D rotating antenna assembly atop C2 mast and translucent ground scan sector 100% synchronized with Canvas 2D sweep angle (30 RPM = 2.0s period) and responsive to sensor health. | Class A (Operator Visible) |
 | **F17 — Intelligent Operator Tactical Feedback** | Typed non-disruptive HUD toasts explaining hard weapon release blocks (`Q_MIN_VIOLATION`, `PNR_VIOLATION`, `OUT_OF_ENVELOPE`, `RF_JAMMING_ACTIVE`, `RF_SILENT_TARGET`), soft ROE warnings, and outcomes with actionable metrics and anti-spam throttling. | Class A (Operator Visible) |
+| **F18 — Security Boundary, Sensor-Health Lifecycle & Neutral Recognition** | Hardened sensor-observation pipeline: tri-state sensor health lifecycle (`OK < DEG < OUT`) with deterministic recovery, neutral physical morphology taxonomy (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`) separating physical appearance from tactical threat intent, production debug global removal, and strictly isolated E2E-only test bridge (`__DRISHTI_TEST__`). | Class A (Operator Visible) |
+
+### 8.9 Production Information Boundary & E2E-Only Test Architecture (Task 17.5)
+
+To uphold the operator-facing information boundary, the production deployment (`dist/`) strictly isolates simulation internals:
+1. **Zero Production Debug Globals:**
+   `window.__ENGINE__`, `window.__RENDERER_3D__`, and `window.__DRISHTI_TEST__` are completely absent in the production build.
+2. **Dedicated E2E Build Mode (`dist-e2e/`):**
+   E2E instrumentation is isolated using Vite's static conditional compilation `__DRISHTI_E2E_BUILD__`. When built for production, the entire test bridge is dead-code eliminated.
+3. **Controlled Test Bridge (`window.__DRISHTI_TEST__`):**
+   Available only in the E2E build, the test bridge exposes strictly validated test operations (`positionTrack`, `setSensorCondition`, `setSimChaos`, `getPresentationState`, `inspectOperatorFacingData`). It never returns raw engine references, `TrackEntity` instances, scenario specs, or hidden ground-truth properties.
+4. **Client-Side Threat Model Limitation:**
+   In an offline client-side single-page application executing entirely inside the operator's browser, cryptographic secrecy against a determined user inspecting browser devtools memory is mathematically impossible. The architectural boundary enforces application-level non-disclosure, ensuring no production UI, store snapshot, canvas projection, or telemetry event accidentally leaks ground truth before authorized AAR debrief.
+
+### 8.10 Sensor-Health Lifecycle & Neutral Physical Recognition
+
+1. **Sensor-Health Lifecycle Architecture:**
+   - **Baseline Health:** Intrinsic hardware status (`OK`, `DEG`, `OUT`) set per mission scenario.
+   - **Environmental Health:** Temporary degradation dynamically evaluated from simulation chaos events (`FOG` $\to$ EOIR: DEG, `JAMMING` $\to$ RF: OUT, `RADAR_DROPOUT` $\to$ RADAR: OUT).
+   - **Effective Sensor Health:** Pure deterministic combination evaluated each tick:
+     $$\text{effectiveHealth} = \text{combine}(\text{baselineHealth}, \text{environmentalHealth})$$
+     Severity precedence: $\text{OK} < \text{DEG} < \text{OUT}$.
+   - **Deterministic Recovery:** When temporary fog or jamming ends, effective sensor health automatically recovers to baseline without permanently corrupting baseline state or healing damaged hardware.
+   - **Renderer Purity:** Visual renderers consume effective health as read-only data and never mutate simulation state.
+2. **Neutral Physical Airframe Recognition Taxonomy:**
+   - **Core Doctrine:** Physical airframe morphology does NOT indicate tactical threat intent.
+   - Observable signatures map to neutral categories (`MULTIROTOR_COMPACT`, `MULTIROTOR_WITH_CAMERA_POD`, `MULTIROTOR_STANDARD` $\to$ `OBSERVED_MULTIROTOR`; `FIXED_WING_DELTA` $\to$ `OBSERVED_FIXED_WING`).
+   - Procedural 3D models preserve physical geometry differences (FPV X-frame, reconnaissance gimbal pod, delta wing) using neutral matte palettes, preventing false inferences of threat intent from observable shape.
+   - Operator classifications (`traineeLabel`) remain separate tactical metadata and never alter physical 3D mesh geometry.

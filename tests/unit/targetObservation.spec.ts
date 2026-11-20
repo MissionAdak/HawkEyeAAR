@@ -198,7 +198,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
       });
 
-      expect(result.presentationCategory).toBe('LOITERING_MUNITION');
+      expect(result.presentationCategory).toBe('OBSERVED_FIXED_WING');
       expect(result.isVisuallyResolved).toBe(true);
       expect(result.observationState).toBe('CLEAR_OPTICAL');
     });
@@ -287,7 +287,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       });
       expect(clearObs?.resolutionLevel).toBe('FULL');
       const clearResult = resolveTargetPresentation(makeTrack({ sensorObservation: clearObs }), baseContext);
-      expect(clearResult.presentationCategory).toBe('HOSTILE_ATTACK');
+      expect(clearResult.presentationCategory).toBe('OBSERVED_MULTIROTOR');
 
       // Entity at 1419m in FOG: clear threshold drops to 840m, so 1419m becomes DEGRADED
       const fogObs = evaluateSensorObservation(entity, {
@@ -333,7 +333,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         activeSensor: 'EOIR',
       });
 
-      expect(result.presentationCategory).toBe('LOITERING_MUNITION');
+      expect(result.presentationCategory).toBe('OBSERVED_FIXED_WING');
       expect(wronglyClassified.traineeLabel).toBe('CIVIL_UAS');
     });
 
@@ -351,11 +351,11 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         activeSensor: 'EOIR',
       });
 
-      expect(result.presentationCategory).toBe('HOSTILE_ATTACK');
+      expect(result.presentationCategory).toBe('OBSERVED_MULTIROTOR');
 
-      // Inspect TargetModelFactory palette: accent should be neutral slate, NOT hostile crimson red
+      // Inspect TargetModelFactory palette: accent should be neutral slate/amber, NOT hostile crimson red
       const factory = new TargetModelFactory();
-      const palette = factory.getPaletteForCategory('HOSTILE_ATTACK');
+      const palette = factory.getPaletteForCategory('OBSERVED_MULTIROTOR');
       expect(palette.accent).toBeDefined();
       expect(palette.rotors).toBeDefined();
       factory.dispose();
@@ -451,6 +451,142 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       const overviewScale = calculateScreenSpaceScale(45, 4800, 520, 32, true);
       expect(overviewScale).toBeGreaterThanOrEqual(25);
       expect(overviewScale).toBeLessThanOrEqual(130);
+    });
+  });
+
+  describe('9. Sensor-Health Lifecycle & Deterministic Recovery (Task 17.5 §4)', () => {
+    it('combineSensorHealth strictly enforces severity precedence OK < DEG < OUT', async () => {
+      const { combineSensorHealth } = await import('@/sim/engine');
+
+      // OK with others
+      expect(combineSensorHealth('OK', 'OK')).toBe('OK');
+      expect(combineSensorHealth('OK', 'DEG')).toBe('DEG');
+      expect(combineSensorHealth('OK', 'OUT')).toBe('OUT');
+
+      // DEG with others (cannot heal OUT, cannot be healed by OK)
+      expect(combineSensorHealth('DEG', 'OK')).toBe('DEG');
+      expect(combineSensorHealth('DEG', 'DEG')).toBe('DEG');
+      expect(combineSensorHealth('DEG', 'OUT')).toBe('OUT');
+
+      // OUT with others (never healed by OK or DEG)
+      expect(combineSensorHealth('OUT', 'OK')).toBe('OUT');
+      expect(combineSensorHealth('OUT', 'DEG')).toBe('OUT');
+      expect(combineSensorHealth('OUT', 'OUT')).toBe('OUT');
+    });
+
+    it('temporary chaos automatically recovers to baseline when chaos ends', async () => {
+      const { SimEngine } = await import('@/sim/engine');
+      const engine = new SimEngine();
+      engine.load({
+        id: 'test-chaos-recovery',
+        mode: 'TRAIN',
+        difficulty: 0.3,
+        durationMs: 30000,
+        seed: 42,
+        threats: [],
+        chaos: [
+          { type: 'FOG', severity: 0.8, tStartMs: 5000, tEndMs: 10000 },
+          { type: 'JAMMING', severity: 1.0, tStartMs: 12000, tEndMs: 18000 },
+        ],
+      } as unknown as import('@/sim/types').ScenarioSpec);
+
+      // At t = 0ms: All OK
+      const h0 = engine.getEffectiveSensorHealth(0);
+      expect(h0.EOIR).toBe('OK');
+      expect(h0.RF).toBe('OK');
+
+      // At t = 7000ms: During FOG -> EOIR is DEG
+      const hFog = engine.getEffectiveSensorHealth(7000);
+      expect(hFog.EOIR).toBe('DEG');
+
+      // At t = 11000ms: After FOG ended -> EOIR automatically recovers to OK!
+      const hFogEnded = engine.getEffectiveSensorHealth(11000);
+      expect(hFogEnded.EOIR).toBe('OK');
+
+      // At t = 15000ms: During JAMMING -> RF is OUT
+      const hJam = engine.getEffectiveSensorHealth(15000);
+      expect(hJam.RF).toBe('OUT');
+
+      // At t = 20000ms: After JAMMING ended -> RF automatically recovers to OK!
+      const hJamEnded = engine.getEffectiveSensorHealth(20000);
+      expect(hJamEnded.RF).toBe('OK');
+    });
+
+    it('temporary environmental chaos never repairs a damaged baseline sensor', async () => {
+      const { SimEngine } = await import('@/sim/engine');
+      const engine = new SimEngine();
+      engine.load({
+        id: 'test-damaged-baseline',
+        mode: 'TRAIN',
+        difficulty: 0.3,
+        durationMs: 30000,
+        seed: 42,
+        threats: [],
+        chaos: [
+          { type: 'FOG', severity: 0.8, tStartMs: 5000, tEndMs: 10000 },
+        ],
+      } as unknown as import('@/sim/types').ScenarioSpec);
+
+      // Baseline damaged sensor (e.g. damaged during maintenance)
+      engine.baselineSensorHealth.EOIR = 'OUT';
+
+      // Clear conditions cannot repair it:
+      expect(engine.getEffectiveSensorHealth(0).EOIR).toBe('OUT');
+      // Fog cannot downgrade OUT to DEG:
+      expect(engine.getEffectiveSensorHealth(7000).EOIR).toBe('OUT');
+      // Fog ending cannot repair it:
+      expect(engine.getEffectiveSensorHealth(12000).EOIR).toBe('OUT');
+    });
+  });
+
+  describe('10. Neutral Airframe Recognition & Morphology Diversity (Task 17.5 §5)', () => {
+    it('different threat classes with same physical signature display identical neutral category', () => {
+      // FPV Attack drone (threat class HOSTILE_ATTACK)
+      const fpvEntity = makeSimEntity({ trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK' });
+      const fpvObs = evaluateSensorObservation(fpvEntity, basePipelineContext);
+      const fpvResult = resolveTargetPresentation(makeTrack({ sensorObservation: fpvObs }), baseContext);
+
+      // Swarm element (threat class SWARM_ELEMENT)
+      const swarmEntity = makeSimEntity({ trueClass: 'SWARM_ELEMENT', droneType: 'SWARM_ELEMENT' });
+      const swarmObs = evaluateSensorObservation(swarmEntity, basePipelineContext);
+      const swarmResult = resolveTargetPresentation(makeTrack({ sensorObservation: swarmObs }), baseContext);
+
+      expect(fpvResult.presentationCategory).toBe('OBSERVED_MULTIROTOR');
+      expect(swarmResult.presentationCategory).toBe('OBSERVED_MULTIROTOR');
+      expect(fpvResult.presentationCategory).toBe(swarmResult.presentationCategory);
+    });
+
+    it('procedural model factory instantiates distinct morphology variants under neutral category', () => {
+      const factory = new TargetModelFactory();
+
+      // Compact variant (FPV geometry)
+      const compactModel = factory.createModel('OBSERVED_MULTIROTOR', 'T-01', 'MULTIROTOR_COMPACT');
+      expect(compactModel.category).toBe('OBSERVED_MULTIROTOR');
+
+      // Recon quad variant (Camera pod geometry)
+      const podModel = factory.createModel('OBSERVED_MULTIROTOR', 'T-02', 'MULTIROTOR_WITH_CAMERA_POD');
+      expect(podModel.category).toBe('OBSERVED_MULTIROTOR');
+
+      // Fixed wing variant
+      const fixedWingModel = factory.createModel('OBSERVED_FIXED_WING', 'T-03');
+      expect(fixedWingModel.category).toBe('OBSERVED_FIXED_WING');
+
+      // Geometry UUIDs should differ between variants
+      expect(compactModel.bodyMesh.geometry.uuid).not.toBe(podModel.bodyMesh.geometry.uuid);
+
+      factory.dispose();
+    });
+
+    it('invalid observation provenance fails safely to RADAR_SYMBOL', () => {
+      // Provenance invalid: negative confidence
+      const badTrack = makeTrack({
+        sensorObservation: makeObservation({
+          confidence: -0.5,
+        }),
+      });
+      const result = resolveTargetPresentation(badTrack, baseContext);
+      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(result.reason).toContain('provenance');
     });
   });
 });

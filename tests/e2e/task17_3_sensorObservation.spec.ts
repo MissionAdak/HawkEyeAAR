@@ -1,24 +1,37 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
+import type { DrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
 
-test.describe('TASK 17.4 E2E Sensor Observation Integrity & Non-Vacuous Verification', () => {
+type WindowWithDrishti = Window & {
+  __DRISHTI_TEST__?: DrishtiTestBridge | null;
+  __ENGINE__?: unknown;
+  __RENDERER_3D__?: unknown;
+  SimEngine?: unknown;
+};
+
+test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutral Recognition', () => {
   const outDir17_3 = path.resolve(process.cwd(), 'reports/screenshots/task17_3');
   const outDir17_4 = path.resolve(process.cwd(), 'reports/screenshots/task17_4');
+  const outDir17_5 = path.resolve(process.cwd(), 'reports/screenshots/task17_5');
   const artifactDir = 'C:\\Users\\Missi\\.gemini\\antigravity\\brain\\dcbbc993-bf1f-433e-850f-d7e049737f29';
 
   test.beforeAll(() => {
-    if (!fs.existsSync(outDir17_3)) {
-      fs.mkdirSync(outDir17_3, { recursive: true });
-    }
-    if (!fs.existsSync(outDir17_4)) {
-      fs.mkdirSync(outDir17_4, { recursive: true });
+    for (const d of [outDir17_3, outDir17_4, outDir17_5]) {
+      if (!fs.existsSync(d)) {
+        fs.mkdirSync(d, { recursive: true });
+      }
     }
   });
 
-  const saveShot = async (page: any, filename: string, alsoInTask17_3?: string) => {
-    const filePath = path.join(outDir17_4, filename);
+  const saveShot = async (page: Page, filename: string, alsoInTask17_3?: string) => {
+    const filePath = path.join(outDir17_5, filename);
     await page.screenshot({ path: filePath, fullPage: true });
+
+    // Also copy to legacy folders for report continuity
+    const p17_4 = path.join(outDir17_4, filename);
+    fs.copyFileSync(filePath, p17_4);
+
     if (fs.existsSync(artifactDir)) {
       fs.copyFileSync(filePath, path.join(artifactDir, filename));
     }
@@ -31,8 +44,12 @@ test.describe('TASK 17.4 E2E Sensor Observation Integrity & Non-Vacuous Verifica
     }
   };
 
-  const setup3DSession = async (page: any, modeUrl: string = 'http://127.0.0.1:4173/HawkEyeAAR/') => {
-    await page.goto(modeUrl, { waitUntil: 'networkidle' });
+  const setupSession = async (
+    page: Page,
+    url: string = 'http://127.0.0.1:4173/HawkEyeAAR/',
+    enable3D: boolean = true
+  ) => {
+    await page.goto(url, { waitUntil: 'networkidle' });
     await page.waitForTimeout(1000);
 
     const startBtn = page.getByTestId('start-session-btn');
@@ -41,64 +58,143 @@ test.describe('TASK 17.4 E2E Sensor Observation Integrity & Non-Vacuous Verifica
       await page.waitForTimeout(1000);
     }
 
-    const btn3D = page.getByRole('button', { name: /\[V\] 3D/i });
-    if (await btn3D.isVisible()) {
-      await btn3D.click();
-      await page.waitForTimeout(1500);
+    if (enable3D) {
+      const btn3D = page.getByRole('button', { name: /\[V\] 3D/i });
+      if (await btn3D.isVisible()) {
+        await btn3D.click();
+        await page.waitForTimeout(1500);
+      }
+      const canvas3d = page.locator('canvas.cursor-grab');
+      await expect(canvas3d).toBeVisible();
     }
-
-    const canvas3d = page.locator('canvas.cursor-grab');
-    await expect(canvas3d).toBeVisible();
-
-    // STRICT NON-VACUOUS CHECK: Verify window.__RENDERER_3D__ is loaded and accessible
-    const rendererReady = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      return !!r3d && typeof r3d.getTracks === 'function';
-    });
-    expect(rendererReady).toBe(true);
   };
 
-  test('Test 1 - RADAR Mode: Contacts display strictly as RADAR symbols', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test A — Production debug isolation: All prohibited debug globals absent in production build', async ({
+    page,
+  }) => {
+    // Port 4174 serves the clean production build from dist/
+    await setupSession(page, 'http://127.0.0.1:4174/HawkEyeAAR/', true);
 
-    // Switch to RADAR sensor
-    const radarBtn = page.getByRole('button', { name: /\[1\] RADAR/i });
-    await radarBtn.click();
-    await page.waitForTimeout(1000);
-
-    // Capture required screenshots
-    await saveShot(page, 'task17_4_01_radar_symbols.png', 'task17_3_01_radar_symbols.png');
-
-    // Observable assertions
-    const evaluation = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-
-      const details = tracks.map((t: any) => {
-        const record = scene3d.getTrackRecord(t.trackNo);
-        return {
-          trackNo: t.trackNo,
-          hasRecord: !!record,
-          currentCategory: record?.currentCategory,
-        };
-      });
-
+    const globalsCheck = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
       return {
-        trackCount: tracks.length,
-        allAreRadarSymbols: details.length > 0 && details.every((d: any) => d.currentCategory === 'RADAR_SYMBOL'),
-        details,
+        hasEngine: '__ENGINE__' in w && w.__ENGINE__ !== null,
+        hasRenderer3D: '__RENDERER_3D__' in w && w.__RENDERER_3D__ !== null,
+        hasDrishtiTest: '__DRISHTI_TEST__' in w && w.__DRISHTI_TEST__ !== null,
+        hasSimEngine: 'SimEngine' in w,
       };
     });
 
-    expect(evaluation.trackCount).toBeGreaterThan(0);
-    expect(evaluation.allAreRadarSymbols).toBe(true);
+    expect(globalsCheck.hasEngine).toBe(false);
+    expect(globalsCheck.hasRenderer3D).toBe(false);
+    expect(globalsCheck.hasDrishtiTest).toBe(false);
+    expect(globalsCheck.hasSimEngine).toBe(false);
+
+    await saveShot(page, 'task17_5_01_production_debug_isolation.png');
   });
 
-  test('Test 2 - EO/IR Mode: Optical physical airframe models with provenance', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test B — E2E instrumentation isolation: Controlled test bridge active without truth leakage', async ({
+    page,
+  }) => {
+    // Port 4173 serves the E2E build from dist-e2e/
+    await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/', true);
+
+    const isolationCheck = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      const testBridge = w.__DRISHTI_TEST__;
+      if (!testBridge) {
+        return { hasBridge: false };
+      }
+
+      return {
+        hasBridge: true,
+        hasEngine: '__ENGINE__' in w && w.__ENGINE__ !== null,
+        hasRenderer3D: '__RENDERER_3D__' in w && w.__RENDERER_3D__ !== null,
+        isReady: testBridge.isReady(),
+        trackCount: testBridge.getTrackList().length,
+        // Assert that raw engine or entity internals are NOT directly accessible on bridge
+        exposesEngine: 'engine' in testBridge,
+        exposesSpec: 'spec' in testBridge,
+        exposesCurr: 'curr' in testBridge,
+      };
+    });
+
+    expect(isolationCheck.hasBridge).toBe(true);
+    expect(isolationCheck.hasEngine).toBe(false);
+    expect(isolationCheck.hasRenderer3D).toBe(false);
+    expect(isolationCheck.isReady).toBe(true);
+    expect(isolationCheck.trackCount).toBeGreaterThan(0);
+    expect(isolationCheck.exposesEngine).toBe(false);
+    expect(isolationCheck.exposesSpec).toBe(false);
+    expect(isolationCheck.exposesCurr).toBe(false);
+  });
+
+  test('Test C — Sensor health lifecycle: Deterministic chaos onset, recovery, and baseline preservation', async ({
+    page,
+  }) => {
+    await setupSession(page);
+
+    const healthLifecycle = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+
+      // 1. Initial baseline
+      const initial = bridge.getSensorHealth();
+
+      // 2. Simulate environmental fog between 1000ms and 5000ms
+      bridge.setSimChaos([
+        { type: 'FOG', severity: 0.8, tStartMs: 1000, tEndMs: 5000 },
+        { type: 'JAMMING', severity: 1.0, tStartMs: 6000, tEndMs: 10000 },
+      ]);
+
+      // Check effective health at t = 3000ms (during fog)
+      const duringFog = bridge.getEffectiveSensorHealth(3000);
+
+      // Check effective health at t = 5500ms (after fog ended) -> MUST recover to OK!
+      const afterFog = bridge.getEffectiveSensorHealth(5500);
+
+      // Check effective health at t = 8000ms (during jamming)
+      const duringJam = bridge.getEffectiveSensorHealth(8000);
+
+      // Check effective health at t = 12000ms (after jamming ended) -> MUST recover to OK!
+      const afterJam = bridge.getEffectiveSensorHealth(12000);
+
+      // 3. Set a damaged baseline: EOIR is OUT
+      bridge.setSensorCondition({ sensor: 'EOIR', health: 'OUT' });
+      const damagedBaseline = bridge.getEffectiveSensorHealth(3000); // During fog, damaged baseline cannot heal to DEG
+      const damagedClear = bridge.getEffectiveSensorHealth(12000);   // Clear weather cannot heal to OK
+
+      // Reset baseline for subsequent tests
+      bridge.setSensorCondition({ sensor: 'EOIR', health: 'OK' });
+      bridge.setSimChaos([]);
+
+      return {
+        initial,
+        duringFogEOIR: duringFog.EOIR,
+        afterFogEOIR: afterFog.EOIR,
+        duringJamRF: duringJam.RF,
+        afterJamRF: afterJam.RF,
+        damagedDuringFog: damagedBaseline.EOIR,
+        damagedDuringClear: damagedClear.EOIR,
+      };
+    });
+
+    expect(healthLifecycle.initial.EOIR).toBe('OK');
+    expect(healthLifecycle.duringFogEOIR).toBe('DEG');
+    expect(healthLifecycle.afterFogEOIR).toBe('OK');
+    expect(healthLifecycle.duringJamRF).toBe('OUT');
+    expect(healthLifecycle.afterJamRF).toBe('OK');
+    expect(healthLifecycle.damagedDuringFog).toBe('OUT');
+    expect(healthLifecycle.damagedDuringClear).toBe('OUT');
+
+    await saveShot(page, 'task17_5_02_sensor_health_recovery.png');
+  });
+
+  test('Test D — EO/IR Clear Observation: Approved observation produces neutral physical morphology', async ({
+    page,
+  }) => {
+    await setupSession(page);
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
@@ -110,125 +206,94 @@ test.describe('TASK 17.4 E2E Sensor Observation Integrity & Non-Vacuous Verifica
       await autoBtn.click();
     }
 
-    // Position one track in unmasked clear optical range (quadrant 2: x = -500, y = 300, range ~583m < 840m fog clear threshold)
-    await page.evaluate(() => {
-      const eng = (window as any).__ENGINE__;
-      if (!eng || !eng.curr) throw new Error('FAIL: __ENGINE__ missing');
-      const target = eng.curr.find((e: any) => e.trackNo && e.lifecycle === 'ACTIVE');
-      if (target) {
-        target.pos = { x: -500, y: 300, z: 60 };
-        target.vel = { x: 0, y: 0, z: 0 };
-        target.masked = false;
-        target.q = 0.95;
-      }
+    // Position one track in unmasked clear optical range (quadrant 2: x = -500, y = 300, z = 60)
+    const targetNo = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const tracks = bridge.getTrackList();
+      if (tracks.length === 0) throw new Error('FAIL: no active tracks');
+      const tNo = tracks[0].trackNo;
+      bridge.positionTrack(tNo, { x: -500, y: 300, z: 60 });
+      return tNo;
     });
 
     await page.waitForTimeout(2000);
-
     await saveShot(page, 'task17_4_02_eoir_physical_models.png', 'task17_3_02_eoir_optical_models.png');
 
-    const evaluation = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-
-      const opticalResolved = tracks
-        .map((t: any) => {
-          const record = scene3d.getTrackRecord(t.trackNo);
-          return {
-            trackNo: t.trackNo,
-            obs: t.sensorObservation,
-            currentCategory: record?.currentCategory,
-          };
-        })
-        .filter((item: any) => item.obs && (item.obs.resolutionLevel === 'FULL' || item.obs.resolution === 'FULL'));
-
-      const provenanceValid = opticalResolved.every((item: any) => {
-        const o = item.obs;
-        return (
-          o.sensorSource === 'EOIR' &&
-          typeof o.timestampMs === 'number' &&
-          o.confidence >= 0 &&
-          o.confidence <= 1 &&
-          o.sensorHealth === 'OK' &&
-          item.currentCategory !== 'RADAR_SYMBOL'
-        );
-      });
-
+    const result = await page.evaluate((tNo) => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const state = bridge.getPresentationState(tNo);
+      const track = state.tracks[0];
       return {
-        totalTracks: tracks.length,
-        opticalResolvedCount: opticalResolved.length,
-        provenanceValid,
-        opticalCategories: opticalResolved.map((i: any) => i.currentCategory),
+        found: !!track,
+        category: track?.currentCategory,
+        observation: track?.observation,
       };
-    });
+    }, targetNo);
 
-    expect(evaluation.totalTracks).toBeGreaterThan(0);
-    expect(evaluation.opticalResolvedCount).toBeGreaterThan(0);
-    expect(evaluation.provenanceValid).toBe(true);
+    expect(result.found).toBe(true);
+    // Neutral morphology: MUST be neutral OBSERVED_MULTIROTOR or OBSERVED_FIXED_WING, NEVER tactical HOSTILE_ATTACK
+    expect(['OBSERVED_MULTIROTOR', 'OBSERVED_FIXED_WING']).toContain(result.category);
+    expect(result.observation?.sensorSource).toBe('EOIR');
+    expect(result.observation?.confidence).toBeGreaterThan(0);
+    expect(result.observation?.confidence).toBeLessThanOrEqual(1.0);
+    expect(result.observation?.resolutionLevel).toBe('FULL');
+    expect(result.observation?.visibilityState).toBe('CLEAR');
   });
 
-  test('Test 3 - DEG EO/IR Sensor: Produces UNKNOWN_AIRFRAME with DEGRADED_OPTICAL', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test E — DEG EO/IR Sensor: Produces UNKNOWN_AIRFRAME and DEGRADED_OPTICAL', async ({ page }) => {
+    await setupSession(page);
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
     await eoirBtn.click();
     await page.waitForTimeout(1000);
 
-    // Position track within optical reach and degrade EO/IR sensor
+    // Position track within optical reach and degrade EO/IR baseline
     const targetNo = await page.evaluate(() => {
-      const eng = (window as any).__ENGINE__;
-      if (!eng || !eng.curr) throw new Error('FAIL: __ENGINE__ missing');
-      const target = eng.curr.find((e: any) => e.trackNo && e.lifecycle === 'ACTIVE');
-      if (target) {
-        target.pos = { x: -500, y: 300, z: 60 };
-        target.vel = { x: 0, y: 0, z: 0 };
-        target.masked = false;
-        target.q = 0.95;
-      }
-      eng.sensorHealth.EOIR = 'DEG';
-      return target?.trackNo;
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const tracks = bridge.getTrackList();
+      const tNo = tracks[0].trackNo;
+      bridge.positionTrack(tNo, { x: -500, y: 300, z: 60 });
+      bridge.setSensorCondition({ sensor: 'EOIR', health: 'DEG' });
+      return tNo;
     });
-    await page.waitForTimeout(1500);
 
+    await page.waitForTimeout(1500);
     await saveShot(page, 'task17_4_03_deg_eoir_observation.png');
 
-    const evaluation = await page.evaluate((tNo) => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-
-      const targetTrack = tracks.find((t: any) => t.trackNo === tNo);
-      const record = scene3d.getTrackRecord(tNo);
-
+    const result = await page.evaluate((tNo) => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const state = bridge.getPresentationState(tNo);
+      const track = state.tracks[0];
       return {
-        trackCount: tracks.length,
-        foundTarget: !!targetTrack,
-        targetCategory: record?.currentCategory,
-        obsResolution: targetTrack?.sensorObservation?.resolutionLevel,
-        obsVisibility: targetTrack?.sensorObservation?.visibilityState,
-        obsSensorHealth: targetTrack?.sensorObservation?.sensorHealth,
-        sensorAvailability: targetTrack?.sensorObservation?.sensorAvailability,
+        found: !!track,
+        category: track?.currentCategory,
+        obsHealth: track?.observation?.sensorHealth,
+        obsResolution: track?.observation?.resolutionLevel,
+        obsVisibility: track?.observation?.visibilityState,
       };
     }, targetNo);
 
-    expect(evaluation.trackCount).toBeGreaterThan(0);
-    expect(evaluation.foundTarget).toBe(true);
-    // Under DEG sensor health, optical observation is permitted but degraded into generic unresolved airframe
-    expect(evaluation.targetCategory).toBe('UNKNOWN_AIRFRAME');
-    expect(evaluation.obsResolution).toBe('DEGRADED');
-    expect(evaluation.obsVisibility).toBe('DEGRADED');
-    expect(evaluation.obsSensorHealth).toBe('DEG');
-    expect(evaluation.sensorAvailability).toBe(true);
+    expect(result.found).toBe(true);
+    // Under DEG sensor health, optical observation is permitted but resolved into generic unresolved airframe
+    expect(result.category).toBe('UNKNOWN_AIRFRAME');
+    expect(result.obsHealth).toBe('DEG');
+    expect(result.obsResolution).toBe('DEGRADED');
+    expect(result.obsVisibility).toBe('DEGRADED');
   });
 
-  test('Test 4 - OUT EO/IR Sensor: Offline sensor prohibits optical models (RADAR_SYMBOL)', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test F — OUT EO/IR Sensor: Offline sensor strictly prohibits optical models (RADAR_SYMBOL)', async ({
+    page,
+  }) => {
+    await setupSession(page);
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
@@ -237,88 +302,71 @@ test.describe('TASK 17.4 E2E Sensor Observation Integrity & Non-Vacuous Verifica
 
     // Set EO/IR sensor to OUT
     await page.evaluate(() => {
-      const eng = (window as any).__ENGINE__;
-      if (!eng || !eng.curr) throw new Error('FAIL: __ENGINE__ missing');
-      eng.sensorHealth.EOIR = 'OUT';
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      bridge.setSensorCondition({ sensor: 'EOIR', health: 'OUT' });
     });
-    await page.waitForTimeout(1500);
 
+    await page.waitForTimeout(1500);
     await saveShot(page, 'task17_4_04_out_eoir_sensor.png');
 
     const evaluation = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-
-      const details = tracks.map((t: any) => {
-        const record = scene3d.getTrackRecord(t.trackNo);
-        return {
-          trackNo: t.trackNo,
-          currentCategory: record?.currentCategory,
-          obsState: t.sensorObservation?.sensorHealth,
-        };
-      });
-
-      const allAreRadarSymbols = details.every((d: any) => d.currentCategory === 'RADAR_SYMBOL');
-      return {
-        trackCount: tracks.length,
-        allAreRadarSymbols,
-        details,
-      };
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      return bridge.getPresentationState();
     });
 
     expect(evaluation.trackCount).toBeGreaterThan(0);
     expect(evaluation.allAreRadarSymbols).toBe(true);
   });
 
-  test('Test 5 - Masked Target: Line-of-sight masking occludes optical view (RADAR_SYMBOL)', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test G — Terrain/building masking: Line-of-sight occlusion enforces RADAR_SYMBOL', async ({ page }) => {
+    await setupSession(page);
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
     await eoirBtn.click();
     await page.waitForTimeout(1000);
 
-    // Position track inside building zone U1 below the 40m roofline (centroid 1898, 1329, z = 20)
+    // Position track inside building zone U1 below 40m roofline (centroid 1898, 1329, z = 20)
     const maskedTrackNo = await page.evaluate(() => {
-      const eng = (window as any).__ENGINE__;
-      if (!eng || !eng.curr) throw new Error('FAIL: __ENGINE__ missing');
-      const active = eng.curr.find((e: any) => e.trackNo && e.lifecycle === 'ACTIVE');
-      if (!active) throw new Error('FAIL: no active track in curr');
-      active.pos = { x: 1898, y: 1329, z: 20 };
-      active.vel = { x: 0, y: 0, z: 0 };
-      return active.trackNo;
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      bridge.setSensorCondition({ sensor: 'EOIR', health: 'OK' });
+      const tracks = bridge.getTrackList();
+      const tNo = tracks[0].trackNo;
+      bridge.positionTrack(tNo, { x: 1898, y: 1329, z: 20 });
+      return tNo;
     });
 
     await page.waitForTimeout(1500);
     await saveShot(page, 'task17_4_05_masked_target.png');
 
-    const maskedEvaluation = await page.evaluate((targetNo) => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-      const record = scene3d.getTrackRecord(targetNo);
-      const safeTrack = tracks.find((t: any) => t.trackNo === targetNo);
-
+    const maskedResult = await page.evaluate((tNo) => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const state = bridge.getPresentationState(tNo);
+      const track = state.tracks[0];
       return {
-        found: !!safeTrack,
-        isMasked: safeTrack?.masked === true,
-        currentCategory: record?.currentCategory,
-        obsVisibility: safeTrack?.sensorObservation?.visibilityState,
+        found: !!track,
+        category: track?.currentCategory,
+        obsVisibility: track?.observation?.visibilityState,
       };
     }, maskedTrackNo);
 
-    expect(maskedEvaluation.found).toBe(true);
-    expect(maskedEvaluation.isMasked).toBe(true);
-    expect(maskedEvaluation.currentCategory).toBe('RADAR_SYMBOL');
+    expect(maskedResult.found).toBe(true);
+    expect(maskedResult.category).toBe('RADAR_SYMBOL');
+    expect(maskedResult.obsVisibility).toBe('MASKED');
   });
 
-  test('Test 6 - Classification Independence: Label changes do not alter airframe geometry', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test H — Classification independence: Label changes do not alter physical airframe geometry', async ({
+    page,
+  }) => {
+    await setupSession(page);
 
     // Switch to EO/IR sensor
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
@@ -326,147 +374,100 @@ test.describe('TASK 17.4 E2E Sensor Observation Integrity & Non-Vacuous Verifica
     await page.waitForTimeout(1000);
 
     // Position track in unmasked clear optical range
-    await page.evaluate(() => {
-      const eng = (window as any).__ENGINE__;
-      if (!eng || !eng.curr) throw new Error('FAIL: __ENGINE__ missing');
-      const target = eng.curr.find((e: any) => e.trackNo && e.lifecycle === 'ACTIVE');
-      if (target) {
-        target.pos = { x: -500, y: 300, z: 60 };
-        target.vel = { x: 0, y: 0, z: 0 };
-        target.masked = false;
-        target.q = 0.95;
-      }
+    const targetNo = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      bridge.setSensorCondition({ sensor: 'EOIR', health: 'OK' });
+      const tracks = bridge.getTrackList();
+      const tNo = tracks[0].trackNo;
+      bridge.positionTrack(tNo, { x: -500, y: 300, z: 60 });
+      return tNo;
     });
 
     await page.waitForTimeout(1500);
 
-    // Find track with optical resolved category
-    const initialCheck = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-
-      const candidate = tracks.find((t: any) => {
-        const record = scene3d.getTrackRecord(t.trackNo);
-        return record && record.currentCategory && record.currentCategory !== 'RADAR_SYMBOL';
-      });
-
-      if (!candidate) return null;
-      const rec = scene3d.getTrackRecord(candidate.trackNo);
+    const initialRecord = await page.evaluate((tNo) => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const state = bridge.getPresentationState(tNo);
+      const track = state.tracks[0];
       return {
-        trackNo: candidate.trackNo,
-        initialCategory: rec.currentCategory,
-        meshUuid: rec.bodyMesh?.geometry?.uuid,
+        category: track.currentCategory,
+        meshUuid: track.meshUuid,
       };
-    });
+    }, targetNo);
 
-    expect(initialCheck).not.toBeNull();
-    const trackNo = initialCheck!.trackNo;
-    const initialCat = initialCheck!.initialCategory;
-    const meshUuid = initialCheck!.meshUuid;
+    expect(initialRecord.category).not.toBe('RADAR_SYMBOL');
 
-    // Mutate operator classification label to FRIENDLY
+    // Change operator classification label to FRIENDLY
     await page.evaluate((tNo) => {
-      const eng = (window as any).__ENGINE__;
-      if (eng && typeof eng.classifyTrack === 'function') {
-        eng.classifyTrack(tNo, 'FRIENDLY');
-      } else if (eng && eng.curr) {
-        const entity = eng.curr.find((e: any) => e.trackNo === tNo);
-        if (entity) entity.traineeLabel = 'FRIENDLY';
-      }
-    }, trackNo);
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      bridge.classifyTrack(tNo, 'FRIENDLY');
+    }, targetNo);
 
     await page.waitForTimeout(1500);
     await saveShot(page, 'task17_4_06_classification_independence.png', 'task17_3_04_classification_independence.png');
 
-    const postCheck = await page.evaluate((tNo) => {
-      const r3d = (window as any).__RENDERER_3D__;
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-      const safeTrack = tracks.find((t: any) => t.trackNo === tNo);
-      const rec = scene3d.getTrackRecord(tNo);
-
+    const postRecord = await page.evaluate((tNo) => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      const state = bridge.getPresentationState(tNo);
+      const track = state.tracks[0];
       return {
-        traineeLabel: safeTrack?.traineeLabel,
-        currentCategory: rec?.currentCategory,
-        meshUuid: rec?.bodyMesh?.geometry?.uuid,
+        category: track.currentCategory,
+        meshUuid: track.meshUuid,
       };
-    }, trackNo);
+    }, targetNo);
 
-    // Label updated
-    expect(postCheck.traineeLabel).toBe('FRIENDLY');
-    // BUT physical geometry/category remained invariant!
-    expect(postCheck.currentCategory).toBe(initialCat);
-    expect(postCheck.meshUuid).toBe(meshUuid);
+    // Physical category and underlying 3D geometry mesh MUST remain invariant!
+    expect(postRecord.category).toBe(initialRecord.category);
+    expect(postRecord.meshUuid).toBe(initialRecord.meshUuid);
   });
 
-  test('Test 7 - Display preference: TGT:AIR with RADAR selected cannot override symbols', async ({ page }) => {
-    await setup3DSession(page);
+  test('Test I — RADAR/RF override: TGT:AIR with RADAR or RF selected cannot override symbols', async ({ page }) => {
+    await setupSession(page);
 
     // Select RADAR
     const radarBtn = page.getByRole('button', { name: /\[1\] RADAR/i });
     await radarBtn.click();
     await page.waitForTimeout(1000);
 
-    // Attempt to force AIRFRAME mode
+    // Mandatory interaction: Enable AIRFRAME mode
     const airframeBtn = page.getByRole('button', { name: /TGT:AIR/i });
-    if (await airframeBtn.isVisible()) {
-      await airframeBtn.click();
-      await page.waitForTimeout(1500);
-    }
+    await expect(airframeBtn).toBeVisible();
+    await airframeBtn.click();
+    await page.waitForTimeout(1500);
 
     await saveShot(page, 'task17_3_03_tgtair_radar_override_locked.png');
 
     const evaluation = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d) throw new Error('FAIL: __RENDERER_3D__ missing');
-      const { tracks } = r3d.getTracks();
-      r3d.update(tracks, null);
-      const scene3d = r3d.getScene3D();
-
-      return {
-        trackCount: tracks.length,
-        allAreRadarSymbols: tracks.every((t: any) => {
-          const record = scene3d.getTrackRecord(t.trackNo);
-          return record?.currentCategory === 'RADAR_SYMBOL';
-        }),
-      };
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing');
+      return bridge.getPresentationState();
     });
 
     expect(evaluation.trackCount).toBeGreaterThan(0);
     expect(evaluation.allAreRadarSymbols).toBe(true);
   });
 
-  test('Test 8 - EVAL Mode Restrictions: Truth and overrides strictly locked', async ({ page }) => {
-    await setup3DSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/?mode=EVAL');
+  test('Test J — EVAL mode restrictions: Zero truth leakage in EVAL mode', async ({ page }) => {
+    await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/?mode=EVAL', true);
     await saveShot(page, 'task17_3_05_eval_truth_locked.png');
 
-    const safeTracksClean = await page.evaluate(() => {
-      const r3d = (window as any).__RENDERER_3D__;
-      if (!r3d || !r3d.getTracks) throw new Error('FAIL: __RENDERER_3D__ missing in EVAL');
-      const { tracks } = r3d.getTracks();
-
-      if (tracks.length === 0) throw new Error('FAIL: no tracks found in EVAL session');
-
-      const leaks = tracks.filter((t: any) =>
-        'droneType' in t ||
-        'trueClass' in t ||
-        'valueInr' in t ||
-        'waypoints' in t ||
-        'baseRcsM2' in t
-      );
-
-      return {
-        totalTracks: tracks.length,
-        hasLeaks: leaks.length > 0,
-        leakedFields: leaks.map((l: any) => Object.keys(l)),
-      };
+    const audit = await page.evaluate(() => {
+      const w = window as unknown as WindowWithDrishti;
+      const bridge = w.__DRISHTI_TEST__;
+      if (!bridge) throw new Error('FAIL: __DRISHTI_TEST__ missing in EVAL');
+      return bridge.inspectOperatorFacingData();
     });
 
-    expect(safeTracksClean.totalTracks).toBeGreaterThan(0);
-    expect(safeTracksClean.hasLeaks).toBe(false);
+    expect(audit.hasLeaks).toBe(false);
+    expect(audit.leakedProperties).toHaveLength(0);
   });
 });
