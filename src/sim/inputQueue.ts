@@ -16,7 +16,19 @@ export class InputQueue {
   private queue: UserAction[] = [];
 
   public push(action: UserAction): void {
+    if (action.action.type === 'FIRE') {
+      const trackNo = action.action.trackNo;
+      if (this.hasPendingFire(trackNo)) {
+        return;
+      }
+    }
     this.queue.push(action);
+  }
+
+  public hasPendingFire(trackNo: string): boolean {
+    return this.queue.some(
+      (item) => item.action.type === 'FIRE' && item.action.trackNo === trackNo
+    );
   }
 
   public drainForTick(currentTick: number): UserAction[] {

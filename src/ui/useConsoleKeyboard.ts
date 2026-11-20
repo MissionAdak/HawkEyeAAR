@@ -42,6 +42,10 @@ function handleEngagementKey(key: string, isRepeat: boolean): boolean {
 
   const store = useSessionStore.getState();
   if (key === 'f') {
+    if (store.ui.activeEffector === 'MISSILE') {
+      // Heavy missile requires continuous hold release (handled by EngagementPanel)
+      return true;
+    }
     if (!isRepeat) store.fire(track.trackNo);
     return true;
   }
@@ -68,6 +72,8 @@ function handleEscapeKey(): void {
   }
   store.closeQuickGuide();
   store.closeAar();
+  store.closeScenarioModal();
+  store.closeBriefing();
 }
 
 function handlePauseKey(): void {
@@ -80,7 +86,39 @@ function handlePauseKey(): void {
   }
 }
 
-function handleSystemKey(lowerKey: string, rawKey: string, toggleLowFi: () => void): boolean {
+export interface ConsoleKeyboardActions {
+  toggleLowFi?: () => void;
+  toggle3D?: () => void;
+  setCameraPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void;
+  toggleEnvelopes?: () => void;
+  toggleLos?: () => void;
+  toggleClusters?: () => void;
+  toggleTrainingAid?: () => void;
+  focusSelection?: () => void;
+  resetCamera?: () => void;
+}
+
+function handlePresetKey(
+  lowerKey: string,
+  setPreset?: (preset: 'OBLIQUE' | 'TOP' | 'POST') => void
+): boolean {
+  if (!setPreset) return false;
+  if (lowerKey === 'o') {
+    setPreset('OBLIQUE');
+    return true;
+  }
+  if (lowerKey === 't') {
+    setPreset('TOP');
+    return true;
+  }
+  return false;
+}
+
+function handleSystemKey(
+  lowerKey: string,
+  rawKey: string,
+  actions: ConsoleKeyboardActions
+): boolean {
   const store = useSessionStore.getState();
   if (lowerKey === 'm') {
     store.openAar();
@@ -88,6 +126,12 @@ function handleSystemKey(lowerKey: string, rawKey: string, toggleLowFi: () => vo
   }
   if (lowerKey === 'h' || rawKey === '?') {
     store.openQuickGuide();
+    return true;
+  }
+  if (lowerKey === 's') {
+    if (engineInstance.mode !== 'EVAL' || engineInstance.sessionEnded) {
+      store.openScenarioModal();
+    }
     return true;
   }
   if (rawKey === 'Escape') {
@@ -99,15 +143,42 @@ function handleSystemKey(lowerKey: string, rawKey: string, toggleLowFi: () => vo
     return true;
   }
   if (lowerKey === 'l') {
-    toggleLowFi();
+    actions.toggleLowFi?.();
     return true;
   }
-  return false;
+  if (lowerKey === 'v') {
+    actions.toggle3D?.();
+    return true;
+  }
+  if (lowerKey === 'e') {
+    actions.toggleEnvelopes?.();
+    return true;
+  }
+  if (lowerKey === 'k') {
+    actions.toggleLos?.();
+    return true;
+  }
+  if (lowerKey === 'u') {
+    actions.toggleClusters?.();
+    return true;
+  }
+  if (rawKey === 'Home') {
+    actions.resetCamera?.();
+    return true;
+  }
+  if (lowerKey === 'x') {
+    if (engineInstance.mode !== 'EVAL') {
+      actions.toggleTrainingAid?.();
+    }
+    return true;
+  }
+  return handlePresetKey(lowerKey, actions.setCameraPreset);
 }
 
 export function useConsoleKeyboard(
-  rendererRef: React.MutableRefObject<ConsoleRenderer | null>,
-  setLowFi: React.Dispatch<React.SetStateAction<boolean>>
+  rendererRef: React.RefObject<ConsoleRenderer | null>,
+  setLowFi: React.Dispatch<React.SetStateAction<boolean>>,
+  actions: ConsoleKeyboardActions = {}
 ): void {
   useEffect(() => {
     const toggleLowFi = () => {
@@ -129,10 +200,14 @@ export function useConsoleKeyboard(
       if (handleEngagementKey(lower, e.repeat)) {
         return;
       }
-      handleSystemKey(lower, e.key, toggleLowFi);
+      if (lower === 'f' && !e.repeat && actions.focusSelection) {
+        actions.focusSelection();
+        return;
+      }
+      handleSystemKey(lower, e.key, { ...actions, toggleLowFi });
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [rendererRef, setLowFi]);
+  }, [rendererRef, setLowFi, actions]);
 }

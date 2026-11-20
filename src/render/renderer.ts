@@ -3,17 +3,19 @@ import { EoirLayer } from './eoirLayer';
 import { RfLayer } from './rfLayer';
 import { engineInstance, clockInstance, useSessionStore } from '@/store/sessionStore';
 import { CONFIG } from '@/config';
+import { type FrameDriver, windowDriver } from '@/sim/frameDriver';
+import { calculateRadarSweepAngle } from '@/sim/radarMath';
 
 export class ConsoleRenderer {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private radarLayer: RadarLayer;
-  private eoirLayer: EoirLayer;
-  private rfLayer: RfLayer;
-  private animationFrameId: number | null = null;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly radarLayer: RadarLayer;
+  private readonly eoirLayer: EoirLayer;
+  private readonly rfLayer: RfLayer;
+  private frameDriver: FrameDriver;
   public isLowFidelity: boolean = false;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, initialDriver?: FrameDriver) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Could not get 2D context from canvas');
@@ -22,6 +24,7 @@ export class ConsoleRenderer {
     this.radarLayer = new RadarLayer(CONFIG.thresholds.radarMaxRangeM);
     this.eoirLayer = new EoirLayer();
     this.rfLayer = new RfLayer();
+    this.frameDriver = initialDriver ?? windowDriver();
   }
 
   public setLowFidelity(lowFi: boolean): void {
@@ -29,24 +32,54 @@ export class ConsoleRenderer {
   }
 
   public start(): void {
-    if (this.animationFrameId !== null) return;
+    if (this.frameDriver.isRunning()) return;
 
-    const loop = (frameTs: number) => {
+    this.frameDriver.start((frameTs: number) => {
       this.tickAndRender(frameTs);
-      this.animationFrameId = requestAnimationFrame(loop);
-    };
-
-    this.animationFrameId = requestAnimationFrame(loop);
+    });
   }
 
   public stop(): void {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
+    this.frameDriver.stop();
+  }
+
+  /**
+   * Pluggable FrameDriver handoff (ARCHITECTURE.md §1.3 & Optional Task 14).
+   * Seamlessly swaps frame driver (e.g. windowDriver <-> xrDriver) while
+   * strictly preserving sim accumulator, tick, input queue, and session state.
+   */
+  public setFrameDriver(nextDriver: FrameDriver): void {
+    if (this.frameDriver === nextDriver) return;
+    const wasRunning = this.frameDriver.isRunning();
+    this.frameDriver.stop();
+    this.frameDriver = nextDriver;
+    // Resyncing clock synchronizes lastFrameTs with current wall-time, preventing fast-forward without unpausing an operator-paused clock
+    clockInstance.resync();
+    if (wasRunning) {
+      this.frameDriver.start((frameTs: number) => {
+        this.tickAndRender(frameTs);
+      });
     }
   }
 
+  public getFrameDriver(): FrameDriver {
+    return this.frameDriver;
+  }
+
   private tickAndRender(frameTs: number): void {
+    // If no scenario is loaded or session has ended, keep clock and physics at standby
+    if (!engineInstance.spec || engineInstance.sessionEnded) {
+      this.renderActiveSensor(
+        this.canvas.width,
+        this.canvas.height,
+        0,
+        0,
+        0,
+        false
+      );
+      return;
+    }
+
     // 1. Advance simulation accumulator clock
     const { ticksToRun, alpha } = clockInstance.advance(frameTs);
 
@@ -59,22 +92,7 @@ export class ConsoleRenderer {
     const currentSimMs = (engineInstance.tickIndex + alpha) * 50;
 
     // 4. Visual Sensor Chaos Engine: check active environment chaos events
-    let fogSeverity = 0;
-    let isJamming = false;
-
-    const chaosList = engineInstance.spec?.chaos;
-    if (chaosList) {
-      for (let i = 0; i < chaosList.length; i++) {
-        const c = chaosList[i];
-        if (currentSimMs >= c.tStartMs && currentSimMs <= c.tEndMs) {
-          if (c.type === 'FOG') {
-            fogSeverity = Math.max(fogSeverity, c.severity);
-          } else if (c.type === 'JAMMING') {
-            isJamming = true;
-          }
-        }
-      }
-    }
+    const { fogSeverity, isJamming } = this.computeChaosState(currentSimMs);
 
     // Keep sensor health updated based on active chaos state
     engineInstance.sensorHealth.EOIR = fogSeverity > 0 ? 'DEG' : 'OK';
@@ -85,31 +103,59 @@ export class ConsoleRenderer {
       useSessionStore.getState().setUiSnapshot(engineInstance.buildUiSnapshot());
     }
 
-    // 6. Compute radar sweep rotation angle (30 RPM = 1 rev per 2000 ms)
-    const sweepPeriodMs = CONFIG.thresholds.radarSweepPeriodMs || 2000;
-    const sweepProgress = (currentSimMs % sweepPeriodMs) / sweepPeriodMs;
-    // 0 rad is at 3 o'clock (090 deg), sweep starts at 12 o'clock (000 deg = -PI/2) and turns clockwise
-    const sweepAngleRad = -Math.PI / 2 + sweepProgress * Math.PI * 2;
+    // 6. Dispatch rendering to active sensor mode pipeline
+    this.renderActiveSensor(
+      this.canvas.width,
+      this.canvas.height,
+      currentSimMs,
+      alpha,
+      fogSeverity,
+      isJamming
+    );
+  }
 
-    // 7. Dispatch rendering to active sensor mode pipeline
-    const width = this.canvas.width;
-    const height = this.canvas.height;
+  private computeChaosState(currentSimMs: number): { fogSeverity: number; isJamming: boolean } {
+    let fogSeverity = 0;
+    let isJamming = false;
+
+    const chaosList = engineInstance.spec?.chaos;
+    if (chaosList) {
+      for (const c of chaosList) {
+        if (currentSimMs >= c.tStartMs && currentSimMs <= c.tEndMs) {
+          if (c.type === 'FOG') {
+            fogSeverity = Math.max(fogSeverity, c.severity);
+          } else if (c.type === 'JAMMING') {
+            isJamming = true;
+          }
+        }
+      }
+    }
+
+    return { fogSeverity, isJamming };
+  }
+
+  private renderActiveSensor(
+    width: number,
+    height: number,
+    currentSimMs: number,
+    alpha: number,
+    fogSeverity: number,
+    isJamming: boolean
+  ): void {
     const activeSensor = engineInstance.activeSensor;
 
     if (activeSensor === 'RADAR') {
-      this.radarLayer.renderDynamic(
-        this.ctx,
-        width,
-        height,
+      const { sweepAngleRad } = calculateRadarSweepAngle(currentSimMs);
+
+      this.radarLayer.renderDynamic(this.ctx, width, height, {
         sweepAngleRad,
-        engineInstance.curr,
-        engineInstance.prev,
+        currEntities: engineInstance.curr,
+        prevEntities: engineInstance.prev,
         alpha,
-        engineInstance.selectedTrackNo,
-        engineInstance.spec?.zones || []
-      );
+        selectedTrackNo: engineInstance.selectedTrackNo,
+        zones: engineInstance.spec?.zones || [],
+      });
     } else if (activeSensor === 'EOIR') {
-      // Calculate thermal camera boresight azimuth (defaults to selected track or 000°)
       let eoirAzimuth = engineInstance.eoirAzimuthDeg;
       if (engineInstance.selectedTrackNo) {
         const sel = engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo);

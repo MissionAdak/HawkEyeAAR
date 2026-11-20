@@ -14,7 +14,7 @@ describe('Adaptive Red Team Director & Determinism (TASK-P4-01, P4-02, P4-03)', 
 
     expect(spec1.seed).toBe(spec2.seed);
     expect(spec1.id).toBe(spec2.id);
-    expect(spec1.threats.length).toBe(spec2.threats.length);
+    expect(spec1.threats).toHaveLength(spec2.threats.length);
     expect(spec1.features).toEqual(spec2.features);
     expect(validate(spec1)).toBe(true);
   });

@@ -4,7 +4,7 @@ export type { TrackClass, TrueClass };
 
 export type SensorMode = 'RADAR' | 'EOIR' | 'RF';
 export type ZoneType = 'URBAN' | 'RIDGE' | 'FOREST';
-export type Profile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'LOITER';
+export type Profile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'LOITER' | 'POP_UP_DIVE';
 export type EffectorId = 'RF_SOFTKILL' | 'LASER' | 'GUN' | 'INTERCEPTOR' | 'MISSILE';
 export type ChaosType = 'FOG' | 'JAMMING' | 'RAIN' | 'RADAR_DROPOUT';
 
@@ -76,6 +76,25 @@ export interface ZoneSpec {
   rho: number;
 }
 
+export type FormationKind = 'LINE_ABREAST' | 'V_WEDGE' | 'STACK' | 'DECOY_LEAD' | 'HELIX';
+
+export interface FormationMemberSpec {
+  groupId: string;
+  kind: FormationKind;
+  index: number;
+  count: number;
+  leaderId: string;
+  spacingM?: number;
+}
+
+export interface FormationGroupSpec {
+  groupId: string;
+  kind: FormationKind;
+  leaderId: string;
+  memberIds: string[];
+  spacingM: number;
+}
+
 export interface ThreatSpawn {
   id: string;
   droneType: DroneType;
@@ -89,6 +108,7 @@ export interface ThreatSpawn {
   emitsRf: boolean;
   remoteId: boolean;
   iff: boolean;
+  formation?: FormationMemberSpec;
 }
 
 export interface ChaosSpec {
@@ -112,12 +132,14 @@ export interface TriggerSpec {
   maxFires: 1;
 }
 
+export type SessionMode = 'TRAIN' | 'EVAL' | 'DEMO';
+
 export interface ScenarioSpec {
   id: string;
   schemaVersion: 1;
   simVersion: string;
   configHash: string;
-  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  mode: SessionMode;
   seed: number;
   difficulty: number;
   dayNight: 'DAY' | 'NIGHT';
@@ -131,6 +153,7 @@ export interface ScenarioSpec {
   roeText: string;
   levers: { id: string; reason: string }[];
   features: number[];
+  formations?: FormationGroupSpec[];
   benchId?: string;
 }
 
@@ -146,6 +169,7 @@ export type SimEventType =
   | 'CLASSIFY'
   | 'ENGAGE'
   | 'ENGAGE_RESULT'
+  | 'RELEASE_BLOCKED'
   | 'ASSESS'
   | 'CHAOS_ON'
   | 'CHAOS_OFF'
@@ -172,7 +196,7 @@ export type Grade = 'PROFICIENT_IN_SIMULATION' | 'DEVELOPING' | 'NEEDS_RETRAININ
 
 export interface AARMetrics {
   sessionUid: string;
-  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  mode: SessionMode;
   score: number;
   grade: Grade;
   metMs: number | null;
@@ -198,6 +222,9 @@ export interface AARMetrics {
   econScore: number;
   rScore: number;
   confusion: number[][];
+  trainingAidTicks?: number;
+  trainingAidDurationSec?: number;
+  trainingAidUsed?: boolean;
 }
 
 export interface UserAction {

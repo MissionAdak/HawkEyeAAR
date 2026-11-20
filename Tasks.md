@@ -329,3 +329,169 @@ Files: `tools/launcher/*`, `README-OFFLINE.txt`
 | AC-9 | Leaderboards/percentiles from EVAL only; trends show `d` | P3-09, P3-10, P4-06 |
 | AC-10 | Every hostile has a ≥ 6 s sensing window with `q ≥ Q_min` | P4-02 |
 | AC-11 | Network disabled ⇒ full scenario, zero outgoing requests | P0-05, P5-02 |
+
+---
+
+## Track X3D — Optional Three.js 3D Feature Pack (Post-H36 Extension)
+
+All tasks in this track are planned additions. The existing 2D Canvas baseline remains fully implemented, verified, and active.
+
+### TASK-3D-01 — 3D Renderer Foundation, Lazy Chunking & View Toggle · P1 · A · 2.5 h
+Files: `src/render3d/{index,renderer3d,capability,coords}.ts`, `vite.config.ts`, `src/ui/Console.tsx`
+- [x] Vite rollup chunking configuration: isolate `three` and `src/render3d/**` into `render3d.[hash].js`. **AC:** Production build emits separate 3D chunk under 1.5 MB; initial entry bundle contains 0 bytes of Three.js.
+- [x] WebGL2 capability detection and error recovery: probe `canvas.getContext('webgl2')`. On failure, disable 3D toggle (`NO WEBGL2`); on `webglcontextlost`, seamlessly fall back to 2D console with banner. **AC:** Unit/e2e test verifies simulated context loss immediately restores 2D canvas without pausing or crashing simulation.
+- [x] Tactical viewport and camera presets: landscape canvas embedding with zero vertical scroll at 1366×768; camera presets `OBLIQUE`, `TOP`, `POST`. **AC:** `V` hotkey toggles 2D/3D in $< 16\text{ ms}$; Playwright asserts `scrollHeight <= innerHeight` at 1366×768.
+
+### TASK-3D-02 — Safe Track View-Model & Ground-Truth Redaction Boundary · P0 · B · 1.5 h
+Files: `src/render3d/types.ts`, `src/ui/Console.tsx`, `tests/unit/render3d.spec.ts`
+- [x] Define `SafeTrackView` interface excluding `trueClass`, `droneType`, true `pos`, and `valueInr`. **AC:** TypeScript compilation enforces that `src/render3d/` imports only `SafeTrackView`, not `TrackEntity`.
+- [x] Implement `projectSafeTracks()` projection in `src/ui/Console.tsx`. **AC:** Unit tests in `render3d.spec.ts` assert 0 ground truth fields are exposed to live 3D renderers.
+- [x] Address Tracker Blocker: Identified architectural limitation (OQ-09 & Task 10) where `SafeTrackView.vel` reflects instantaneous velocity rather than Kalman filter estimate; visual predictor aid was halted per specification to prevent truth leak.
+
+### TASK-3D-03 — Reactive Sensor Coverage Volumes · P1 · A · 2.5 h
+Files: `src/render3d/coverage.ts`, `src/sim/sensors.ts`, `tests/unit/render3d.spec.ts`
+- [x] Radar 4th-power coverage hemisphere: radius derived from radar equation SNR ($R \propto A_{\text{env}}^{1/4}$); reacts dynamically to `RAIN` and collapses on `RADAR_DROPOUT`. **AC:** Unit test asserts visual dome radius matches radar equation $R_{90}$ threshold.
+- [x] Directional EO/IR wedge: spherical lune oriented along sensor boresight azimuth, expanding/contracting based on `FOG` and day/night state.
+- [x] RF sensor bearing lines: directional bearing spokes drawn on ground plane, blanked during `RF_JAMMING`.
+
+### TASK-3D-04 — Effector Range Envelopes & PNR Boundary · P1 · B · 2.0 h
+Files: `src/render3d/effectorEnvelopes.ts`, `src/sim/effectors.ts`, `tests/unit/render3d.spec.ts`
+- [x] Effector engagement domes: translucent spherical shells representing active weapon min/max engagement envelopes (RF Jammer, Laser, Gun, Interceptor, Missile).
+- [x] PNR perimeter cylinder: vertical boundary ring at $R_{\min} = 500\text{ m}$ rendered in warning red (`threat`). **AC:** Visual envelope boundaries match `CONFIG.effectors` ranges within 1 metre.
+
+### TASK-3D-05 — Line-of-Sight & Masking Explanation matching evaluateMasking · P1 · A · 2.0 h
+Files: `src/render3d/losVisualizer.ts`, `src/sim/masking.ts`, `tests/unit/render3d.spec.ts`
+- [x] Authoritative line-of-sight ray: draws LOS vector from antenna $(0, 0, h_r)$ to target. If `evaluateMasking()` returns `isMasked: true`, ray changes color and terminates at the near obstacle edge $d_{\text{near}}$.
+- [x] Extruded obstacle shadow volumes: shadow geometry projected behind urban blocks matching the exact near-edge distance and shadow length from `evaluateMasking()`. **AC:** Target visual occlusion aligns 100% with the simulation's `masked` event timestamp.
+
+### TASK-3D-06 — Spatial Cluster Overlay & Altitude Bins · P1 · D · 1.5 h
+Files: `src/render3d/clusters.ts`, `src/render3d/clusterMath.ts`, `tests/unit/clusters.spec.ts`
+- [x] Operator-visible spatial clustering: lightweight distance grouping on observed safe tracks to highlight swarm formations with convex hull boundary.
+- [x] 3-band altitude stems: vertical drop lines from drone to terrain surface categorized into `LOW` (< 40m), `MED` (40–100m), and `HIGH` (> 100m) bands. **AC:** 13 unit tests pass covering cluster math and visual overlays.
+
+### TASK-3D-07 — TRAIN-Only Decision Aids with EVAL Lockout · P2 · C · 2.5 h
+Files: `src/render3d/trainingAid.ts`, `src/render3d/trainingAidMath.ts`, `src/ui/CrossSectionPanel.tsx`, `tests/unit/trainingAid.spec.ts`
+- [x] Class B aids: Coverage blind-spot shadow map, reference RCS shells, and 2D elevation cross-section panel along bearing.
+- [x] EVAL mode lockout: Training aid hotkey `[X]` and cross-section button are strictly locked in `EVAL` mode (`AIDS LOCKED`); active aid duration in TRAIN is logged in session telemetry. (Trajectory extrapolation aid halted per Task 10 precondition).
+
+### TASK-3D-08 — Post-Session 3D AAR Truth Replay · P2 · D · 3.0 h
+Files: `src/ui/aar/AarReplay3D.tsx`, `src/render3d/aarScene3d.ts`, `tests/unit/aarReplay3d.spec.tsx`
+- [x] Full 3D historical scrubber: timeline scrubber rewinds and replays drone trajectories in 3D using recorded `SimSnapshot` frames.
+- [x] Ground truth unmasking: displays true drone type, true classification, and unobserved waypoints in debrief mode only. **AC:** 9 unit tests pass verifying truth isolation and snapshot interpolation.
+
+### TASK-3D-09 — Engagement Inspector · P2 · B · 2.0 h
+Files: `src/ui/aar/AarEngagementInspector.tsx`, `src/ui/aar/engagementInspectorData.ts`, `tests/unit/aarInspector.spec.tsx`
+- [x] Retrospective engagement breakdown: visualizes the exact geometry at the fire tick using recorded engagement event parameters ($u, P_{k0}, g, h$).
+- [x] Caption compliance: displays mandatory disclaimer `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`. **AC:** 13 unit tests pass.
+
+### TASK-3D-10 — Experimental WebXR VR Support · P2 · A · 4.0 h
+Files: `src/render3d/capability.ts`, `Rules.md`
+- [ ] WebXR table-top presentation: immersive virtual tactical table at 1:10,000 scale.
+- [x] Experimental status: labeled `VR (EXPERIMENTAL, UNVERIFIED)` — no physical headset session has been run or recorded. Physical hardware validation deferred until DSSC headset hardware is provisioned.
+
+---
+
+## Phase 6 — Scenario Catalog & Training Exercises (TASK 12)
+
+### TASK-12-01 — Scenario Catalog, Multi-Class Exercises & Evaluated Selector UI · P0 · C/D · 3.5 h
+Files: `src/director/catalog.ts`, `src/ui/ScenarioModal.tsx`, `src/ui/TrackTable.tsx`, `src/ui/Console.tsx`, `src/ui/HotWash.tsx`, `src/store/sessionStore.ts`, `tests/unit/catalog.spec.ts`, `tests/e2e/scenario.spec.ts`
+- [x] Typed Scenario Catalog: Implemented 5 validated scenario entries (`DEMO-1`, `DEMO-2`, `SWARM-1`, `SPECTRUM-1`, `PROCEDURAL-1`) complying strictly with `ScenarioSpec` and `validateDetailed()` fairness criteria. **AC:** All 5 scenarios validate with zero fairness/timeline errors.
+- [x] Full-Spectrum 6-Class Coverage: `SPECTRUM-1` encompasses all 6 ground-truth airspace classes (`HOSTILE_ATTACK`, `HOSTILE_ISR`, `SWARM_ELEMENT`, `CIVIL_UAS`, `BIRD`, `FRIENDLY` with active IFF).
+- [x] Evaluated Session Lifecycle & Recorder Sequencing: `loadScenario` awaits `activeRecorder.stop()`, eliminating race conditions and preserving previous session AAR event data in IndexedDB.
+- [x] Scenario Selector UI & Confirmation Guard: Accessible tactical scenario selection modal with objective descriptions, class badges, active indicator, explicit restart action, and a confirmation dialog before replacing active running sessions. Locked in EVAL mode.
+- [x] Verification & Test Suite: 17 unit tests in `catalog.spec.ts` (247 unit tests total) and 5 Playwright E2E tests in `scenario.spec.ts` (11 E2E tests total) pass at 1366×768 and 1280×700 with zero overflow.
+
+### TASK-12A-01 — Scenario Selector Final Consistency & Session-Lifecycle Audit · P0 · C/D · 2.0 h
+Files: `src/store/sessionStore.ts`, `src/director/catalog.ts`, `src/db/recorder.ts`, `src/ui/ScenarioModal.tsx`, `tests/unit/catalog.spec.ts`, `tests/e2e/scenario.spec.ts`
+- [x] Active Session Finalization Before Scenario Switch: `loadScenario` checks active session state, aborts old session with `SCENARIO_SWITCH` termination reason and aggregate metrics, records exactly one `SESSION_END` event to the old recorder, pauses the clock, awaits full persistence/flush, and prevents action queue mutation during transition.
+- [x] No Duplicate `SESSION_END`: If a session has already naturally completed or was previously aborted, switching scenarios drains pending writes without appending duplicate terminal events.
+- [x] Honest Persistence Error Handling: If recorder flush fails during scenario switch, the store rejects the load, catches the error honestly, and refuses to claim the new scenario is active.
+- [x] Fresh Restart-Seed Semantics & Exact Replay Action: `restartSession()` generates a fresh 31-bit local seed without network calls via `generateLocalSeed()` and applies it across all catalog specs; `SIM_START` records the new seed; previous session replay data is preserved. `rerunExactSeedSession()` is provided as an explicit benchmark action.
+- [x] Scenario Durations & Catalog Metadata Reconciled: All catalog scenario specs verified at `120s` (`durationMs: 120_000`), strictly complying with `ScenarioSpec.durationMs: 120_000 | 30_000` schema. `durationSec: 120` displayed in `ScenarioModal` UI and verified in E2E.
+- [x] Procedural Scenario Difficulty Reconciled: Procedural generator defaults verified at `d = 0.3` (`difficulty = 0.3`) across code, UI disclaimer, and test suite.
+- [x] Verification & Test Coverage: 24 unit tests in `catalog.spec.ts` (254 unit tests total across 24 files, all passing), 11 Playwright E2E tests passing, ESLint 0 errors / 0 warnings, production build clean at 1.50 MB total bundle.
+
+---
+
+## Phase 7 — Unpredictable Assessment (TASK 13)
+
+### TASK-13-01 — RANDOM-1 Dedicated Unpredictable Assessment · P0 · B/C/D · 2.5 h
+Files: `src/director/randomScenario.ts`, `src/director/catalog.ts`, `src/store/sessionStore.ts`, `tests/unit/randomScenario.spec.ts`, `tests/unit/catalog.spec.ts`, `tests/e2e/scenario.spec.ts`
+- [x] Dedicated RANDOM-1 Generator: Implemented `generateRandomScenario(seed, difficulty)` producing distinct, valid tactical air-defense encounters deterministically keyed to the seed.
+- [x] Meaningful Multi-Class Variation: Varies hostile threat count (2 to 4), class composition (FPV Attack, Recon Quad, Swarm Element), decoy and clutter count (2 to 4), civil drones, birds, and friendly transits with IFF across 360-degree approach axes.
+- [x] Fairness Validation & Bounded Retries: Generates and evaluates candidates with `validateDetailed(spec)` enforcing sensing windows, effector feasibility, and PNR bounds with bounded retries; never starts an unvalidated fallback.
+- [x] Hidden Ground Truth Protection: Operator-facing UI and track tables only reveal detected, active tracks without exposing planned compositions or future arrival schedules.
+- [x] Seed Semantics & Replay: Fresh seed generated for each restart via `crypto.getRandomValues`; exact seed replay supported via `rerunExactSeedSession()`.
+- [x] Verification & Automated Test Suite: 12 unit tests in `randomScenario.spec.ts`, 24 unit tests in `catalog.spec.ts` (266 unit tests total across 25 files), and 12 Playwright E2E tests passing.
+
+---
+
+## Phase 8 — 3D Tactical Environment, Realistic Weather, Camera Navigation & Object Inspection (TASK 16)
+
+### TASK-16-01 — Procedural 3D Tactical Environment & Terrain · P0 · B/D · 3.0 h
+Files: `src/render3d/environment/types.ts`, `src/render3d/environment/descriptor.ts`, `src/render3d/environment/terrain.ts`, `src/render3d/environment/buildings.ts`, `src/render3d/environment/vegetation.ts`, `src/render3d/environment/environmentManager.ts`
+- [x] 6 Deterministic Presets: `URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL` mapped to scenarios deterministically.
+- [x] Procedural Structures & Air Defense Base: C2 Command bunker with S-band surveillance radar array, beacon mast, perimeter security fence, RF triangulator towers, and multi-story urban buildings matching scenario zone heights and bounds.
+- [x] Instanced Vegetation: Low-poly conifer and broad-canopy trees generated via `THREE.InstancedMesh` (hundreds of trees across forest zones in only 2 draw calls) with selectable bounding proxies.
+- [x] Zone Integration: Terrain elevation and masking buildings adhere to scenario `ZoneSpec` boundaries without conflicting with `evaluateMasking()`.
+
+### TASK-16-02 — Advanced 3D Camera Navigation & Touch Controls · P0 · B/C · 2.5 h
+Files: `src/render3d/cameraController.ts`, `src/render3d/renderer3d.ts`, `src/ui/Console.tsx`, `src/ui/useConsoleKeyboard.ts`
+- [x] 6-DOF Tactical Navigation: Orbit (LMB drag), horizontal plane panning (RMB drag, MMB drag, Shift+LMB drag), cursor-anchored zoom (scroll wheel rays against ground plane).
+- [x] Zoom & Angle Safety Clamps: Strict polar angle clamping (`0.005` to `PI/2 - 0.015`) prevents camera inversion or looking under ground; zoom range clamped between 80m and 30,000m.
+- [x] Focus & Reset Actions: Double-click aircraft, environmental object, or ground point to smoothly focus camera; `Home` key resets to preset default; `[F]` hotkey focuses selected entity.
+- [x] Multi-Touch Gestures: 1-finger orbit, 2-finger pan and pinch-to-zoom for mobile/tablet operator consoles.
+- [x] Controls Guide HUD: Clear tactical hint bar: `DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [F] | RESET: [HOME]`.
+
+### TASK-16-03 — Environment Object Inspection & Information Security · P0 · B/D · 2.0 h
+Files: `src/render3d/scene3d.ts`, `src/render3d/renderer3d.ts`, `src/ui/EnvironmentInspector.tsx`, `src/ui/Console.tsx`
+- [x] Dual-Domain Picking: Separate raycasting pipelines for airborne tracks vs environmental terrain objects. Clicking scenery never generates `DESIGNATE`, `CLASSIFY`, or `FIRE` actions.
+- [x] Environment Inspector Panel: Tactical dark-themed HUD displaying ID, name, category badge, preset, zone reference, coordinates (E, N), height, elevation, masking shadow/rho, and `[F] FOCUS` button.
+- [x] Information Boundary Guard: Strictly excludes simulation ground truth (no trueClass, droneType, valueInr, or secret waypoints).
+
+### TASK-16-04 — Dynamic Atmospheric Weather & Timeline Synchronization · P0 · B · 2.0 h
+Files: `src/render3d/environment/weather.ts`, `src/ui/MissionBriefing.tsx`, `src/render3d/aarScene3d.ts`, `src/ui/aar/AarReplay3D.tsx`
+- [x] Time & Chaos-Driven Atmosphere: Dynamic fog density, precipitation rain particles, and daylight/night operational lighting driven strictly by simulation time (`simMs = tickIndex * 50`) and `ChaosSpec`.
+- [x] Zero Math.random / Zero Date.now: Rain lines derive deterministic vertical displacement from `(y - (simMs * speed) % boxHeight)`, achieving 100% bit-for-bit parity in live sim and AAR replay.
+- [x] Mission Briefing Card: Tactical Environment & Weather summary card with preset badges, lighting, atmosphere, and radar reach advisory.
+- [x] Low-Fidelity Mode [L]: Reduced particle counts and simplified geometries for low-end hardware target (i3, 4GB RAM, integrated GPU).
+
+---
+
+## Phase 9 — 3D Engagement Animations, Target Diversity, Tactical Radar & Operator Feedback (TASK 17)
+
+### TASK-17-01 — Target Model Diversity & Ground-Truth Protection · P0 · B/D · 2.5 h
+Files: `src/render3d/targets/*`, `src/render3d/scene3d.ts`, `tests/unit/targetModels.spec.ts`
+- [x] Full Target Model Diversity: Procedural 3D models for all operational categories: FPV Attack Drone (canted forward snout, X-frame, rotor guards), Recon Quadcopter (underslung gimbal, wide frame), Swarm Element (compact quadrotor, high-RPM discs), Loitering Munition (canted delta wing, pusher prop), Civilian Drone (consumer white quadcopter), Friendly UAV (transponder beacon, standard quad), and Bird (organic winged silhouette).
+- [x] Strict Ground-Truth Protection (Rules R3.3 & R3.4): Live 3D view strictly visualizes contacts based on operator trainee assessment (`traineeLabel`). Misclassifying an attack drone as civil renders a civilian quadcopter model, confirming the operator's current hypothesis without truth leaks. Secret ground truth (`trueClass`, `droneType`, value, waypoints) is only projected during post-session AAR when explicitly authorized.
+- [x] Forgiving 3D Raycasting Hit Proxies: Generous bounding hit proxies and meshes tagged with `userData.trackNo` and `userData.targetCategory` for reliable single-click and double-click targeting.
+
+### TASK-17-02 — 3D Engagement Visual Effects & AAR Scrubbing · P0 · A/B · 3.0 h
+Files: `src/render3d/effects/*`, `src/render3d/scene3d.ts`, `src/render3d/aarScene3d.ts`, `tests/unit/engagementEffects.spec.ts`
+- [x] Realistic Weapon Engagement Visuals:
+  - `GUN`: Muzzle flash burst at battery, 3 high-velocity staggered tracer rounds.
+  - `LASER`: Instantaneous coherent directed-energy beam with atmospheric fog scatter and target thermal burn glow.
+  - `RF_SOFTKILL`: Strictly non-kinetic expanding directional electromagnetic wavefront ripple rings and target electronic interference shell.
+  - `INTERCEPTOR`: Friendly counter-drone launch and ballistic trajectory intercept.
+  - `MISSILE`: Launch flash, high-speed rocket motor body, flame, and lingering smoke trail.
+- [x] Restrained Non-Graphic Outcomes: Tactical energy dissipation spark ring on neutralization; deflected tracer bounce or fizzle on ineffective engagement.
+- [x] 100% Deterministic simMs Scrubbing: Effect lifecycle driven strictly by `simMs` clock. Scrubbing backward in post-session AAR purges future effects and re-syncs forward events deterministically. Blocked releases (`RELEASE_BLOCKED`) never trigger weapon fire animation.
+
+### TASK-17-03 — Randomized Environment Structure Scatter · P0 · B · 1.5 h
+Files: `src/render3d/environment/buildings.ts`, `tests/unit/environmentScatter.spec.ts`
+- [x] Seeded Deterministic Scatter: Procedural buildings placed via dedicated PRNG (`mulberry32`) avoiding rigid uniform grids.
+- [x] Exclusion Zones & Collision Avoidance: Central C2 command post (150m radius), surveillance radar mast, secondary RF towers, and coastal airfield runway corridors strictly excluded from obstruction placement.
+- [x] Stable Inspectable IDs: All scattered buildings tagged with permanent IDs (`BLD-${zone.id}-${index}`) for Environment Inspector picking.
+
+### TASK-17-04 — 3D Tactical Radar Sweep Visualization · P0 · A/B · 1.5 h
+Files: `src/render3d/radarSweep3d.ts`, `src/sim/radarMath.ts`, `src/render3d/scene3d.ts`, `src/render3d/aarScene3d.ts`, `tests/unit/radarSweep3d.spec.ts`
+- [x] 100% Rotational Synchronization: 3D rotating antenna dish atop primary C2 mast and translucent ground scan sector synchronized with 2D Canvas sweep line (30 RPM = 2.0s period) via shared `calculateRadarSweepAngle(simMs)`.
+- [x] Sensor Health Integration: Scan beam adapts dynamically: NOMINAL (phosphor green), DEGRADED (amber warning), OUT (hidden during radar dropout or jamming).
+
+### TASK-17-05 — Intelligent Tactical Operator Feedback System · P0 · B/D · 2.0 h
+Files: `src/sim/operatorFeedback.ts`, `src/sim/engine.ts`, `src/store/sessionStore.ts`, `src/ui/OperatorFeedbackToast.tsx`, `src/ui/Console.tsx`, `tests/unit/operatorFeedback.spec.ts`
+- [x] Typed Non-Disruptive Operator Feedback: Real-time feedback explaining all hard blocks (`Q_MIN_VIOLATION`, `PNR_VIOLATION`, `INACTIVE_TARGET`, `OUT_OF_ENVELOPE`, `RF_JAMMING_ACTIVE`, `RF_SILENT_TARGET`), soft ROE warnings (`KINETIC_OVER_DENSE_ZONE`, `ROE_CONFIRMATION_REQUIRED`), and engagement outcomes.
+- [x] Actionable Metrics: Measured vs required telemetry (`actual: 45%, required: >= 60%`), title, cause, and recommended operator action.
+- [x] Anti-Spam Throttling: Suppresses repeated duplicate blocks within 1.5s window. Non-blocking HUD toast with auto-expiry (5s) and manual dismiss.
+
+

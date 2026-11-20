@@ -20,6 +20,12 @@ test.describe('Air-Gap & Zero-Network Compliance (ZS-5, AC-11)', () => {
     // Load local static build via local loopback
     await page.goto('/');
 
+    // Start session from Mission Briefing to verify simulation runs offline
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    if (await startBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await startBtn.click();
+    }
+
     // Wait 3 seconds to let simulation tick and render
     await page.waitForTimeout(3000);
 

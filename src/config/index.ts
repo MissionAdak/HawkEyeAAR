@@ -1,4 +1,4 @@
-import { APP_CONFIG, CONFIG_HASH, type AppConfig } from './config.generated';
+import { APP_CONFIG } from './config.generated';
 import { ConfigSchema, type ValidatedConfig } from './schema';
 
 // Validate at load time to catch any build/schema discrepancies
@@ -9,5 +9,5 @@ if (!validationResult.success) {
 }
 
 export const CONFIG: ValidatedConfig = validationResult.data;
-export { CONFIG_HASH };
-export type { AppConfig };
+export { CONFIG_HASH, type AppConfig } from './config.generated';
+

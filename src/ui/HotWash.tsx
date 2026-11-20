@@ -1,18 +1,27 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
-import type { EffectorId } from '@/sim/types';
+import type { EffectorId, ScenarioSpec, ZoneSpec } from '@/sim/types';
 import demo1Spec from '@/director/bundled/demo1.json';
-import type { ScenarioSpec } from '@/sim/types';
+import { AarEngagementInspector } from './aar/AarEngagementInspector';
+import {
+  extractEngagementInspectionData,
+  type AarEngagementInspectionData,
+} from './aar/engagementInspectorData';
+import { AarReplaySection } from './aar/AarReplaySection';
 
 interface HotWashProps {
   onClose: () => void;
 }
 
 export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
-  const loadScenario = useSessionStore((s) => s.loadScenario);
+  const restartSession = useSessionStore((s) => s.restartSession);
+  const rerunExactSeedSession = useSessionStore((s) => s.rerunExactSeedSession);
+  const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
+  const returnToBriefing = useSessionStore((s) => s.returnToBriefing);
+  const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
 
   // Reconstruct metrics from raw event log
   const metrics = aggregateAARMetrics(
@@ -46,12 +55,19 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
     }
   };
 
+  const [inspectingEngagement, setInspectingEngagement] = useState<AarEngagementInspectionData | null>(null);
+
   // Find all engaged tracks to show Oracle decision comparison
   const engagedTracks = engineInstance.curr.filter((e) => e.engagements > 0);
 
   const handleRestart = () => {
-    loadScenario(demo1Spec as unknown as ScenarioSpec);
+    void restartSession();
     onClose();
+  };
+
+  const handleSelectScenario = () => {
+    onClose();
+    openScenarioModal();
   };
 
   return (
@@ -65,6 +81,9 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </span>
             <span className="text-[10px] text-text-dim border border-line px-1.5 py-0.5">
               SIH26247 DOCTRINE ENGINE
+            </span>
+            <span className="text-[10px] text-phosphor border border-line px-1.5 py-0.5 font-bold bg-carbon-950">
+              SCENARIO: {engineInstance.spec?.id ?? currentScenarioId}
             </span>
           </div>
 
@@ -220,6 +239,23 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                 </div>
               </div>
             </div>
+
+            {/* Training Aid Transparency Metadata (Task F5) */}
+            <div className="mt-2 p-2 border border-line bg-carbon-900/60 flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center gap-2">
+                <span className="text-text-dim">F5 TRAINING AID:</span>
+                {metrics.trainingAidUsed ? (
+                  <span className="text-amber font-bold">
+                    ACTIVE FOR {metrics.trainingAidDurationSec ?? 0}s (SIMULATION TICKS)
+                  </span>
+                ) : (
+                  <span className="text-phosphor font-bold">OFF / ZERO USAGE</span>
+                )}
+              </div>
+              <span className="text-[9px] text-text-dim">
+                TRANSPARENCY METADATA ONLY (NO SCORE PENALTY)
+              </span>
+            </div>
           </div>
 
           {/* 3. Confusion Matrix 6x8 */}
@@ -251,12 +287,12 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                         {PRED_COLUMNS.map((predCls, colIdx) => {
                           const val = rowData[colIdx] || 0;
                           const isMatch = trueCls === predCls;
-                          const cellBg =
-                            val > 0
-                              ? isMatch
-                                ? 'bg-phosphor/20 text-phosphor font-bold'
-                                : 'bg-threat/20 text-threat font-bold'
-                              : 'text-text-dim';
+                          let cellBg = 'text-text-dim';
+                          if (val > 0) {
+                            cellBg = isMatch
+                              ? 'bg-phosphor/20 text-phosphor font-bold'
+                              : 'bg-threat/20 text-threat font-bold';
+                          }
 
                           return (
                             <td key={predCls} className={`p-1 border-l border-line/40 ${cellBg}`}>
@@ -271,6 +307,13 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
               </table>
             </div>
           </div>
+
+          {/* Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */}
+          <AarReplaySection
+            events={engineInstance.events}
+            spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
+            zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
+          />
 
           {/* 4. Trainee vs Oracle Decision & Cost Regret */}
           <div>
@@ -312,17 +355,45 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                           </div>
                         </div>
 
-                        <div className="text-right space-y-0.5">
-                          <div className="text-[10px] text-text-dim">
-                            ORACLE RECOMMENDATION: <span className="text-phosphor font-bold">{oracle.oracleEffector}</span>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right space-y-0.5">
+                            <div className="text-[10px] text-text-dim">
+                              ORACLE RECOMMENDATION: <span className="text-phosphor font-bold">{oracle.oracleEffector}</span>
+                            </div>
+                            <div
+                              className={`text-[11px] font-bold ${
+                                regret?.isOptimal ? 'text-phosphor' : 'text-amber'
+                              }`}
+                            >
+                              {regret?.text ?? 'EVALUATED'}
+                            </div>
                           </div>
-                          <div
-                            className={`text-[11px] font-bold ${
-                              regret?.isOptimal ? 'text-phosphor' : 'text-amber'
-                            }`}
-                          >
-                            {regret?.text ?? 'EVALUATED'}
-                          </div>
+
+                          {(() => {
+                            const engageEv = engineInstance.events.find(
+                              (e) => e.type === 'ENGAGE' && (e.trackNo === trk.trackNo || e.entityId === trk.id)
+                            );
+                            if (!engageEv) return null;
+                            return (
+                              <button
+                                onClick={() => {
+                                  const inspectionData = extractEngagementInspectionData(
+                                    engageEv,
+                                    engineInstance.events,
+                                    engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec),
+                                    engineInstance.curr
+                                  );
+                                  if (inspectionData) {
+                                    setInspectingEngagement(inspectionData);
+                                  }
+                                }}
+                                title="Inspect Recorded Probability & Scoring Inputs"
+                                className="px-2 py-1 text-[10px] font-bold border border-friend text-friend hover:bg-friend/20 transition-colors whitespace-nowrap"
+                              >
+                                🔍 INSPECT
+                              </button>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -339,12 +410,38 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             SYNTHETIC TRAINING AID | NOTIONAL PARAMETERS | NOT A CERTIFICATION
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <button
+              onClick={() => {
+                onClose();
+                returnToBriefing();
+              }}
+              data-testid="aar-return-briefing-btn"
+              className="px-3 py-1 font-display font-semibold text-[11px] border border-phosphor/70 hover:border-phosphor text-phosphor hover:bg-phosphorDim/30 transition-colors"
+            >
+              [B] MISSION BRIEFING
+            </button>
+            <button
+              onClick={handleSelectScenario}
+              className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-text-main text-text-dim hover:text-text-main transition-colors"
+            >
+              [S] SELECT SCENARIO
+            </button>
+            <button
+              onClick={() => {
+                onClose();
+                void rerunExactSeedSession();
+              }}
+              className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-friend text-friend transition-colors"
+              title="Replay this exact scenario run using the same seed"
+            >
+              [E] REPLAY EXACT SEED
+            </button>
             <button
               onClick={handleRestart}
               className="px-3 py-1 font-display font-semibold text-[11px] border border-line hover:border-amber text-amber transition-colors"
             >
-              [R] RESTART SCENARIO
+              [R] RUN AGAIN (NEW SEED)
             </button>
             <button
               onClick={onClose}
@@ -355,6 +452,14 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
           </div>
         </div>
       </div>
+
+      {/* F8 AAR Engagement Inspector Modal */}
+      {inspectingEngagement && (
+        <AarEngagementInspector
+          data={inspectingEngagement}
+          onClose={() => setInspectingEngagement(null)}
+        />
+      )}
     </div>
   );
 };

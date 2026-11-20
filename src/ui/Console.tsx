@@ -3,16 +3,387 @@ import { TopBar } from './TopBar';
 import { TrackTable } from './TrackTable';
 import { EngagementPanel } from './EngagementPanel';
 import { EventLog } from './EventLog';
-import { HotWash } from './HotWash';
+const HotWash = React.lazy(() => import('./HotWash').then((m) => ({ default: m.HotWash })));
 import { QuickGuide } from './QuickGuide';
+import { ScenarioModal } from './ScenarioModal';
+import { WebXrComfortModal } from './WebXrComfortModal';
+import { CrossSectionPanel } from './CrossSectionPanel';
+import { MissionBriefing } from './MissionBriefing';
+import { ErrorBoundary } from './ErrorBoundary';
+import { EnvironmentInspector } from './EnvironmentInspector';
+import { OperatorFeedbackToast } from './OperatorFeedbackToast';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
-import type { SensorMode } from '@/sim/types';
+import type { SensorMode, TrackEntity } from '@/sim/types';
+import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo } from '@/render3d/types';
+import type { Renderer3D, WebXRManager } from '@/render3d';
+import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
+
+/**
+ * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3 & D-37).
+ * Filters out undetected tracks and excludes all truth properties (trueClass, droneType, valueInr, etc.).
+ */
+function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null): SafeTrackView[] {
+  return curr
+    .filter(
+      (e) =>
+        e.trackNo &&
+        e.step !== 'UNDETECTED' &&
+        (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
+    )
+    .map((e) => ({
+      trackNo: e.trackNo!,
+      pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
+      vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
+      traineeLabel: e.traineeLabel,
+      step: e.step,
+      q: e.q,
+      masked: e.masked,
+      ghostSigmaM: e.ghostSigmaM,
+      isSelected: e.trackNo === selectedTrackNo,
+      lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+    }));
+}
+
+function computeCursorCoords(
+  clientX: number,
+  clientY: number,
+  canvas: HTMLCanvasElement
+): { brg: number; rngKm: number } {
+  const rect = canvas.getBoundingClientRect();
+  const dx = clientX - rect.left - 260;
+  const dy = 260 - (clientY - rect.top);
+
+  const scale = 245 / 5000;
+  const rangeM = Math.hypot(dx, dy) / scale;
+  const bearingRad = Math.atan2(dx, dy);
+  let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
+  if (bearingDeg < 0) bearingDeg += 360;
+
+  return { brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) };
+}
+
+function findNearestTrackNo(
+  clickX: number,
+  clickY: number,
+  entities: TrackEntity[],
+  scale: number = 245 / 5000
+): string | null {
+  let nearestTrackNo: string | null = null;
+  let nearestDist = 15;
+
+  for (const entity of entities) {
+    if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
+    const ex = entity.pos.x * scale;
+    const ey = entity.pos.y * scale;
+    const d = Math.hypot(clickX - ex, clickY - ey);
+    if (d < nearestDist) {
+      nearestDist = d;
+      nearestTrackNo = entity.trackNo;
+    }
+  }
+
+  return nearestTrackNo;
+}
+
+interface ThreeDViewportControlsProps {
+  cameraPreset: CameraPreset;
+  showEnvelopes: boolean;
+  showLos: boolean;
+  showClusters: boolean;
+  showTrainingAid: boolean;
+  showCrossSection: boolean;
+  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  onCameraPreset: (p: CameraPreset) => void;
+  onToggleEnvelopes: () => void;
+  onToggleLos: () => void;
+  onToggleClusters: () => void;
+  onToggleTrainingAid: () => void;
+  onToggleCrossSection: () => void;
+}
+
+const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
+  cameraPreset,
+  showEnvelopes,
+  showLos,
+  showClusters,
+  showTrainingAid,
+  showCrossSection,
+  mode,
+  onCameraPreset,
+  onToggleEnvelopes,
+  onToggleLos,
+  onToggleClusters,
+  onToggleTrainingAid,
+  onToggleCrossSection,
+}) => {
+  return (
+    <>
+      {(['OBLIQUE', 'TOP', 'POST'] as const).map((preset) => (
+        <button
+          key={preset}
+          onClick={() => onCameraPreset(preset)}
+          className={`px-2 py-0.5 border transition-colors ${
+            cameraPreset === preset
+              ? 'border-friend text-friend bg-friend/20 font-bold'
+              : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+          }`}
+        >
+          {preset === 'POST' ? 'POST' : `[${preset[0]}] ${preset}`}
+        </button>
+      ))}
+
+      <button
+        onClick={onToggleEnvelopes}
+        title="Toggle 3D Effector Envelopes [E]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          showEnvelopes
+            ? 'border-amber text-amber bg-amber/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [E] {showEnvelopes ? 'WEAPONS ON' : 'WEAPONS OFF'}
+      </button>
+
+      <button
+        onClick={onToggleLos}
+        title="Toggle Modelled Line-of-Sight / Masking [K]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          showLos
+            ? 'border-friend text-friend bg-friend/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [K] {showLos ? 'LOS ON' : 'LOS OFF'}
+      </button>
+
+      <button
+        onClick={onToggleClusters}
+        title="Toggle Operator-Visible 3D Clusters [U]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          showClusters
+            ? 'border-phosphor text-phosphor bg-phosphor/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [U] {showClusters ? 'CLUSTERS ON' : 'CLUSTERS OFF'}
+      </button>
+
+      {mode === 'EVAL' ? (
+        <button
+          disabled
+          title="Training Aid locked and unavailable in EVALUATION mode (Rule F5)"
+          className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+        >
+          [X] AID (LOCKED IN EVAL)
+        </button>
+      ) : (
+        <>
+          <button
+            onClick={onToggleTrainingAid}
+            title="Toggle 3D Training Aid (Modelled Shadows & Ref-RCS Shells) [X]"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showTrainingAid
+                ? 'border-amber text-amber bg-amber/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [X] {showTrainingAid ? 'AID ON' : 'AID OFF'}
+          </button>
+          <button
+            onClick={onToggleCrossSection}
+            title="Open 2D Elevation Cross-Section Along Bearing"
+            className={`px-2 py-0.5 border font-bold transition-colors ${
+              showCrossSection
+                ? 'border-amber text-amber bg-amber/20'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            X-SECTION
+          </button>
+        </>
+      )}
+    </>
+  );
+};
+
+interface TacticalViewportTabsProps {
+  viewMode: '2D' | '3D';
+  activeSensor: SensorMode;
+  cameraPreset: CameraPreset;
+  showEnvelopes: boolean;
+  showLos: boolean;
+  showClusters: boolean;
+  showTrainingAid: boolean;
+  showCrossSection: boolean;
+  mode: 'TRAIN' | 'EVAL' | 'DEMO';
+  currentScenarioId: string;
+  onOpenScenarioModal: () => void;
+  onSetSensor: (m: SensorMode) => void;
+  onCameraPreset: (p: CameraPreset) => void;
+  onToggleEnvelopes: () => void;
+  onToggleLos: () => void;
+  onToggleClusters: () => void;
+  onToggleTrainingAid: () => void;
+  onToggleCrossSection: () => void;
+  onToggleViewMode: () => void;
+  onEnterVr: () => void;
+}
+
+const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
+  viewMode,
+  activeSensor,
+  cameraPreset,
+  showEnvelopes,
+  showLos,
+  showClusters,
+  showTrainingAid,
+  showCrossSection,
+  mode,
+  currentScenarioId,
+  onOpenScenarioModal,
+  onSetSensor,
+  onCameraPreset,
+  onToggleEnvelopes,
+  onToggleLos,
+  onToggleClusters,
+  onToggleTrainingAid,
+  onToggleCrossSection,
+  onToggleViewMode,
+  onEnterVr,
+}) => {
+  return (
+    <div className="absolute top-2 left-2 z-20 flex flex-wrap gap-1 font-display text-[10px] max-w-[420px]">
+      {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+        <button
+          key={m}
+          onClick={() => onSetSensor(m)}
+          className={`px-2 py-0.5 border transition-colors ${
+            activeSensor === m
+              ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+              : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+          }`}
+        >
+          [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+        </button>
+      ))}
+
+      {viewMode === '3D' && (
+        <ThreeDViewportControls
+          cameraPreset={cameraPreset}
+          showEnvelopes={showEnvelopes}
+          showLos={showLos}
+          showClusters={showClusters}
+          showTrainingAid={showTrainingAid}
+          showCrossSection={showCrossSection}
+          mode={mode}
+          onCameraPreset={onCameraPreset}
+          onToggleEnvelopes={onToggleEnvelopes}
+          onToggleLos={onToggleLos}
+          onToggleClusters={onToggleClusters}
+          onToggleTrainingAid={onToggleTrainingAid}
+          onToggleCrossSection={onToggleCrossSection}
+        />
+      )}
+
+      <button
+        onClick={onToggleViewMode}
+        title="Toggle 2D/3D Tactical View [V]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          viewMode === '3D'
+            ? 'border-friend text-friend bg-friend/20'
+            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+        }`}
+      >
+        [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
+      </button>
+
+      <button
+        onClick={onEnterVr}
+        title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
+        className="px-2 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
+      >
+        [VR] EXPERIMENTAL
+      </button>
+
+      <button
+        onClick={onOpenScenarioModal}
+        disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
+        title="Open Mission / Exercise Scenario Selector [S]"
+        className={`px-2 py-0.5 border font-bold transition-colors ${
+          mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
+            ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+            : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
+        }`}
+      >
+        [S] {currentScenarioId}
+      </button>
+    </div>
+  );
+};
 
 export const Console: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvas3dRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ConsoleRenderer | null>(null);
+  const renderer3dRef = useRef<Renderer3D | null>(null);
+  const xrManagerRef = useRef<WebXRManager | null>(null);
+
+  const [isVrModalOpen, setIsVrModalOpen] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
+  const [webGlError, setWebGlError] = useState<string | null>(null);
+  const [selectedEnvObject, setSelectedEnvObject] = useState<EnvironmentObjectInfo | null>(null);
+  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('OBLIQUE');
+  const [showEnvelopes, setShowEnvelopes] = useState<boolean>(true);
+  const showEnvelopesRef = useRef<boolean>(true);
+  showEnvelopesRef.current = showEnvelopes;
+  const toggleEnvelopes = () => setShowEnvelopes((prev) => !prev);
+
+  const [showLos, setShowLos] = useState<boolean>(true);
+  const showLosRef = useRef<boolean>(true);
+  showLosRef.current = showLos;
+  const toggleLos = () => {
+    setShowLos((prev) => {
+      const next = !prev;
+      renderer3dRef.current?.setShowLos(next);
+      return next;
+    });
+  };
+
+  const [showClusters, setShowClusters] = useState<boolean>(true);
+  const showClustersRef = useRef<boolean>(true);
+  showClustersRef.current = showClusters;
+  const toggleClusters = () => {
+    setShowClusters((prev) => {
+      const next = !prev;
+      renderer3dRef.current?.setShowClusters(next);
+      return next;
+    });
+  };
+
+  const [showTrainingAid, setShowTrainingAid] = useState<boolean>(false);
+  const [showCrossSection, setShowCrossSection] = useState<boolean>(false);
+  const showTrainingAidRef = useRef<boolean>(false);
+  showTrainingAidRef.current = showTrainingAid;
+  const toggleTrainingAid = () => {
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
+    setShowTrainingAid((prev) => {
+      const next = !prev;
+      renderer3dRef.current?.setShowTrainingAid(next);
+      engineInstance.trainingAidActive = next;
+      return next;
+    });
+  };
+
+  const toggleCrossSection = () => {
+    if (engineInstance.mode === 'EVAL') {
+      return;
+    }
+    setShowCrossSection((prev) => !prev);
+  };
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
   const recentEvents = useSessionStore((s) => s.ui.recentEvents);
@@ -23,17 +394,28 @@ export const Console: React.FC = () => {
   const closeAar = useSessionStore((s) => s.closeAar);
   const isQuickGuideOpen = useSessionStore((s) => s.isQuickGuideOpen);
   const closeQuickGuide = useSessionStore((s) => s.closeQuickGuide);
+  const isScenarioModalOpen = useSessionStore((s) => s.isScenarioModalOpen);
+  const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
+  const closeScenarioModal = useSessionStore((s) => s.closeScenarioModal);
+  const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
   const abortSession = useSessionStore((s) => s.abortSession);
+  const sessionStatus = useSessionStore((s) => s.sessionStatus);
+  const isBriefingOpen = useSessionStore((s) => s.isBriefingOpen);
+  const openBriefing = useSessionStore((s) => s.openBriefing);
+  const closeBriefing = useSessionStore((s) => s.closeBriefing);
+  const startSession = useSessionStore((s) => s.startSession);
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
+  useEffect(() => {
+    renderer3dRef.current?.setLowFidelity(lowFi);
+  }, [lowFi]);
 
-  // Initialize Canvas Renderer Loop
+  // Initialize Canvas 2D Renderer Loop
   useEffect(() => {
     if (!canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    // Set internal resolution matching CSS 520x520
     canvas.width = 520;
     canvas.height = 520;
 
@@ -47,6 +429,308 @@ export const Console: React.FC = () => {
     };
   }, []);
 
+  // Cleanup 3D Renderer and WebXR on unmount
+  useEffect(() => {
+    return () => {
+      xrManagerRef.current?.dispose();
+      xrManagerRef.current = null;
+      renderer3dRef.current?.dispose();
+      renderer3dRef.current = null;
+      if (typeof window !== 'undefined') {
+        (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = null;
+      }
+    };
+  }, []);
+
+  // Toggle 2D / 3D Tactical View with WebGL2 probe and graceful fallback
+  const toggleViewMode = async () => {
+    if (viewMode === '3D') {
+      xrManagerRef.current?.exitVR();
+      renderer3dRef.current?.stop();
+      setViewMode('2D');
+      return;
+    }
+
+    try {
+      const {
+        Renderer3D,
+        checkWebGL2Support,
+        calculateRadarCoverage,
+        calculateEoirCoverage,
+        calculateRfCoverage,
+        getScenarioEnvironmentDescriptor,
+      } = await import('@/render3d');
+      const cap = checkWebGL2Support();
+      if (!cap.supported) {
+        setWebGlError(cap.reason || 'WebGL2 not supported');
+        return;
+      }
+
+      if (!renderer3dRef.current && canvas3dRef.current) {
+        canvas3dRef.current.width = 520;
+        canvas3dRef.current.height = 520;
+
+        const r3d = new Renderer3D(canvas3dRef.current, {
+          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
+          rMinM: CONFIG.thresholds.rMinM,
+          zones: engineInstance.spec?.zones || [],
+          mode: engineInstance.mode,
+          showTrainingAid: showTrainingAidRef.current,
+          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
+          onSelectTrack: (trackNo: string) => {
+            setSelectedEnvObject(null);
+            designate(trackNo, 'CLICK');
+          },
+          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
+            setSelectedEnvObject(info);
+          },
+          onContextLost: () => {
+            xrManagerRef.current?.exitVR();
+            renderer3dRef.current?.stop();
+            setViewMode('2D');
+            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
+          },
+        });
+
+        r3d.setSimTimeProvider(() => ({
+          simMs: engineInstance.tickIndex * 50,
+          chaosList: engineInstance.spec?.chaos,
+        }));
+
+        r3d.setEventsProvider(() => engineInstance.events);
+
+        r3d.setTrackProvider(() => ({
+          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
+          selectedTrackNo: engineInstance.selectedTrackNo,
+        }));
+
+        r3d.setCoverageProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          return {
+            radar: calculateRadarCoverage({
+              sensorHealth: engineInstance.sensorHealth.RADAR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            eoir: calculateEoirCoverage({
+              azimuthDeg: engineInstance.eoirAzimuthDeg,
+              isNight: engineInstance.spec?.dayNight === 'NIGHT',
+              sensorHealth: engineInstance.sensorHealth.EOIR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            rf: calculateRfCoverage({
+              sensorHealth: engineInstance.sensorHealth.RF,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            activeSensor: useSessionStore.getState().ui.activeSensor,
+            visible: true,
+          };
+        });
+
+        r3d.setEffectorProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          const selectedEntity = engineInstance.selectedTrackNo
+            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
+            : null;
+
+          return {
+            activeEffector: useSessionStore.getState().ui.activeEffector,
+            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
+              ? {
+                  trackNo: selectedEntity.trackNo!,
+                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
+                  q: selectedEntity.q,
+                }
+              : null,
+            sensorHealth: engineInstance.sensorHealth,
+            chaosList: engineInstance.spec?.chaos,
+            tMs: currentSimMs,
+            visible: showEnvelopesRef.current,
+          };
+        });
+
+        r3d.setShowLos(showLosRef.current);
+        r3d.setShowClusters(showClustersRef.current);
+        r3d.setLowFidelity(lowFi);
+        renderer3dRef.current = r3d;
+        if (typeof window !== 'undefined') {
+          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
+        }
+      }
+
+      renderer3dRef.current?.start();
+      setViewMode('3D');
+      setWebGlError(null);
+    } catch (err) {
+      console.error('[Console] Failed to load 3D view:', err);
+      setWebGlError('Failed to load 3D renderer. Restoring 2D mode.');
+      setViewMode('2D');
+    }
+  };
+
+  const handleOpenVr = () => {
+    setIsVrModalOpen(true);
+  };
+
+  const handleConfirmVr = async () => {
+    setIsVrModalOpen(false);
+
+    try {
+      const {
+        checkWebXRSupport,
+        WebXRManager,
+        Renderer3D,
+        checkWebGL2Support,
+        calculateRadarCoverage,
+        calculateEoirCoverage,
+        calculateRfCoverage,
+        getScenarioEnvironmentDescriptor,
+      } = await import('@/render3d');
+
+      const cap = await checkWebXRSupport();
+      if (!cap.supported) {
+        setWebGlError(cap.reason || 'WebXR immersive-vr not supported on this device/runtime.');
+        return;
+      }
+
+      const glCap = checkWebGL2Support();
+      if (!glCap.supported) {
+        setWebGlError(glCap.reason || 'WebGL2 not supported');
+        return;
+      }
+
+      // Ensure 3D renderer is instantiated
+      if (!renderer3dRef.current && canvas3dRef.current) {
+        canvas3dRef.current.width = 520;
+        canvas3dRef.current.height = 520;
+
+        const r3d = new Renderer3D(canvas3dRef.current, {
+          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
+          rMinM: CONFIG.thresholds.rMinM,
+          zones: engineInstance.spec?.zones || [],
+          mode: engineInstance.mode,
+          showTrainingAid: showTrainingAidRef.current,
+          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
+          onSelectTrack: (trackNo: string) => {
+            setSelectedEnvObject(null);
+            designate(trackNo, 'CLICK');
+          },
+          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
+            setSelectedEnvObject(info);
+          },
+          onContextLost: () => {
+            xrManagerRef.current?.exitVR();
+            renderer3dRef.current?.stop();
+            setViewMode('2D');
+            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
+          },
+        });
+
+        r3d.setSimTimeProvider(() => ({
+          simMs: engineInstance.tickIndex * 50,
+          chaosList: engineInstance.spec?.chaos,
+        }));
+
+        r3d.setEventsProvider(() => engineInstance.events);
+
+        r3d.setTrackProvider(() => ({
+          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
+          selectedTrackNo: engineInstance.selectedTrackNo,
+        }));
+
+        r3d.setCoverageProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          return {
+            radar: calculateRadarCoverage({
+              sensorHealth: engineInstance.sensorHealth.RADAR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            eoir: calculateEoirCoverage({
+              azimuthDeg: engineInstance.eoirAzimuthDeg,
+              isNight: engineInstance.spec?.dayNight === 'NIGHT',
+              sensorHealth: engineInstance.sensorHealth.EOIR,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            rf: calculateRfCoverage({
+              sensorHealth: engineInstance.sensorHealth.RF,
+              chaosList: engineInstance.spec?.chaos,
+              tMs: currentSimMs,
+            }),
+            activeSensor: useSessionStore.getState().ui.activeSensor,
+            visible: true,
+          };
+        });
+
+        r3d.setEffectorProvider(() => {
+          const currentSimMs = engineInstance.tickIndex * 50;
+          const selectedEntity = engineInstance.selectedTrackNo
+            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
+            : null;
+
+          return {
+            activeEffector: useSessionStore.getState().ui.activeEffector,
+            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
+              ? {
+                  trackNo: selectedEntity.trackNo!,
+                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
+                  q: selectedEntity.q,
+                }
+              : null,
+            sensorHealth: engineInstance.sensorHealth,
+            chaosList: engineInstance.spec?.chaos,
+            tMs: currentSimMs,
+            visible: showEnvelopesRef.current,
+          };
+        });
+
+        r3d.setShowLos(showLosRef.current);
+        r3d.setShowClusters(showClustersRef.current);
+        r3d.setLowFidelity(lowFi);
+        renderer3dRef.current = r3d;
+        if (typeof window !== 'undefined') {
+          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
+        }
+      }
+
+      if (renderer3dRef.current && rendererRef.current) {
+        setViewMode('3D');
+        renderer3dRef.current.start();
+
+        const xrMgr = new WebXRManager(
+          renderer3dRef.current.getThreeRenderer(),
+          renderer3dRef.current.getScene3D().scene,
+          rendererRef.current,
+          () => {
+            xrMgr.dispose();
+            xrManagerRef.current = null;
+          },
+          renderer3dRef.current.getCamera()
+        );
+        xrManagerRef.current = xrMgr;
+        const res = await xrMgr.enterVR();
+        if (!res.success) {
+          setWebGlError(res.error || 'Failed to enter WebXR VR session');
+          xrMgr.dispose();
+          xrManagerRef.current = null;
+        } else {
+          setWebGlError(null);
+        }
+      }
+    } catch (err) {
+      console.error('[Console] Failed to enter VR mode:', err);
+      setWebGlError('WebXR VR entry failed. Restored desktop view.');
+    }
+  };
+
+  const handleCameraPreset = (preset: CameraPreset) => {
+    setCameraPreset(preset);
+    renderer3dRef.current?.setPreset(preset);
+  };
+
   // Scored-session visibility guard: abort session if tab is hidden during EVAL (Rules.md R2.10)
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -59,8 +743,25 @@ export const Console: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [abortSession]);
 
-  // Keyboard navigation & Hotkeys
-  useConsoleKeyboard(rendererRef, setLowFi);
+  // Synchronize 3D environment when active scenario changes
+  useEffect(() => {
+    if (renderer3dRef.current) {
+      renderer3dRef.current.setScenarioEnvironment(currentScenarioId, engineInstance.spec);
+      setSelectedEnvObject(null);
+    }
+  }, [currentScenarioId]);
+
+  // Keyboard navigation & Hotkeys (including 'v' 2D/3D, presets, 'e' envelopes, 'k' LOS, 'u' clusters, and 'x' training aid)
+  useConsoleKeyboard(rendererRef, setLowFi, {
+    toggle3D: toggleViewMode,
+    setCameraPreset: handleCameraPreset,
+    toggleEnvelopes,
+    toggleLos,
+    toggleClusters,
+    toggleTrainingAid,
+    focusSelection: () => renderer3dRef.current?.focusSelection(),
+    resetCamera: () => renderer3dRef.current?.resetCamera(),
+  });
 
   // Automatically trigger HotWash AAR when simulation session ends
   useEffect(() => {
@@ -73,17 +774,7 @@ export const Console: React.FC = () => {
   // Track cursor range/bearing on Canvas
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const dx = e.clientX - rect.left - 260; // relative to center
-    const dy = 260 - (e.clientY - rect.top); // y-up
-
-    const scale = 245 / 5000; // 245px radius = 5000m
-    const rangeM = Math.hypot(dx, dy) / scale;
-    const bearingRad = Math.atan2(dx, dy);
-    let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
-    if (bearingDeg < 0) bearingDeg += 360;
-
-    setMousePos({ brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) });
+    setMousePos(computeCursorCoords(e.clientX, e.clientY, canvasRef.current));
   };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -92,25 +783,29 @@ export const Console: React.FC = () => {
     const clickX = e.clientX - rect.left - 260;
     const clickY = 260 - (e.clientY - rect.top);
 
-    const scale = 245 / 5000;
-    // Find nearest entity within 15px radius
-    let nearestTrackNo: string | null = null;
-    let nearestDist = 15;
-
-    for (const entity of engineInstance.curr) {
-      if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
-      const ex = entity.pos.x * scale;
-      const ey = entity.pos.y * scale;
-      const d = Math.hypot(clickX - ex, clickY - ey);
-      if (d < nearestDist) {
-        nearestDist = d;
-        nearestTrackNo = entity.trackNo;
-      }
-    }
-
+    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.curr);
     if (nearestTrackNo) {
       designate(nearestTrackNo, 'CLICK');
     }
+  };
+
+  const renderScopeReadout = () => {
+    if (viewMode === '3D') {
+      return (
+        <span>
+          3D VIEW | CAM: <span className="text-friend">{cameraPreset}</span>
+        </span>
+      );
+    }
+    if (mousePos) {
+      return (
+        <span>
+          AZ <span className="text-phosphor">{String(mousePos.brg).padStart(3, '0')}°</span> | RNG{' '}
+          <span className="text-phosphor">{mousePos.rngKm.toFixed(2)} km</span>
+        </span>
+      );
+    }
+    return <span>PPI SCOPE 360°</span>;
   };
 
   return (
@@ -146,7 +841,7 @@ export const Console: React.FC = () => {
 
           {/* 520px x 520px Canvas Frame bounded by var(--radar) */}
           <div
-            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center"
+            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden"
             style={{
               width: 'var(--radar)',
               height: 'var(--radar)',
@@ -160,42 +855,121 @@ export const Console: React.FC = () => {
               onMouseMove={handleMouseMove}
               onMouseLeave={() => setMousePos(null)}
               onClick={handleCanvasClick}
-              className="cursor-crosshair block"
+              className={`cursor-crosshair ${viewMode === '2D' ? 'block' : 'hidden'}`}
             />
 
-            {/* Overlaid Mode Selector Tabs Inside Canvas (Zero Height Consumption) */}
-            <div className="absolute top-2 left-2 z-10 flex gap-1 font-display text-[10px]">
-              {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
-                <button
-                  key={m}
-                  onClick={() => setSensor(m)}
-                  className={`px-2 py-0.5 border transition-colors ${
-                    activeSensor === m
-                      ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
-                      : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-                  }`}
-                >
-                  [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
-                </button>
-              ))}
+            {/* Three.js 3D Viewport Canvas */}
+            <canvas
+              ref={canvas3dRef}
+              width={520}
+              height={520}
+              style={{ touchAction: 'none' }}
+              className={`cursor-grab active:cursor-grabbing ${viewMode === '3D' ? 'block' : 'hidden'}`}
+            />
+
+            {/* Overlaid Mode Selector Tabs Inside Canvas */}
+            <TacticalViewportTabs
+              viewMode={viewMode}
+              activeSensor={activeSensor}
+              cameraPreset={cameraPreset}
+              showEnvelopes={showEnvelopes}
+              showLos={showLos}
+              showClusters={showClusters}
+              showTrainingAid={showTrainingAid}
+              showCrossSection={showCrossSection}
+              mode={engineInstance.mode}
+              currentScenarioId={currentScenarioId}
+              onOpenScenarioModal={openScenarioModal}
+              onSetSensor={setSensor}
+              onCameraPreset={handleCameraPreset}
+              onToggleEnvelopes={toggleEnvelopes}
+              onToggleLos={toggleLos}
+              onToggleClusters={toggleClusters}
+              onToggleTrainingAid={toggleTrainingAid}
+              onToggleCrossSection={toggleCrossSection}
+              onToggleViewMode={toggleViewMode}
+              onEnterVr={handleOpenVr}
+            />
+
+            {/* Overlaid Cursor Bearing / Range Readout (2D) or 3D Camera Readout */}
+            <div className="absolute top-2 right-2 z-10 font-mono text-[10px] text-text-dim bg-carbon-900/80 border border-line px-2 py-0.5 pointer-events-none select-none">
+              {renderScopeReadout()}
             </div>
 
-            {/* Overlaid Cursor Bearing / Range Readout */}
-            <div className="absolute top-2 right-2 z-10 font-mono text-[10px] text-text-dim bg-carbon-900/80 border border-line px-2 py-0.5">
-              {mousePos ? (
-                <span>
-                  AZ <span className="text-phosphor">{String(mousePos.brg).padStart(3, '0')}°</span> | RNG{' '}
-                  <span className="text-phosphor">{mousePos.rngKm.toFixed(2)} km</span>
-                </span>
-              ) : (
-                <span>PPI SCOPE 360°</span>
-              )}
-            </div>
+            {/* 3D Model Scale & Control Hint */}
+            {viewMode === '3D' && (
+              <>
+                <div
+                  title="Aircraft models are enlarged for tactical visual identification. Underlying world positions and radar ranges are authoritative and unchanged."
+                  className="absolute bottom-2 left-2 z-10 text-[8px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none max-w-[270px] truncate"
+                >
+                  AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
+                </div>
+                <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
+                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [F] | RESET: [HOME]
+                </div>
+              </>
+            )}
+
+            {/* 3D Environment Object Inspector */}
+            {viewMode === '3D' && selectedEnvObject && (
+              <EnvironmentInspector
+                objectInfo={selectedEnvObject}
+                onClose={() => setSelectedEnvObject(null)}
+                onFocus={() => renderer3dRef.current?.focusSelection()}
+              />
+            )}
+
+            {/* WebGL Error / Context Loss Fallback Banner */}
+            {webGlError && (
+              <div className="absolute bottom-2 left-2 z-20 text-[9px] font-mono text-amber border border-amber px-2 py-1 bg-carbon-950/95 flex items-center gap-2">
+                <span>⚠ {webGlError}</span>
+                <button
+                  onClick={() => setWebGlError(null)}
+                  className="text-text-dim hover:text-text-main font-bold ml-1"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Low-Fidelity Indicator */}
             {lowFi && (
               <div className="absolute bottom-2 left-2 z-10 text-[9px] font-mono text-amber border border-amber px-1.5 py-0.5 bg-carbon-900/80">
                 LOW-FIDELITY MODE [L]
+              </div>
+            )}
+
+            {/* Standby Banner when in READY state and briefing modal is dismissed */}
+            {sessionStatus === 'READY' && !isBriefingOpen && (
+              <div className="absolute inset-0 z-20 bg-carbon-950/75 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 p-6 select-none pointer-events-auto">
+                <div className="text-center space-y-1">
+                  <div className="font-display font-bold text-lg text-text-main tracking-wider">
+                    DRISHTI-CUAS — STANDBY
+                  </div>
+                  <div className="font-mono text-xs text-phosphor border border-phosphor px-2 py-0.5 bg-phosphorDim/20 inline-block">
+                    STATUS: READY FOR EXERCISE
+                  </div>
+                </div>
+                <div className="text-center font-mono text-[11px] text-text-dim max-w-sm">
+                  Simulation clock and target physics are held at T+00:00.000. Review mission parameters or launch the active scenario when ready.
+                </div>
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={openBriefing}
+                    data-testid="open-briefing-btn"
+                    className="px-4 py-2 font-display font-semibold text-xs border border-phosphor/70 hover:border-phosphor text-phosphor hover:bg-phosphorDim/30 transition-colors"
+                  >
+                    [ REVIEW BRIEFING ]
+                  </button>
+                  <button
+                    onClick={() => void startSession()}
+                    data-testid="standby-start-session-btn"
+                    className="px-5 py-2 font-display font-bold text-xs tracking-wider border border-phosphor bg-phosphor text-carbon-950 hover:bg-phosphor/90 shadow-md shadow-phosphor/20 active:scale-95 transition-all"
+                  >
+                    START SESSION ►
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -229,10 +1003,57 @@ export const Console: React.FC = () => {
       </div>
 
       {/* 6. Hot-Wash / AAR Scoring Debrief Modal */}
-      {isAarOpen && <HotWash onClose={closeAar} />}
+      {isAarOpen && (
+        <ErrorBoundary fallbackTitle="HOTWASH AAR INSPECTOR ERROR" onReset={closeAar}>
+          <React.Suspense fallback={null}>
+            <HotWash onClose={closeAar} />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
 
       {/* 7. Operator Quick-Start Guide Modal */}
       {isQuickGuideOpen && <QuickGuide onClose={closeQuickGuide} />}
+
+      {/* 8. F5 Elevation Cross-Section Training Aid Modal */}
+      {showCrossSection && engineInstance.mode !== 'EVAL' && (
+        <ErrorBoundary
+          fallbackTitle="ELEVATION CROSS-SECTION AID ERROR"
+          onReset={() => setShowCrossSection(false)}
+        >
+          <CrossSectionPanel
+            onClose={() => setShowCrossSection(false)}
+            zones={engineInstance.spec?.zones || []}
+            selectedTrack={
+              engineInstance.selectedTrackNo
+                ? (() => {
+                    const ent = engineInstance.curr.find(
+                      (e) => e.trackNo === engineInstance.selectedTrackNo && e.step !== 'UNDETECTED'
+                    );
+                    return ent ? { trackNo: ent.trackNo!, pos: { ...ent.pos }, masked: ent.masked } : null;
+                  })()
+                : null
+            }
+          />
+        </ErrorBoundary>
+      )}
+
+      {/* 9. Mission Scenario Selector Modal */}
+      {isScenarioModalOpen && <ScenarioModal onClose={closeScenarioModal} />}
+
+      {/* 10. Mission Briefing Modal */}
+      {sessionStatus === 'READY' && isBriefingOpen && (
+        <MissionBriefing onClose={closeBriefing} />
+      )}
+
+      {/* 11. WebXR VR Comfort & Safety Advisory Modal */}
+      <WebXrComfortModal
+        isOpen={isVrModalOpen}
+        onConfirm={handleConfirmVr}
+        onCancel={() => setIsVrModalOpen(false)}
+      />
+
+      {/* 12. Intelligent Operator Tactical Feedback HUD Toast */}
+      <OperatorFeedbackToast />
     </div>
   );
 };

@@ -279,7 +279,7 @@ export interface Vec3 { x: number; y: number; z: number }          // metres: x 
 export type DroneClassId =
   | 'RECON_QUAD' | 'FPV_ATTACK' | 'SWARM_ELEMENT_FW' | 'LOITERING_FW'
   | 'CIVIL_QUAD' | 'BIRD_FLOCK' | 'FRIENDLY_UAS';
-export type BehaviourProfile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'TRANSIT';
+export type BehaviourProfile = 'DIRECT' | 'TERRAIN_HUG' | 'ORBIT_FEINT' | 'SWARM_SATURATE' | 'ERRATIC' | 'TRANSIT' | 'POP_UP_DIVE';
 export type Phase = 'CRUISE' | 'DESCENDING' | 'HUGGING' | 'CLIMBING';
 
 /** Ground truth. Lives only inside src/sim. NEVER passed to render/, ui/, store/. */
@@ -812,3 +812,99 @@ Techniques: two canvases per viewport (static base layer drawn once, dynamic lay
 2. `tests/golden`: DEMO-1 timeline within 1 s (first detectable T+5, masked T+30..T+50, H-1 PNR T+82.5, swarm PNR T+115.6; RF sees H-1 throughout the mask); same seed plus input log ⇒ identical event sequence, `stateHash` trace every 20 ticks and score within `1e-6` on the pinned Chromium.
 3. `tests/guards`: no network APIs anywhere in application code, no `Math.random`, no `Date`/`performance.now` inside `sim/`, `director/`, canonical labels only, import-direction rules, no forbidden dependencies, no Tailwind default palette classes.
 4. `tests/e2e` (playwright on the pinned Chromium): full DEMO-1 run with network blocked and zero cross-origin requests; no vertical scroll at 1366×768 and 1280×700; export → import round trip with verification; EVAL leaderboard excludes TRAIN sessions.
+
+---
+
+## 8. Optional 3D / VR renderer (Three.js)
+
+The native 2D Canvas console is the authoritative, guaranteed baseline. The Three.js 3D renderer and experimental WebXR VR modes are **alternative presentation layers over the identical simulation engine**.
+
+### 8.1 Principles
+
+1. **One simulation, multiple renderers:** The 3D view is strictly a consumer of `SimEngine`. It implements zero autonomous movement, sensing, engagement, scoring, or ROE logic. Switching between 2D and 3D never modifies scenario seeds, simulation clocks, queued inputs, event logs, or scores.
+2. **Ground-truth separation & safe view boundary:** The live tactical 3D display must strictly show only operator-visible estimates. True classifications, true positions, drone types, and hidden threat values are never exposed to live renderers. Ground truth is unlocked exclusively in post-session AAR.
+3. **Lazy-loaded and fully decoupled:** Three.js is isolated to `src/render3d/` and loaded on demand via dynamic `import()`. The initial application chunk never includes Three.js.
+4. **Offline and CSP compliance:** All textures and meshes are procedural (`CanvasTexture`, procedural primitives). Zero external model loading, CDN fetches, or network calls (`connect-src 'none'`).
+5. **2D baseline resilience:** If WebGL2 is missing, chunk loading fails, or context is lost (`webglcontextlost`), the application seamlessly falls back to 2D Canvas with zero simulation interruption.
+6. **VR as experimental extension:** WebXR VR is classified as experimental and decoupled from desktop 3D milestones until verified on physical headsets.
+
+### 8.2 Safe Track View-Model Boundary
+
+To prevent ground-truth leakage through `TrackEntity` (which contains `trueClass`, `droneType`, and true `pos`), live renderers consume a redacted `SafeTrackView`:
+
+```ts
+export interface SafeTrackView {
+  trackNo: string;
+  operatorLabel: TrackClass | null;
+  step: F2T2EAStep;
+  // Estimated kinematics from sensor tracker (not ground truth)
+  estRangeM: number;
+  estBearingDeg: number;
+  estSpeedMps: number;
+  estAltBand: 'LOW' | 'MED' | 'HIGH'; // Discretized altitude band
+  // Sensor observation states
+  q: number;                          // Fused track quality [0, 1]
+  cCls: number;                       // Classification confidence [0, 1]
+  isCoasting: boolean;
+  ghostSigmaM: number;                // Uncertainty radius
+  rfBearingDeg: number | null;
+}
+```
+
+> [!IMPORTANT]
+> **Live Tracker Blocker:** In the current implementation (`src/sim/engine.ts`), track positions in `UiTrackRow` are derived directly from ground-truth `pos.x, pos.y` without measurement noise. Before 3D can claim full sensor-noise fidelity, a formal observation estimation filter (Kalman/alpha-beta tracker) must decouple estimated coordinates from ground truth.
+
+### 8.3 Simulation Mathematics Invariant (Ground Range vs Slant Range)
+
+The simulation engine, radar detection equations (`calculateRadarPd`), effector engagement envelopes (`inRange`), Point of No Return (`rMinM`), and scoring latencies execute on **2D horizontal ground range**:
+$$R_{\text{ground}} = \sqrt{x^2 + y^2}$$
+
+The proposed global conversion to 3D slant range ($R_{\text{slant}} = \sqrt{x^2 + y^2 + z^2}$, proposed D-38) is **rejected for the initial 3D milestone**. Adopting slant range in the physics loop would alter radar SNR $\propto (R_{\text{ref}}/R)^4$, delay track initiation, distort PNR trigger times, invalidate scenario fairness, and break existing golden replay tests. All 3D coverage shells, range boundaries, and overlays must visualize the mathematics actually executed by the simulation.
+
+### 8.4 Authoritative Masking Calculation
+
+The sole authoritative source of truth for line-of-sight and terrain occlusion is `evaluateMasking(pos: Vec3, zones: ZoneSpec[]): MaskResult` in `src/sim/masking.ts`. It performs exact 2D ray-polygon intersection, determines near-edge distance $d_{\text{near}}$, and calculates:
+$$\theta_{\text{mask}} = \operatorname{atan2}(h_z - h_r, d_{\text{near}}), \quad \theta_T = \operatorname{atan2}(z - h_r, R)$$
+
+All 3D line-of-sight visualizers and shadow-volume overlays must compute shadow geometry using the exact near-edge distance $d_{\text{near}}$ and zone polygons from `evaluateMasking`, not legacy heuristic approximations.
+
+### 8.5 Three.js Chunking & Packaging
+
+- **Vite Rollup Chunking:** Configured in `vite.config.ts` via `manualChunks` to emit `render3d.[hash].js`.
+- **Procedural Assets:** No runtime fetch calls (`TextureLoader`, `GLTFLoader.load()` banned). Procedural geometries and `CanvasTexture` used for all terrain blocks, radar sweep wedges, reticles, and drone proxies.
+- **Budget:** 3D chunk under 1.5 MB minified.
+
+### 8.6 Capability Detection & Fallback Flow
+
+- **Capability Probe:** Checks `canvas.getContext('webgl2')`. If false, 3D view toggle is disabled and displays `NO WEBGL2`.
+- **Context Loss Handling:** On `webglcontextlost`, listener immediately triggers fallback to 2D console mode and shows warning banner `3D CONTEXT LOST — RETURNED TO 2D`. Simulation continues seamlessly.
+
+### 8.7 Coordinate & Axis Transform
+
+All 3D visual coordinates map strictly via the canonical transform:
+$$\operatorname{toThree}(x, y, z) = (x, z, -y)$$
+- 1 scene unit = 1 metre.
+- $+X$ = East, $+Y$ = Up (Altitude), $-Z$ = North.
+- Default tactical camera faces North ($-Z$).
+
+### 8.8 Phased Feature Roadmap (Track X3D)
+
+| Feature | Description | Information Class |
+| :--- | :--- | :--- |
+| **F1 — 3D Renderer Foundation** | Lazy-loaded Three.js tactical viewport, orbit controls, camera presets (`OBLIQUE`, `TOP`, `POST`), 2D/3D toggle (`V`). | Class A (Operator Visible) |
+| **F2 — Sensor Coverage Volumes** | Dynamic radar 4th-power hemisphere, EO/IR directional wedge, and RF azimuth lines reacting to chaos (FOG, JAMMING). | Class A (Operator Visible) |
+| **F3 — Effector Envelopes & PNR** | Weapon engagement domes and PNR cylindrical boundary at $R_{\min}$. | Class A (Operator Visible) |
+| **F4 — Line-of-Sight & Masking** | Ray from sensor antenna to track; occlusion visualizer matching `evaluateMasking`. | Class A (Operator Visible) |
+| **F5 — Spatial Cluster & Altitude Overlay** | DBSCAN spatial clustering and 3-band altitude markers (`LOW`/`MED`/`HIGH`). | Class A (Operator Visible) |
+| **F6 — Decision Aids (TRAIN Only)** | Shadow volume visualizer and future trajectory extrapolation. **Strictly locked off in EVAL mode**; usage time logged. | Class B (TRAIN Aids Only) |
+| **F7 — Post-Session 3D AAR Replay** | Full 3D replay with ground truth unmasked for retrospective debrief. | Class C (Post-Session AAR) |
+| **F8 — Engagement Inspector** | Visual breakdown of engagement outcome using recorded event parameters ($u, P_{k0}, g, h$). | Class C (Post-Session AAR) |
+| **F9 — WebXR VR Mode** | Experimental immersive table-top console; deferred until verified on hardware. | Class A/B (Experimental) |
+| **F10 — Procedural Tactical Environment & Terrain** | 6 deterministic presets (`URBAN_DENSE`, `SUBURBAN`, `MOUNTAIN_RIDGE`, `FOREST_VALLEY`, `COASTAL_AIRFIELD`, `OPEN_RURAL`) with procedural buildings, C2 bunker, S-band radar mast, and instanced vegetation. | Class A (Operator Visible) |
+| **F11 — Advanced Camera Navigation** | Horizontal plane panning, cursor-anchored zoom, polar angle safety clamps, smooth focus transitions (`[F]`, double-click), and preset reset (`Home`). | Class A (Operator Visible) |
+| **F12 — Environment Object Inspector** | Dual-domain raycasting pipeline with dedicated inspector panel displaying object metadata, coordinates, height, elevation, and masking parameters without ground truth leaks. | Class A (Operator Visible) |
+| **F13 — Dynamic Atmospheric Weather & Timeline Sync** | Deterministic fog density, rain particles driven by `simMs`, and daylight/night lighting synchronized across live console and AAR replay. | Class A (Operator Visible) |
+| **F14 — Target Model Diversity & Ground-Truth Protection** | Procedural 3D models for all operational categories (FPV attack, recon quad, swarm element, loitering munition, civil UAS, friendly UAV, bird, unknown contact). In live 3D view, visualization strictly matches trainee assessment (`traineeLabel`) without revealing ground truth. | Class A (Operator Visible) |
+| **F15 — 3D Engagement Visual Effects** | Realistic procedural weapon animations (`GUN` tracers, `LASER` coherent beam, `RF_SOFTKILL` directional wavefront, `INTERCEPTOR` drone launch, `MISSILE` rocket motor/smoke) with restrained non-graphic neutralization/ineffective outcomes and deterministic AAR timeline scrubbing. | Class A (Operator Visible) |
+| **F16 — 3D Tactical Radar Sweep** | 3D rotating antenna assembly atop C2 mast and translucent ground scan sector 100% synchronized with Canvas 2D sweep angle (30 RPM = 2.0s period) and responsive to sensor health. | Class A (Operator Visible) |
+| **F17 — Intelligent Operator Tactical Feedback** | Typed non-disruptive HUD toasts explaining hard weapon release blocks (`Q_MIN_VIOLATION`, `PNR_VIOLATION`, `OUT_OF_ENVELOPE`, `RF_JAMMING_ACTIVE`, `RF_SILENT_TARGET`), soft ROE warnings, and outcomes with actionable metrics and anti-spam throttling. | Class A (Operator Visible) |

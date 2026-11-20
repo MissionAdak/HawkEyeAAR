@@ -44,6 +44,14 @@ export class SimClock {
     this.lastFrameTs = performance.now();
   }
 
+  /**
+   * Resynchronizes lastFrameTs without altering pause state.
+   * Prevents timestamp jumps when swapping FrameDrivers without unpausing an operator-paused simulation.
+   */
+  public resync(now?: number): void {
+    this.lastFrameTs = now ?? (typeof performance !== 'undefined' ? performance.now() : 0);
+  }
+
   public getPaused(): boolean {
     return this.isPaused;
   }

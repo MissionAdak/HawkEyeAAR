@@ -18,6 +18,7 @@ import { resolveEngagement } from './effectors';
 import { aggregateAARMetrics } from './metrics';
 import { calculateRadarPd, computeCoastingState } from './sensors';
 import { evaluateMasking } from './masking';
+import { type OperatorFeedback, createOperatorFeedback } from './operatorFeedback';
 
 export type SensorHealthStatus = 'OK' | 'DEG' | 'OUT';
 
@@ -67,6 +68,11 @@ export class SimEngine {
   public inputQueue: InputQueue = new InputQueue();
 
   public onEvent: ((event: SimEvent) => void) | null = null;
+  public onFeedback: ((feedback: OperatorFeedback) => void) | null = null;
+
+  public emitFeedback(feedback: OperatorFeedback): void {
+    this.onFeedback?.(feedback);
+  }
 
   public activeSensor: SensorMode = 'RADAR';
   public selectedTrackNo: string | null = null;
@@ -85,6 +91,8 @@ export class SimEngine {
 
   private killRng: (() => number) | null = null;
   public sessionEnded: boolean = false;
+  public trainingAidActive: boolean = false;
+  public trainingAidTicks: number = 0;
 
   public get mode(): 'TRAIN' | 'EVAL' | 'DEMO' {
     return this.spec?.mode ?? 'TRAIN';
@@ -101,6 +109,8 @@ export class SimEngine {
     this.selectedTrackNo = null;
     this.activeEffector = 'RF_SOFTKILL';
     this.eoirAzimuthDeg = 0;
+    this.trainingAidActive = false;
+    this.trainingAidTicks = 0;
     this.killRng = mulberry32(streamSeed(spec.seed, 'kill'));
     clockInstance.reset();
 
@@ -212,10 +222,11 @@ export class SimEngine {
     if (this.sessionEnded || !this.spec) return;
     this.sessionEnded = true;
     const currentSimMs = this.tickIndex * 50;
-    const finalMetrics = aggregateAARMetrics(this.events, this.spec);
+    const finalMetrics = aggregateAARMetrics(this.events, this.spec, this.trainingAidTicks);
     this.appendEvent('SESSION_END', {
       durationMs: currentSimMs,
       metrics: finalMetrics,
+      trainingAidTicks: this.trainingAidTicks,
       reason,
       subReason,
       aborted: true,
@@ -227,6 +238,10 @@ export class SimEngine {
 
     this.tickIndex += 1;
     const currentSimMs = this.tickIndex * 50;
+
+    if (this.trainingAidActive && this.mode !== 'EVAL') {
+      this.trainingAidTicks += 1;
+    }
 
     // 1. Radar sweep evaluation every 2000ms (40 ticks, 30 RPM)
     if (this.tickIndex % 40 === 0) {
@@ -257,8 +272,14 @@ export class SimEngine {
     // 6. Check session completion
     if (currentSimMs >= this.spec.durationMs && !this.sessionEnded) {
       this.sessionEnded = true;
-      const finalMetrics = aggregateAARMetrics(this.events, this.spec);
-      this.appendEvent('SESSION_END', { durationMs: currentSimMs, metrics: finalMetrics, reason: 'COMPLETE', aborted: false });
+      const finalMetrics = aggregateAARMetrics(this.events, this.spec, this.trainingAidTicks);
+      this.appendEvent('SESSION_END', {
+        durationMs: currentSimMs,
+        metrics: finalMetrics,
+        trainingAidTicks: this.trainingAidTicks,
+        reason: 'COMPLETE',
+        aborted: false,
+      });
     }
   }
 
@@ -414,12 +435,99 @@ export class SimEngine {
     }
   }
 
+  private updatePopUpApproach(entity: TrackEntity, distToAsset: number, speedMps: number): void {
+    const dx = -entity.pos.x;
+    const dy = -entity.pos.y;
+    if (distToAsset > 0.1) {
+      entity.vel.x = (dx / distToAsset) * speedMps;
+      entity.vel.y = (dy / distToAsset) * speedMps;
+    }
+    if (entity.pos.z > 20) {
+      entity.vel.z = -8;
+    } else {
+      entity.vel.z = 0;
+      entity.pos.z = 20;
+    }
+  }
+
+  private updatePopUpClimb(
+    entity: TrackEntity,
+    distToAsset: number,
+    speedMps: number,
+    climbRateMps: number
+  ): void {
+    const dx = -entity.pos.x;
+    const dy = -entity.pos.y;
+    if (distToAsset > 0.1) {
+      entity.vel.x = (dx / distToAsset) * speedMps;
+      entity.vel.y = (dy / distToAsset) * speedMps;
+    }
+    entity.vel.z = climbRateMps;
+  }
+
+  private updatePopUpDive(
+    entity: TrackEntity,
+    speedMps: number,
+    peakZ: number,
+    terminalTargetZ: number
+  ): void {
+    if (entity.pos.z >= peakZ) {
+      entity.pos.z = peakZ;
+    }
+    const dX = -entity.pos.x;
+    const dY = -entity.pos.y;
+    const dZ = terminalTargetZ - entity.pos.z;
+    const dist3D = Math.hypot(dX, dY, dZ);
+
+    if (dist3D > 0.1) {
+      const stepDist = speedMps * 0.05;
+      if (dist3D <= stepDist) {
+        entity.vel.x = dX / 0.05;
+        entity.vel.y = dY / 0.05;
+        entity.vel.z = dZ / 0.05;
+      } else {
+        entity.vel.x = (dX / dist3D) * speedMps;
+        entity.vel.y = (dY / dist3D) * speedMps;
+        entity.vel.z = (dZ / dist3D) * speedMps;
+      }
+    } else {
+      entity.vel.x = 0;
+      entity.vel.y = 0;
+      entity.vel.z = 0;
+    }
+  }
+
+  private updatePopUpDiveKinematics(entity: TrackEntity): void {
+    const distToAsset = Math.hypot(entity.pos.x, entity.pos.y);
+    const popupDistM = CONFIG.terrain?.popUp?.popupDistM ?? 900;
+    const climbRateMps = CONFIG.terrain?.popUp?.climbRateMps ?? 15;
+    const peakZ = CONFIG.terrain?.popUp?.peakZM ?? 150;
+    const terminalTargetZ = CONFIG.terrain?.popUp?.terminalTargetZM ?? 20;
+
+    const specSpeed =
+      this.spec?.threats?.find((t) => t.id === entity.id)?.speedMps ??
+      this.spec?.decoys?.find((d) => d.id === entity.id)?.speedMps;
+    const speedMps = specSpeed ?? (Math.hypot(entity.vel.x, entity.vel.y) || 30);
+
+    if (distToAsset > popupDistM) {
+      this.updatePopUpApproach(entity, distToAsset, speedMps);
+    } else if (entity.pos.z < peakZ && entity.vel.z >= 0) {
+      this.updatePopUpClimb(entity, distToAsset, speedMps, climbRateMps);
+    } else {
+      this.updatePopUpDive(entity, speedMps, peakZ, terminalTargetZ);
+    }
+  }
+
   private updateSingleEntity(
     entity: TrackEntity,
     rMinM: number,
     qMin: number,
     currentSimMs: number
   ): void {
+    if (entity.profile === 'POP_UP_DIVE') {
+      this.updatePopUpDiveKinematics(entity);
+    }
+
     entity.pos.x += entity.vel.x * 0.05;
     entity.pos.y += entity.vel.y * 0.05;
     entity.pos.z += entity.vel.z * 0.05;
@@ -567,8 +675,54 @@ export class SimEngine {
   }
 
   private handleFire(action: { trackNo: string }, tRawMs?: number): void {
+    const currentSimMs = this.tickIndex * 50;
     const target = this.curr.find((e) => e.trackNo === action.trackNo);
-    if (!target) return;
+    if (!target) {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: 'TRACK_NOT_FOUND',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+        })
+      );
+      return;
+    }
+    if (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED') {
+      const reason = target.lifecycle !== 'ACTIVE' ? 'INACTIVE_TARGET' : 'PNR_VIOLATION';
+      this.appendEvent(
+        'RELEASE_BLOCKED',
+        { reason, effector: this.activeEffector, rangeM: Math.hypot(target.pos.x, target.pos.y) },
+        action.trackNo,
+        target.id,
+        tRawMs
+      );
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: reason,
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM: Math.hypot(target.pos.x, target.pos.y),
+        })
+      );
+      return;
+    }
+
+    if (target.step === 'ASSESS') {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: 'DUPLICATE_PENDING_FIRE',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+        })
+      );
+      return;
+    }
 
     const rangeM = Math.hypot(target.pos.x, target.pos.y);
     const zones = this.spec?.zones || [];
@@ -586,12 +740,47 @@ export class SimEngine {
 
     // Hard blocks prevent fire entirely
     if (gating.isHardBlocked) {
+      const reason = gating.hardBlockReason || 'OUT_OF_ENVELOPE';
+      this.appendEvent(
+        'RELEASE_BLOCKED',
+        {
+          reason,
+          effector: this.activeEffector,
+          rangeM,
+          q: target.q,
+        },
+        action.trackNo,
+        target.id,
+        tRawMs
+      );
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'RELEASE_BLOCKED',
+          reasonCode: reason,
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          targetQ: target.q,
+          rangeM,
+          isJammingActive,
+        })
+      );
       return;
     }
 
     // 2. Log soft ROE violations
     for (const v of gating.violations) {
       this.appendEvent('ROE_VIOLATION', { reason: v, trackNo: action.trackNo }, action.trackNo, target.id);
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'ROE_WARNING',
+          reasonCode: v,
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM,
+        })
+      );
     }
 
     // 3. Log live CER / Unfavourable exchange flag if CER > 10
@@ -612,6 +801,7 @@ export class SimEngine {
       { isFogActive, isJammingActive }
     );
 
+    const effConfig = CONFIG.effectors[this.activeEffector];
     this.appendEvent(
       'ENGAGE',
       {
@@ -620,10 +810,15 @@ export class SimEngine {
         pk: killDraw.pk,
         u: killDraw.u,
         killed: killDraw.killed,
+        pk0: killDraw.pk0,
+        g: killDraw.g,
+        h: killDraw.h,
+        costInr: effConfig?.costInr ?? 0,
         cer: gating.cer,
         roeGate: gating.roeGate,
         zoneId: gating.overlappingZone?.id,
         rhoZone: gating.overlappingZone?.rho ?? 0,
+        targetPos: { x: target.pos.x, y: target.pos.y, z: target.pos.z },
       },
       action.trackNo,
       target.id,
@@ -633,6 +828,31 @@ export class SimEngine {
     target.step = killDraw.killed ? 'ASSESS' : 'TARGET';
     if (killDraw.killed) target.lifecycle = 'NEUTRALISED';
     this.appendEvent('ENGAGE_RESULT', { killed: killDraw.killed, u: killDraw.u, pk: killDraw.pk }, action.trackNo, target.id);
+
+    // Operator feedback on outcome
+    if (killDraw.killed) {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'NEUTRALIZATION_INDICATED',
+          reasonCode: 'NEUTRALIZATION_INDICATED',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM,
+        })
+      );
+    } else {
+      this.emitFeedback(
+        createOperatorFeedback({
+          category: 'ENGAGEMENT_UNSUCCESSFUL',
+          reasonCode: 'ENGAGEMENT_UNSUCCESSFUL',
+          timestampMs: currentSimMs,
+          trackNo: action.trackNo,
+          effectorId: this.activeEffector,
+          rangeM,
+        })
+      );
+    }
   }
 
   private handleCycleTrack(direction: 'NEXT' | 'PREV'): void {

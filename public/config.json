@@ -150,6 +150,14 @@
       "defaultRho": 0.0
     }
   },
+  "terrain": {
+    "popUp": {
+      "popupDistM": 900,
+      "climbRateMps": 15,
+      "peakZM": 150,
+      "terminalTargetZM": 20
+    }
+  },
   "scoringWeights": {
     "hostile": {
       "d": 0.25,

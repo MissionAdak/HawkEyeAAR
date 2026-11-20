@@ -62,6 +62,17 @@ export const ScoringWeightsSchema = z.object({
   }),
 });
 
+export const TerrainPopUpConfigSchema = z.object({
+  popupDistM: z.number().positive(),
+  climbRateMps: z.number().positive(),
+  peakZM: z.number().positive(),
+  terminalTargetZM: z.number().nonnegative().optional(),
+});
+
+export const TerrainConfigSchema = z.object({
+  popUp: TerrainPopUpConfigSchema.optional(),
+});
+
 export const ConfigSchema = z.object({
   _meta: z.object({
     notional: z.boolean(),
@@ -72,6 +83,7 @@ export const ConfigSchema = z.object({
   effectors: z.record(z.string(), EffectorSchema),
   thresholds: ThresholdsSchema,
   zones: z.record(z.string(), ZoneConfigSchema),
+  terrain: TerrainConfigSchema.optional(),
   scoringWeights: ScoringWeightsSchema,
   classificationMatrix: z.record(z.string(), z.record(z.string(), z.number())),
   chaos: z.record(z.string(), z.record(z.string(), z.any())),

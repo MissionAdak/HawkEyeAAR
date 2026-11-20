@@ -102,8 +102,7 @@ export function computeGScore(params: {
       // Attempted engagement but target leaked
       g = 0.3 * econScore;
     } else {
-      // Unopposed leaker
-      g = 0;
+      // Unopposed leaker (g remains 0)
     }
 
     // ROE rules SC-8 & SC-9: Kinetic over dense zone or firing on UNK caps G at 40
@@ -116,8 +115,7 @@ export function computeGScore(params: {
       // Correctly held fire
       g = 100;
     } else {
-      // Erroneous engagement of neutral/friendly
-      g = 0;
+      // Erroneous engagement of neutral/friendly (g remains 0)
     }
 
     if (kineticOverDenseZone || unclassifiedFired) {

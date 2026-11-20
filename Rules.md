@@ -20,7 +20,7 @@ Precedence: `Rules.md` > `ARCHITECTURE.md` > `DESIGN.md` > `Tasks.md` > PRD v1.1
 
 **R1.6 — If an HTTP call is detected, the test suite fails.** Two layers: (a) static code checks fail on any banned API or URL literal; (b) `tests/e2e/airgap.spec.ts` plays a full session with `page.route('**/*')` recording every request and `page.on('websocket')` armed, and fails on any non-loopback origin, non-GET method, or WebSocket.
 
-**R1.7 — Dependency allowlist.** Runtime: `react`, `react-dom`, `zustand`, `dexie`, `zod`. Dev/build: `vite`, `@vitejs/plugin-react`, `typescript`, `tailwindcss`, `autoprefixer`, `postcss`, `vitest`, `@playwright/test`, `eslint`, `typescript-eslint`, `@fontsource/chakra-petch`, `@fontsource/jetbrains-mono`, `@fontsource/share-tech-mono`. Anything else requires a Decision-log entry in `MEMORY.md` first. PixiJS, Three.js, Chart.js and any external charting library are banned.
+**R1.7 — Dependency allowlist.** Runtime: `react`, `react-dom`, `zustand`, `dexie`, `zod`. Dev/build: `vite`, `@vitejs/plugin-react`, `typescript`, `tailwindcss`, `autoprefixer`, `postcss`, `vitest`, `@playwright/test`, `eslint`, `typescript-eslint`, `@fontsource/chakra-petch`, `@fontsource/jetbrains-mono`, `@fontsource/share-tech-mono`. Optional 3D Feature Pack: `three` is conditionally permitted ONLY within the isolated, lazy-loaded `src/render3d/` chunk and must not be imported in main bundle or sim core. Anything else requires a Decision-log entry in `MEMORY.md` first. PixiJS, Chart.js and any external charting library are banned.
 
 ---
 
@@ -221,3 +221,42 @@ All constants live in `/public/config.json` (schema in `ARCHITECTURE.md` §3.8).
 | R5.* | review checklist + `tests/guards/copy.test.ts` (greps UI strings for banned phrases: certified, validated, MIL-STD, APP-6, operational) |
 | R6.1–R6.3 | `tests/guards/design.test.ts`; `tests/e2e/layout.spec.ts` |
 | R7.* | `tsc --noEmit`, ESLint, CI script `npm run check` |
+| R10.1, R10.4, R10.5 | Import location guard; bundle-analysis verifying main chunk has no `three`; banned loaders check |
+| R10.2, R10.3 | Unit tests for view model gating; import guard blocking `TruthEntity` in live renderers |
+| R10.7, R10.10 | Fallback verification test (context loss triggers 2D return); memory cleanup verification |
+| R10.9, R10.17 | Parity verification: identical events and score in 2D and 3D; ground-range mathematical invariant |
+| R10.14 | Evaluation guard: Class B decision aids strictly locked in EVAL mode |
+
+---
+
+## 10. Three.js, 3D and VR rules (optional feature pack)
+
+**R10.1 — Isolation and laziness.** `three` (and `three/examples/jsm/*`) MAY be imported only within `src/render3d/**`. It is accessed solely via dynamic `import('@/render3d')` when the user enables 3D mode. The main entry bundle MUST NOT contain Three.js.
+
+**R10.2 — View-only architecture.** 3D renderers consume safe, redacted view models and pure geometric helpers. Renderers MUST NOT mutate `SimEngine` state or access simulation internals directly. Trainee actions must flow strictly through the existing quantised input pipeline.
+
+**R10.3 — Information gating and truth separation.** Scored live sessions must visualize only operator-visible estimates (`SafeTrackView`), such as estimated position, operator label, altitude band, and track state. True classifications, true coordinates, and hidden target values MUST NOT be drawn. Ground truth is permitted exclusively in post-session AAR replay (`src/ui/aar/**`).
+
+**R10.4 — Zero network through Three.js.** Three.js loaders that perform HTTP requests (`TextureLoader`, `FileLoader`, `GLTFLoader.load()`) are strictly banned. Textures and geometries MUST be procedural (`CanvasTexture`, procedural primitives). No runtime `.glb` downloads over network.
+
+**R10.5 — Determinism hygiene.** `Math.random` is banned across the entire codebase (R2.2). Three.js random utilities (`MathUtils.randFloat`, `randInt`, `generateUUID`) are banned. Cosmetic visual noise must use seeded `mulberry32` streams.
+
+**R10.6 — 2D canvas baseline resilience.** The 2D Canvas console is the authoritative, permanent baseline. Missing WebGL2, chunk load failures (> 3 s), or `webglcontextlost` events MUST cleanly fall back to 2D mode without interrupting or failing the simulation session.
+
+**R10.7 — Resource hygiene.** `dispose()` must cleanly release all geometries, materials, textures, and canvas listeners on unmount or 2D switch. Ten consecutive 2D ↔ 3D toggles must return GPU memory allocations to baseline.
+
+**R10.8 — Budget constraints.** The 3D chunk must stay under 1.5 MB minified. Draw calls must remain below 250 and triangle count under 150k on HIGH tier (below 120 calls and 60k tris on LOW tier). Flat unlit materials only (`MeshBasicMaterial`). No bloom, shadows, or screen-space post-processing.
+
+**R10.9 — Scoring and simulation parity.** The simulation state, RNG draws, event sequence, and scores MUST be identical whether rendered in 2D or 3D. Rendering mode is recorded in session metadata (`viewMode`) for transparency only and must never alter a score, latency, or threshold.
+
+**R10.10 — Single coordinate transform.** All 3D translations must pass through `toThree(x, y, z) = (x, z, -y)`. Inline coordinate inversions or ad-hoc swaps are prohibited. North is $-Z$, altitude is $+Y$, East is $+X$.
+
+**R10.11 — Simulation math fidelity (no slant-range rewrite).** Range calculations for radar Pd, effector envelopes, PNR, and scoring must remain 2D ground range $R = \sqrt{x^2+y^2}$ as executed by `SimEngine`. Slant range conversions are rejected for the initial milestone to protect scoring and replay determinism.
+
+**R10.12 — Authoritative masking alignment.** 3D occlusion rays and shadow volumes must derive directly from the polygon ray-intersection math of `evaluateMasking()` in `src/sim/masking.ts`. Approximations that disagree with the simulation's masking outcomes are prohibited.
+
+**R10.13 — Decision aids information class.** Class B features (coverage volumes, trajectory prediction aids) are permitted solely in `TRAIN` mode and briefing screens. In `EVAL` mode, decision aids are strictly locked off (`AIDS LOCKED`). Active aid duration is tracked in ticks and recorded in session telemetry.
+
+**R10.14 — Illustrative engagement labelling.** Effector flight visuals and engagement animations in 3D are illustrative representations of a discrete probability roll. Every visualizer must be captioned: `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`.
+
+**R10.15 — WebXR VR claims.** WebXR VR remains an experimental track until empirical validation on a physical VR headset is completed and logged in `MEMORY.md`. The UI must label VR as `EXPERIMENTAL`.

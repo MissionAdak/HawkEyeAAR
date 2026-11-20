@@ -6,9 +6,14 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
   }) => {
     await page.goto('/');
 
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
     // 1. Wait for sim to boot and tracks to appear
     const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
-    await expect(trackRow).toBeVisible({ timeout: 5000 });
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
 
     // 2. Click track row to designate
     await trackRow.click();
@@ -46,6 +51,11 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
   test('sensor mode buttons and pause toggle work smoothly', async ({ page }) => {
     await page.goto('/');
 
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
     const modeTabs = page.locator('.radar-frame');
 
     // Click '[2] EO/IR' tab
@@ -70,5 +80,177 @@ test.describe('Tactical C2 Trainee Interaction & Kill-Chain Execution', () => {
     await expect(pauseButton).toHaveText('[P] RESUME');
     await pauseButton.click();
     await expect(pauseButton).toHaveText('[P] PAUSE');
+  });
+
+  test('switches to 3D view, supports camera orbit drag, target picking, and syncs selection state with console controls', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // 1. Wait for sim to boot and tracks to appear
+    const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
+
+    // 2. Toggle from 2D RADAR to 3D VIEW
+    const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DButton).toBeVisible();
+    await toggle3DButton.click();
+
+    // 3. Verify 3D canvas is active and displayed
+    const canvas3d = page.locator('canvas.cursor-grab');
+    await expect(canvas3d).toBeVisible();
+
+    // 4. Verify visual enlargement notice and 3D control hints are present
+    await expect(
+      page.getByText('AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED')
+    ).toBeVisible();
+    await expect(page.getByText('DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET')).toBeVisible();
+
+    // 5. Test camera dragging: drag on canvas does not crash or inadvertently select an unintended track
+    const canvasBox = await canvas3d.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    if (canvasBox) {
+      await page.mouse.move(canvasBox.x + 50, canvasBox.y + 50);
+      await page.mouse.down();
+      await page.mouse.move(canvasBox.x + 150, canvasBox.y + 100);
+      await page.mouse.up();
+    }
+
+    // 6. Test 3D camera presets (OBLIQUE, TOP, POST)
+    const topPresetBtn = page.getByRole('button', { name: /\[T\] TOP/i });
+    await expect(topPresetBtn).toBeVisible();
+    await topPresetBtn.click();
+    await expect(page.getByText('3D VIEW | CAM: TOP')).toBeVisible();
+
+    // 7. Designate target by clicking it directly in the 3D canvas
+    const coords = await page.evaluate(() => {
+      const r3d = (window as unknown as { __RENDERER_3D__?: { getTrackScreenCoords: (id: string) => { clientX: number; clientY: number } | null } }).__RENDERER_3D__;
+      return r3d?.getTrackScreenCoords('T-01') ?? null;
+    });
+    expect(coords).not.toBeNull();
+    if (coords) {
+      await page.mouse.click(coords.clientX, coords.clientY);
+    }
+    const fireControlHeader = page.locator('aside').last();
+    await expect(fireControlHeader.getByText('T-01').first()).toBeVisible();
+
+    // 8. Toggle back to 2D RADAR: selection remains synchronized
+    const toggle2DButton = page.getByRole('button', { name: /\[V\] 2D RADAR/i });
+    await expect(toggle2DButton).toBeVisible();
+    await toggle2DButton.click();
+    await expect(fireControlHeader.getByText('T-01').first()).toBeVisible();
+  });
+
+  test('opens and closes X-SECTION elevation training aid in 3D view without errors or blank screens', async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    // Start session from Mission Briefing
+    const startBtn = page.locator('[data-testid="start-session-btn"]');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // 1. Switch to 3D view
+    const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DButton).toBeVisible();
+    await toggle3DButton.click();
+
+    // 2. Select track T-01
+    const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
+    await expect(trackRow).toBeVisible();
+    await trackRow.click();
+
+    // 3. Open X-SECTION
+    const xSectionBtn = page.getByRole('button', { name: /X-SECTION/i });
+    await expect(xSectionBtn).toBeVisible();
+    await xSectionBtn.click();
+
+    // 4. Verify modal is visible with chart and elevation labels
+    const modalTitle = page.getByText(/ELEVATION CROSS-SECTION TRAINING AID/i);
+    await expect(modalTitle).toBeVisible();
+    await expect(page.getByText(/VERTICAL EXAGGERATION/i)).toBeVisible();
+
+    // 5. Dismiss with ESC key
+    await page.keyboard.press('Escape');
+    await expect(modalTitle).not.toBeVisible();
+
+    // 6. Reopen and dismiss with [X] key
+    await xSectionBtn.click();
+    await expect(modalTitle).toBeVisible();
+    await page.keyboard.press('x');
+    await expect(modalTitle).not.toBeVisible();
+
+    // 7. Reopen and dismiss via backdrop click
+    await xSectionBtn.click();
+    await expect(modalTitle).toBeVisible();
+    const modalBackdrop = page.getByRole('button', { name: /Dismiss elevation cross-section modal/i });
+    await modalBackdrop.click({ position: { x: 10, y: 10 } });
+    await expect(modalTitle).not.toBeVisible();
+
+    // Zero uncaught page errors
+    expect(pageErrors).toHaveLength(0);
+  });
+
+  test('displays Mission Briefing environment & weather card with tactical conditions on initial load', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    // 1. Verify Mission Briefing modal is visible
+    const briefingTitle = page.getByTestId('briefing-title');
+    await expect(briefingTitle).toBeVisible();
+
+    // 2. Verify 3D Environment card is present
+    const envCard = page.getByTestId('briefing-environment-card');
+    await expect(envCard).toBeVisible();
+    await expect(envCard.getByText(/3D TACTICAL ENVIRONMENT & ATMOSPHERE/i)).toBeVisible();
+    await expect(envCard.getByText(/URBAN DENSE/i)).toBeVisible();
+    await expect(envCard.getByText(/Coverage Radius/i)).toBeVisible();
+  });
+
+  test('supports 3D camera navigation, Home reset, and Environment Inspector in 3D tactical view', async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    // 1. Start simulation session from Mission Briefing
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // 2. Switch to 3D tactical view
+    const toggle3DButton = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DButton).toBeVisible();
+    await toggle3DButton.click();
+
+    const canvas3d = page.locator('canvas.cursor-grab');
+    await expect(canvas3d).toBeVisible();
+
+    // 3. Verify enhanced camera navigation controls hint
+    await expect(page.getByText('DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET')).toBeVisible();
+
+    // 4. Test pressing Home key resets camera
+    await page.keyboard.press('Home');
+    expect(pageErrors).toHaveLength(0);
+
+    // 5. Test double click on canvas ground does not throw
+    const canvasBox = await canvas3d.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    if (canvasBox) {
+      await page.mouse.dblclick(canvasBox.x + 260, canvasBox.y + 260);
+    }
+    expect(pageErrors).toHaveLength(0);
   });
 });

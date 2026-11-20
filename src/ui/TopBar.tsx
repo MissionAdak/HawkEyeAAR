@@ -19,6 +19,13 @@ export const TopBar: React.FC = () => {
   const setSpeed = useSessionStore((s) => s.setSpeed);
   const openAar = useSessionStore((s) => s.openAar);
   const openQuickGuide = useSessionStore((s) => s.openQuickGuide);
+  const sessionStatus = useSessionStore((s) => s.sessionStatus);
+  const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
+  const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId);
+  const startSession = useSessionStore((s) => s.startSession);
+  const openBriefing = useSessionStore((s) => s.openBriefing);
+
+  const scenarioId = sessionStatus === 'READY' ? selectedScenarioId : currentScenarioId;
 
   const getPillClass = (status: 'OK' | 'DEG' | 'OUT') => {
     switch (status) {
@@ -28,6 +35,56 @@ export const TopBar: React.FC = () => {
         return 'text-amber border-amber bg-amber/20 animate-pulse';
       case 'OUT':
         return 'text-threat border-threat bg-threat/20 animate-pulse';
+    }
+  };
+
+  const getSessionStatusBadge = () => {
+    switch (sessionStatus) {
+      case 'READY':
+        return (
+          <span
+            data-testid="session-status-badge"
+            className="px-2 py-0.5 border border-phosphor text-phosphor bg-phosphorDim/20 font-bold text-[10px] tracking-wider"
+          >
+            READY FOR EXERCISE
+          </span>
+        );
+      case 'STARTING':
+        return (
+          <span
+            data-testid="session-status-badge"
+            className="px-2 py-0.5 border border-amber text-amber bg-amber/20 font-bold text-[10px] tracking-wider animate-pulse"
+          >
+            STARTING...
+          </span>
+        );
+      case 'RUNNING':
+        return (
+          <span
+            data-testid="session-status-badge"
+            className="px-2 py-0.5 border border-phosphor bg-phosphor text-carbon-950 font-bold text-[10px] tracking-wider shadow-sm"
+          >
+            SESSION ACTIVE
+          </span>
+        );
+      case 'COMPLETED':
+        return (
+          <span
+            data-testid="session-status-badge"
+            className="px-2 py-0.5 border border-friend text-friend bg-friend/20 font-bold text-[10px] tracking-wider"
+          >
+            SESSION COMPLETED
+          </span>
+        );
+      case 'ABORTED':
+        return (
+          <span
+            data-testid="session-status-badge"
+            className="px-2 py-0.5 border border-threat text-threat bg-threat/20 font-bold text-[10px] tracking-wider"
+          >
+            SESSION ABORTED
+          </span>
+        );
     }
   };
 
@@ -43,9 +100,19 @@ export const TopBar: React.FC = () => {
         </span>
       </div>
 
-      {/* Center: Sensor Health Indicators */}
+      {/* Center: Status Badge & Sensor Health Indicators */}
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 font-mono text-[11px]">
+        {getSessionStatusBadge()}
+
+        <span
+          data-testid="topbar-scenario-id"
+          className="text-[10px] font-mono text-text-dim border border-line px-1.5 py-0.5 bg-carbon-800"
+          title={`Active/Selected Scenario: ${scenarioId}`}
+        >
+          {scenarioId}
+        </span>
+
+        <div className="flex items-center gap-1.5 font-mono text-[11px] ml-1">
           <span className="text-text-dim text-[10px]">SENSORS:</span>
           <span className={`px-1.5 py-0.5 border text-[10px] ${getPillClass(sensorHealth.RADAR)}`}>
             RDR {sensorHealth.RADAR}
@@ -107,7 +174,25 @@ export const TopBar: React.FC = () => {
           [AAR SCORECARD]
         </button>
 
-        {mode === 'EVAL' ? (
+        {sessionStatus === 'READY' ? (
+          <>
+            <button
+              onClick={openBriefing}
+              className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-display font-semibold bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
+              title="Open Mission Briefing"
+            >
+              [BRIEFING]
+            </button>
+            <button
+              onClick={() => void startSession()}
+              data-testid="topbar-start-btn"
+              className="px-3 py-0.5 border border-phosphor bg-phosphor text-carbon-950 text-[11px] font-display font-bold hover:bg-phosphor/90 transition-all shadow-sm"
+              title="Start Simulation Exercise"
+            >
+              [START SESSION]
+            </button>
+          </>
+        ) : mode === 'EVAL' ? (
           <button
             disabled
             className="px-2 py-0.5 border border-line text-[11px] font-mono bg-carbon-800 text-text-dim opacity-50 cursor-not-allowed"
