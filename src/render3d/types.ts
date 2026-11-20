@@ -18,6 +18,8 @@ export type ObservedAirframeSignature =
   | 'BIRD_LIKE'
   | 'UNRESOLVED_AIRFRAME';
 
+export type SensorHealthState = 'OK' | 'DEG' | 'OUT';
+
 export type OpticalResolutionLevel = 'FULL' | 'DEGRADED' | 'UNRESOLVED';
 export type OpticalVisibilityState =
   | 'CLEAR'
@@ -31,7 +33,7 @@ export type OpticalVisibilityState =
 /**
  * Approved Sensor Observation Output.
  *
- * Invariant (Task 17.3 §3):
+ * Invariant (Task 17.3 §3, Task 17.4 §1, §3):
  * Produced by the authoritative simulation sensor subsystem only when physical
  * conditions (active sensor, sensor health, LOS/masking, range, weather) permit.
  * Never populated simply because an underlying TrackEntity exists.
@@ -47,6 +49,7 @@ export interface ApprovedSensorObservation {
   resolution?: OpticalResolutionLevel;
   visibilityState: OpticalVisibilityState;
   sensorAvailability: boolean;
+  sensorHealth: SensorHealthState;
   sensorHealthOk?: boolean;
   estimatedRangeM?: number;
 }

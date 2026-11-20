@@ -3,14 +3,25 @@ import type { SensorMode, DroneType } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
 import type { WeatherType } from '../environment/types';
 
+export type SensorHealthState = 'OK' | 'DEG' | 'OUT';
+
 export interface SensorObservationContext {
   activeSensor: SensorMode;
   displayMode: TargetDisplayMode;
-  sensorHealth?: { radarOk: boolean; eoirOk: boolean; rfOk: boolean };
+  sensorHealth?: Record<SensorMode, SensorHealthState> | { radarOk?: boolean; eoirOk?: boolean; rfOk?: boolean };
   weather?: WeatherType;
   isNight?: boolean;
   mode?: 'TRAIN' | 'EVAL' | 'DEMO';
   sensorPos?: { x: number; y: number; z: number };
+}
+
+export function getEoirHealth(
+  health?: Record<SensorMode, SensorHealthState> | { radarOk?: boolean; eoirOk?: boolean; rfOk?: boolean }
+): SensorHealthState {
+  if (!health) return 'OK';
+  if ('EOIR' in health && health.EOIR) return health.EOIR;
+  if ('eoirOk' in health) return health.eoirOk ? 'OK' : 'OUT';
+  return 'OK';
 }
 
 export type ObservationState =
@@ -101,10 +112,7 @@ export function resolveTargetPresentation(
     activeSensor,
     displayMode = 'AUTO',
     sensorHealth = { radarOk: true, eoirOk: true, rfOk: true },
-    weather = 'CLEAR',
-    isNight = false,
     mode = 'TRAIN',
-    sensorPos = { x: 0, y: 0, z: 0 },
   } = context;
 
   // 1. Force RADAR symbols if display mode is explicitly RADAR
@@ -129,14 +137,15 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 3. Sensor Health Check for EO/IR (Task 17.3 §7)
-  if (activeSensor === 'EOIR' && !sensorHealth.eoirOk) {
+  // 3. Sensor Health Check for EO/IR (Task 17.3 §7, Task 17.4 §1)
+  const eoirHealth = getEoirHealth(sensorHealth);
+  if (activeSensor === 'EOIR' && eoirHealth === 'OUT') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
       observationState: 'SENSOR_OFFLINE',
       opticalConfidence: 0,
-      reason: 'EO/IR sensor offline or degraded',
+      reason: 'EO/IR sensor offline (OUT)',
     };
   }
 
@@ -163,62 +172,9 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 5. Approved Sensor Observation Dispatch (Task 17.3 §3, §4)
-  if (track.sensorObservation) {
-    const obs = track.sensorObservation;
-    const signature = obs.signature ?? obs.observedSignature ?? 'UNRESOLVED_AIRFRAME';
-    const resolution = obs.resolutionLevel ?? obs.resolution ?? 'UNRESOLVED';
-    const sensorOk = obs.sensorAvailability ?? obs.sensorHealthOk ?? true;
-    const rangeM = obs.estimatedRangeM ?? 0;
-
-    if (!sensorOk) {
-      return {
-        presentationCategory: 'RADAR_SYMBOL',
-        isVisuallyResolved: false,
-        observationState: 'SENSOR_OFFLINE',
-        opticalConfidence: 0,
-        reason: 'EO/IR sensor offline in observation',
-      };
-    }
-    if (obs.visibilityState === 'MASKED') {
-      return {
-        presentationCategory: 'RADAR_SYMBOL',
-        isVisuallyResolved: false,
-        observationState: 'MASKED',
-        opticalConfidence: 0,
-        reason: 'Contact masked by terrain or structure',
-      };
-    }
-    if (resolution === 'FULL') {
-      const category = mapSignatureToCategory(signature);
-      return {
-        presentationCategory: category,
-        isVisuallyResolved: true,
-        observationState: 'CLEAR_OPTICAL',
-        opticalConfidence: obs.confidence,
-        reason: `Sensor observation resolved signature ${signature} (${Math.round(rangeM)}m)`,
-      };
-    }
-    if (resolution === 'DEGRADED') {
-      return {
-        presentationCategory: 'UNKNOWN_AIRFRAME',
-        isVisuallyResolved: false,
-        observationState: 'DEGRADED_OPTICAL',
-        opticalConfidence: obs.confidence,
-        reason: `Sensor observation degraded by ${obs.visibilityState} (${Math.round(rangeM)}m)`,
-      };
-    }
-    return {
-      presentationCategory: 'RADAR_SYMBOL',
-      isVisuallyResolved: false,
-      observationState: 'OUT_OF_RANGE',
-      opticalConfidence: obs.confidence,
-      reason: `Contact at ${Math.round(rangeM)}m exceeds sensor optical resolution`,
-    };
-  }
-
-  // If sensorObservation is explicitly null, sensor conditions forbade an observation
-  if (track.sensorObservation === null) {
+  // 5. Approved Sensor Observation Dispatch (Task 17.3 §3, §4, Task 17.4 §1, §2)
+  if (!track.sensorObservation) {
+    // Both null and undefined observations must produce a safe unresolved presentation (Task 17.4 §2)
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
@@ -228,71 +184,62 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 6. Fallback evaluation when sensorObservation is undefined (direct test fixtures)
-  const dx = track.pos.x - sensorPos.x;
-  const dy = track.pos.y - sensorPos.y;
-  const dz = track.pos.z - sensorPos.z;
-  const distM = Math.hypot(dx, dy, dz);
+  const obs = track.sensorObservation;
+  const signature = obs.signature ?? obs.observedSignature ?? 'UNRESOLVED_AIRFRAME';
+  const resolution = obs.resolutionLevel ?? obs.resolution ?? 'UNRESOLVED';
+  const obsHealth = obs.sensorHealth ?? (obs.sensorAvailability ? 'OK' : 'OUT');
+  const sensorOk = eoirHealth !== 'OUT' && obsHealth !== 'OUT' && obs.sensorAvailability !== false;
+  const rangeM = obs.estimatedRangeM ?? 0;
+  const confidence = Math.max(0, Math.min(1.0, obs.confidence));
 
-  // Atmospheric visibility factor
-  let weatherFactor = 1.0;
-  let weatherMaxFactor = 1.0;
-  if (weather === 'FOG') {
-    weatherFactor = 0.35; // Clear recognition drops to ~840m
-    weatherMaxFactor = 0.48; // Visual detection drops to ~1824m
-  } else if (weather === 'RAIN') {
-    weatherFactor = 0.65;
-    weatherMaxFactor = 0.75;
-  }
-
-  // Day/Night optical transmission factor
-  const lightingFactor = isNight ? 0.60 : 1.0;
-
-  const clearThreshold = CLEAR_OPTICAL_RANGE_M * weatherFactor * lightingFactor;
-  const maxThreshold = MAX_OPTICAL_RANGE_M * weatherMaxFactor * (isNight ? 0.75 : 1.0);
-
-  // Track quality factor
-  if (track.q < 0.20) {
+  if (!sensorOk) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
-      observationState: 'OUT_OF_RANGE',
+      observationState: 'SENSOR_OFFLINE',
       opticalConfidence: 0,
-      reason: 'Track quality insufficient for visual tracking',
+      reason: 'EO/IR sensor offline in observation',
     };
   }
-
-  // Distance threshold resolution
-  if (distM > maxThreshold) {
+  if (obs.visibilityState === 'MASKED') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
-      observationState: 'OUT_OF_RANGE',
-      opticalConfidence: 0.1,
-      reason: `Contact at ${Math.round(distM)}m exceeds optical limit (${Math.round(maxThreshold)}m)`,
+      observationState: 'MASKED',
+      opticalConfidence: 0,
+      reason: 'Contact masked by terrain or structure',
     };
   }
 
-  if (distM > clearThreshold) {
-    const opticalConfidence = Math.max(0.2, Math.min(0.65, 1.0 - (distM - clearThreshold) / (maxThreshold - clearThreshold)));
+  // Degraded sensor health or degraded observation produces UNKNOWN_AIRFRAME, not SENSOR_OFFLINE (Task 17.4 §1)
+  if (eoirHealth === 'DEG' || obsHealth === 'DEG' || resolution === 'DEGRADED') {
     return {
       presentationCategory: 'UNKNOWN_AIRFRAME',
       isVisuallyResolved: false,
       observationState: 'DEGRADED_OPTICAL',
-      opticalConfidence,
-      reason: `Partial visual observation at ${Math.round(distM)}m (clear limit ${Math.round(clearThreshold)}m)`,
+      opticalConfidence: confidence,
+      reason: eoirHealth === 'DEG' || obsHealth === 'DEG'
+        ? 'EO/IR sensor degraded (DEG)'
+        : `Sensor observation degraded by ${obs.visibilityState} (${Math.round(rangeM)}m)`,
     };
   }
 
-  // Within clear optical recognition range
-  const opticalConfidence = Math.max(0.7, Math.min(1.0, 1.0 - (distM / (clearThreshold * 1.5))));
-  const category = mapSignatureToCategory((track as unknown as { observedAirframe?: string }).observedAirframe);
+  if (resolution === 'FULL') {
+    const category = mapSignatureToCategory(signature);
+    return {
+      presentationCategory: category,
+      isVisuallyResolved: true,
+      observationState: 'CLEAR_OPTICAL',
+      opticalConfidence: confidence,
+      reason: `Sensor observation resolved signature ${signature} (${Math.round(rangeM)}m)`,
+    };
+  }
 
   return {
-    presentationCategory: category,
-    isVisuallyResolved: true,
-    observationState: 'CLEAR_OPTICAL',
-    opticalConfidence,
-    reason: `Clear visual recognition at ${Math.round(distM)}m`,
+    presentationCategory: 'RADAR_SYMBOL',
+    isVisuallyResolved: false,
+    observationState: 'OUT_OF_RANGE',
+    opticalConfidence: confidence,
+    reason: `Contact at ${Math.round(rangeM)}m exceeds sensor optical resolution`,
   };
 }

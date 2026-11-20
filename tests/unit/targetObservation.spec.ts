@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveTargetPresentation,
-  mapSignatureToCategory,
   type SensorObservationContext,
 } from '@/render3d/targets/targetObservation';
 import { resolveTargetModelCategory } from '@/render3d/targets/targetVisualMapping';
@@ -16,12 +15,13 @@ import {
   type SensorObservationPipelineContext,
 } from '@/sim/sensorObservation';
 
-describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => {
+describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17.4)', () => {
   const makeObservation = (overrides?: Partial<ApprovedSensorObservation>): ApprovedSensorObservation => ({
     signature: overrides?.signature ?? overrides?.observedSignature ?? 'FIXED_WING_DELTA',
     observedSignature: overrides?.signature ?? overrides?.observedSignature ?? 'FIXED_WING_DELTA',
     sensorSource: 'EOIR',
     activeSensor: 'EOIR',
+    sensorHealth: 'OK',
     sensorHealthOk: true,
     sensorAvailability: true,
     resolution: 'FULL',
@@ -51,7 +51,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
   const baseContext: SensorObservationContext = {
     activeSensor: 'EOIR',
     displayMode: 'AUTO',
-    sensorHealth: { radarOk: true, eoirOk: true, rfOk: true },
+    sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
     weather: 'CLEAR',
     isNight: false,
     mode: 'TRAIN',
@@ -183,17 +183,19 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
     });
   });
 
-  describe('3. EO/IR observation resolution & degradation (Task 17.3 §3, §4, §7)', () => {
-    it('EO/IR can display a physical model when an approved observation exists', () => {
+  describe('3. Sensor Health Semantics & EO/IR Observation (Task 17.4 §1)', () => {
+    it('EO/IR can display a physical model when sensor is OK and observation is FULL', () => {
       const track = makeTrack({
         sensorObservation: makeObservation({
           observedSignature: 'FIXED_WING_DELTA',
           resolution: 'FULL',
+          sensorHealth: 'OK',
         }),
       });
       const result = resolveTargetPresentation(track, {
         ...baseContext,
         activeSensor: 'EOIR',
+        sensorHealth: { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
       });
 
       expect(result.presentationCategory).toBe('LOITERING_MUNITION');
@@ -201,23 +203,37 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
       expect(result.observationState).toBe('CLEAR_OPTICAL');
     });
 
-    it('EO/IR cannot display physical models without an approved observation', () => {
-      const track = makeTrack({ sensorObservation: null });
+    it('Sensor health DEG produces UNKNOWN_AIRFRAME and DEGRADED_OPTICAL, not SENSOR_OFFLINE', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          observedSignature: 'UNRESOLVED_AIRFRAME',
+          resolution: 'DEGRADED',
+          sensorHealth: 'DEG',
+        }),
+      });
       const result = resolveTargetPresentation(track, {
         ...baseContext,
         activeSensor: 'EOIR',
+        sensorHealth: { RADAR: 'OK', EOIR: 'DEG', RF: 'OK' },
       });
 
-      expect(result.presentationCategory).toBe('RADAR_SYMBOL');
+      // DEG permits degraded observation (generic fuselage model), not offline
+      expect(result.presentationCategory).toBe('UNKNOWN_AIRFRAME');
       expect(result.isVisuallyResolved).toBe(false);
+      expect(result.observationState).toBe('DEGRADED_OPTICAL');
     });
 
-    it('Sensor offline prevents optical presentation', () => {
-      const track = makeTrack();
+    it('Sensor health OUT strictly prohibits optical models and produces SENSOR_OFFLINE', () => {
+      const track = makeTrack({
+        sensorObservation: makeObservation({
+          sensorHealth: 'OUT',
+          sensorAvailability: false,
+        }),
+      });
       const result = resolveTargetPresentation(track, {
         ...baseContext,
         activeSensor: 'EOIR',
-        sensorHealth: { radarOk: true, eoirOk: false, rfOk: true },
+        sensorHealth: { RADAR: 'OK', EOIR: 'OUT', RF: 'OK' },
       });
 
       expect(result.presentationCategory).toBe('RADAR_SYMBOL');
@@ -225,25 +241,30 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
       expect(result.observationState).toBe('SENSOR_OFFLINE');
     });
 
-    it('Sensor degradation reduces presentation detail to unresolved airframe', () => {
-      const track = makeTrack({
-        sensorObservation: makeObservation({
-          resolution: 'DEGRADED',
-          visibilityState: 'DEGRADED_FOG',
-        }),
-      });
-      const result = resolveTargetPresentation(track, {
+    it('Both null and undefined observations produce safe unresolved RADAR_SYMBOL (Task 17.4 §2)', () => {
+      // Null observation:
+      const trackNull = makeTrack({ sensorObservation: null });
+      const resultNull = resolveTargetPresentation(trackNull, {
         ...baseContext,
         activeSensor: 'EOIR',
       });
+      expect(resultNull.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(resultNull.isVisuallyResolved).toBe(false);
+      expect(resultNull.observationState).toBe('OUT_OF_RANGE');
 
-      expect(result.presentationCategory).toBe('UNKNOWN_AIRFRAME');
-      expect(result.isVisuallyResolved).toBe(false);
-      expect(result.observationState).toBe('DEGRADED_OPTICAL');
+      // Undefined observation:
+      const trackUndef = makeTrack({ sensorObservation: undefined });
+      const resultUndef = resolveTargetPresentation(trackUndef, {
+        ...baseContext,
+        activeSensor: 'EOIR',
+      });
+      expect(resultUndef.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(resultUndef.isVisuallyResolved).toBe(false);
+      expect(resultUndef.observationState).toBe('OUT_OF_RANGE');
     });
   });
 
-  describe('4. Environmental conditions, Masking & Fallback (Task 17.3 §4, §8)', () => {
+  describe('4. Environmental conditions & Masking (Task 17.3 §4, Task 17.4 §3)', () => {
     it('Terrain masking prevents optical see-through', () => {
       const track = makeTrack({ masked: true });
       const result = resolveTargetPresentation(track, {
@@ -256,33 +277,44 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
       expect(result.observationState).toBe('MASKED');
     });
 
-    it('Fog and night alter presentation according to documented notional parameters', () => {
-      // In CLEAR: at 1419m, clear threshold is 2400m -> CLEAR
-      // In FOG: clear threshold = 2400 * 0.35 = 840m; max threshold = 3800 * 0.48 = 1824m
-      // At 1419m in FOG, fallback resolution drops to DEGRADED_OPTICAL (UNKNOWN_AIRFRAME)
-      const trackWithoutObs = makeTrack({ sensorObservation: undefined });
-      const resultFog = resolveTargetPresentation(trackWithoutObs, {
-        ...baseContext,
-        activeSensor: 'EOIR',
+    it('Fog and night alter observation resolution via genuine pipeline', () => {
+      // Entity at 1419m in CLEAR daylight: within 2400m -> FULL resolution
+      const entity = makeSimEntity({ pos: { x: 1000, y: 1000, z: 120 } });
+      const clearObs = evaluateSensorObservation(entity, {
+        ...basePipelineContext,
+        weather: 'CLEAR',
+        isNight: false,
+      });
+      expect(clearObs?.resolutionLevel).toBe('FULL');
+      const clearResult = resolveTargetPresentation(makeTrack({ sensorObservation: clearObs }), baseContext);
+      expect(clearResult.presentationCategory).toBe('HOSTILE_ATTACK');
+
+      // Entity at 1419m in FOG: clear threshold drops to 840m, so 1419m becomes DEGRADED
+      const fogObs = evaluateSensorObservation(entity, {
+        ...basePipelineContext,
         weather: 'FOG',
       });
-
-      expect(resultFog.presentationCategory).toBe('UNKNOWN_AIRFRAME');
-      expect(resultFog.observationState).toBe('DEGRADED_OPTICAL');
-
-      // Beyond max fog threshold (e.g. 2500m):
-      const distantTrack = makeTrack({
-        pos: { x: 2000, y: 1500, z: 200 }, // ~2507m
-        sensorObservation: undefined,
-      });
-      const resultDistant = resolveTargetPresentation(distantTrack, {
+      expect(fogObs?.resolutionLevel).toBe('DEGRADED');
+      const fogResult = resolveTargetPresentation(makeTrack({ sensorObservation: fogObs }), {
         ...baseContext,
-        activeSensor: 'EOIR',
         weather: 'FOG',
       });
+      expect(fogResult.presentationCategory).toBe('UNKNOWN_AIRFRAME');
+      expect(fogResult.observationState).toBe('DEGRADED_OPTICAL');
 
-      expect(resultDistant.presentationCategory).toBe('RADAR_SYMBOL');
-      expect(resultDistant.observationState).toBe('OUT_OF_RANGE');
+      // Distant entity at 2500m in FOG: exceeds max fog threshold (~1824m) -> UNRESOLVED
+      const distantEntity = makeSimEntity({ pos: { x: 2000, y: 1500, z: 200 } });
+      const distantObs = evaluateSensorObservation(distantEntity, {
+        ...basePipelineContext,
+        weather: 'FOG',
+      });
+      expect(distantObs?.resolutionLevel).toBe('UNRESOLVED');
+      const distantResult = resolveTargetPresentation(makeTrack({ sensorObservation: distantObs }), {
+        ...baseContext,
+        weather: 'FOG',
+      });
+      expect(distantResult.presentationCategory).toBe('RADAR_SYMBOL');
+      expect(distantResult.observationState).toBe('OUT_OF_RANGE');
     });
   });
 
@@ -324,7 +356,6 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
       // Inspect TargetModelFactory palette: accent should be neutral slate, NOT hostile crimson red
       const factory = new TargetModelFactory();
       const palette = factory.getPaletteForCategory('HOSTILE_ATTACK');
-      // Neutral accent color is not red
       expect(palette.accent).toBeDefined();
       expect(palette.rotors).toBeDefined();
       factory.dispose();
@@ -356,14 +387,37 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
     });
   });
 
-  describe('7. Signature Mapping & Model Geometry Instantiation', () => {
-    it('maps signatures accurately to target model categories', () => {
-      expect(mapSignatureToCategory('MULTIROTOR_COMPACT')).toBe('HOSTILE_ATTACK');
-      expect(mapSignatureToCategory('MULTIROTOR_WITH_CAMERA_POD')).toBe('HOSTILE_ISR');
-      expect(mapSignatureToCategory('MULTIROTOR_STANDARD')).toBe('CIVIL_UAS');
-      expect(mapSignatureToCategory('FIXED_WING_DELTA')).toBe('LOITERING_MUNITION');
-      expect(mapSignatureToCategory('BIRD_LIKE')).toBe('BIRD');
-      expect(mapSignatureToCategory('UNRESOLVED_AIRFRAME')).toBe('UNKNOWN_AIRFRAME');
+  describe('7. Observation Provenance & Integrity (Task 17.4 §3)', () => {
+    it('observation source is strictly EOIR and non-EOIR sensors return null', () => {
+      const entity = makeSimEntity({ droneType: 'LOITERING_MUNITION' });
+
+      // Non-EOIR returns null
+      expect(evaluateSensorObservation(entity, { ...basePipelineContext, activeSensor: 'RADAR' })).toBeNull();
+      expect(evaluateSensorObservation(entity, { ...basePipelineContext, activeSensor: 'RF' })).toBeNull();
+
+      // EOIR returns EOIR source
+      const eoirObs = evaluateSensorObservation(entity, { ...basePipelineContext, activeSensor: 'EOIR' });
+      expect(eoirObs).not.toBeNull();
+      expect(eoirObs?.sensorSource).toBe('EOIR');
+    });
+
+    it('observation timestamp is consistent with simulation clock', () => {
+      const entity = makeSimEntity();
+      const testSimTimeMs = 42550;
+      const obs = evaluateSensorObservation(entity, {
+        ...basePipelineContext,
+        currentSimMs: testSimTimeMs,
+      });
+
+      expect(obs?.timestampMs).toBe(testSimTimeMs);
+    });
+
+    it('observation confidence is strictly within [0, 1]', () => {
+      const entity = makeSimEntity();
+      const obs = evaluateSensorObservation(entity, basePipelineContext);
+
+      expect(obs?.confidence).toBeGreaterThanOrEqual(0.0);
+      expect(obs?.confidence).toBeLessThanOrEqual(1.0);
     });
 
     it('maps simulation drone types to physical observable signatures without threat class', () => {
@@ -372,26 +426,6 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3)', () => 
       expect(mapDroneTypeToAirframeSignature('CIVIL_UAS')).toBe('MULTIROTOR_STANDARD');
       expect(mapDroneTypeToAirframeSignature('LOITERING_MUNITION')).toBe('FIXED_WING_DELTA');
       expect(mapDroneTypeToAirframeSignature('BIRD')).toBe('BIRD_LIKE');
-    });
-
-    it('evaluates sensor observation correctly for non-EOIR vs EOIR', () => {
-      const entity = makeSimEntity({ droneType: 'LOITERING_MUNITION' });
-
-      // In RADAR mode, optical observation is null
-      const radarObs = evaluateSensorObservation(entity, {
-        ...basePipelineContext,
-        activeSensor: 'RADAR',
-      });
-      expect(radarObs).toBeNull();
-
-      // In EOIR mode, within clear range, observation is FULL
-      const eoirObs = evaluateSensorObservation(entity, {
-        ...basePipelineContext,
-        activeSensor: 'EOIR',
-      });
-      expect(eoirObs).not.toBeNull();
-      expect(eoirObs?.observedSignature).toBe('FIXED_WING_DELTA');
-      expect(eoirObs?.resolution).toBe('FULL');
     });
 
     it('TargetModelFactory instantiates LOITERING_MUNITION model with proper pick proxy', () => {

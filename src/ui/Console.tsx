@@ -511,7 +511,8 @@ export const Console: React.FC = () => {
       renderer3dRef.current?.dispose();
       renderer3dRef.current = null;
       if (typeof window !== 'undefined') {
-        (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = null;
+        (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__RENDERER_3D__ = null;
+        (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__ENGINE__ = null;
       }
     };
   }, []);
@@ -646,7 +647,8 @@ export const Console: React.FC = () => {
     r3d.setActiveSensor(activeSensor);
     renderer3dRef.current = r3d;
     if (typeof window !== 'undefined') {
-      (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
+      (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__RENDERER_3D__ = r3d;
+      (window as unknown as { __RENDERER_3D__?: Renderer3D | null; __ENGINE__?: unknown }).__ENGINE__ = engineInstance;
     }
     return r3d;
   };

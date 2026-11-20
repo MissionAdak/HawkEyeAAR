@@ -109,6 +109,7 @@ export function evaluateSensorObservation(
       resolution: 'UNRESOLVED',
       visibilityState: 'CLEAR',
       sensorAvailability: false,
+      sensorHealth: 'OUT',
       sensorHealthOk: false,
       estimatedRangeM: 0,
     };
@@ -127,7 +128,8 @@ export function evaluateSensorObservation(
       resolution: 'UNRESOLVED',
       visibilityState: 'MASKED',
       sensorAvailability: true,
-      sensorHealthOk: true,
+      sensorHealth: eoirHealth,
+      sensorHealthOk: eoirHealth === 'OK',
       estimatedRangeM: Math.round(distM),
     };
   }
@@ -167,7 +169,8 @@ export function evaluateSensorObservation(
       resolution: 'UNRESOLVED',
       visibilityState: 'OUT_OF_RANGE',
       sensorAvailability: true,
-      sensorHealthOk: true,
+      sensorHealth: eoirHealth,
+      sensorHealthOk: eoirHealth === 'OK',
       estimatedRangeM: Math.round(distM),
     };
   }
@@ -179,33 +182,36 @@ export function evaluateSensorObservation(
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
-      confidence: 0.1,
+      confidence: Math.max(0, Math.min(1.0, 0.1)),
       resolutionLevel: 'UNRESOLVED',
       resolution: 'UNRESOLVED',
       visibilityState: 'OUT_OF_RANGE',
       sensorAvailability: true,
-      sensorHealthOk: true,
+      sensorHealth: eoirHealth,
+      sensorHealthOk: eoirHealth === 'OK',
       estimatedRangeM: Math.round(distM),
     };
   }
 
   // Intermediate distance or degraded sensor: partial visual recognition
   if (distM > clearThreshold || eoirHealth === 'DEG') {
-    const confidence = Math.max(
+    const rawConf = Math.max(
       0.2,
       Math.min(0.65, 1.0 - (distM - clearThreshold) / Math.max(1, maxThreshold - clearThreshold))
     );
+    const confidence = eoirHealth === 'DEG' ? rawConf * 0.7 : rawConf;
     return {
       signature: 'UNRESOLVED_AIRFRAME',
       observedSignature: 'UNRESOLVED_AIRFRAME',
       timestampMs: currentSimMs,
       sensorSource: 'EOIR',
-      confidence: eoirHealth === 'DEG' ? confidence * 0.7 : confidence,
+      confidence: Math.max(0, Math.min(1.0, confidence)),
       resolutionLevel: 'DEGRADED',
       resolution: 'DEGRADED',
       visibilityState: 'DEGRADED',
       sensorAvailability: true,
-      sensorHealthOk: true,
+      sensorHealth: eoirHealth,
+      sensorHealthOk: false,
       estimatedRangeM: Math.round(distM),
     };
   }
@@ -219,11 +225,12 @@ export function evaluateSensorObservation(
     observedSignature: signature,
     timestampMs: currentSimMs,
     sensorSource: 'EOIR',
-    confidence,
+    confidence: Math.max(0, Math.min(1.0, confidence)),
     resolutionLevel: 'FULL',
     resolution: 'FULL',
     visibilityState: 'CLEAR',
     sensorAvailability: true,
+    sensorHealth: 'OK',
     sensorHealthOk: true,
     estimatedRangeM: Math.round(distM),
   };

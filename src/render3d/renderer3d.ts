@@ -467,13 +467,7 @@ export class Renderer3D {
     const observationContext: SensorObservationContext = {
       activeSensor: this.activeSensor,
       displayMode: this.targetDisplayMode,
-      sensorHealth: health
-        ? {
-            radarOk: health.RADAR === 'OK',
-            eoirOk: health.EOIR === 'OK',
-            rfOk: health.RF === 'OK',
-          }
-        : { radarOk: true, eoirOk: true, rfOk: true },
+      sensorHealth: health ?? { RADAR: 'OK', EOIR: 'OK', RF: 'OK' },
       weather: this.scene3d.getEnvironmentManager().isFogActive()
         ? 'FOG'
         : (this.scene3d.getEnvironmentManager().getDescriptor().weather ?? 'CLEAR'),
