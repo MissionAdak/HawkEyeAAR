@@ -422,4 +422,165 @@ describe('TASK 20 — Unit Performance Repository & Longitudinal Tracking (Rules
       expect(viper.latestMetrics?.score).toBe(90);
     });
   });
+
+  describe('5. Concurrency-Safe Seeding & Shared Completion (High-priority D)', () => {
+    it('concurrent seedDemoSessionsIfEmpty() calls await the same promise and resolve without duplicate rows', async () => {
+      // Execute 5 concurrent seeding requests simultaneously
+      const results = await Promise.all([
+        seedDemoSessionsIfEmpty(),
+        seedDemoSessionsIfEmpty(),
+        seedDemoSessionsIfEmpty(),
+        seedDemoSessionsIfEmpty(),
+        seedDemoSessionsIfEmpty(),
+      ]);
+
+      // All 5 must resolve cleanly
+      expect(results).toHaveLength(5);
+
+      // Verify exact count of demo sessions without duplication
+      const allSessions = await getAllSessions('asc', 'ALL');
+      // Demo dataset has exactly 10 sessions (4 for VIPER-2, 2 for HAWK-1, 2 for COBRA-3, 2 for GHOST-4)
+      expect(allSessions).toHaveLength(10);
+
+      // Verify that all seeded sessions are immediately visible to all callers
+      const viperSessions = await getTraineeSessions('VIPER-2', 'asc', 'DEMO');
+      expect(viperSessions).toHaveLength(4);
+
+      // Verify idempotence on subsequent calls
+      await seedDemoSessionsIfEmpty();
+      const allSessionsAfterSecondCall = await getAllSessions('asc', 'ALL');
+      expect(allSessionsAfterSecondCall).toHaveLength(10);
+    });
+  });
+
+  describe('6. Explicit Training Session Counts (High-priority C)', () => {
+    it('differentiates completed verified drills from total attempts, strictly excluding aborted, unverified, and synthetic runs from trainSessionsCount', async () => {
+      // 1. Valid completed TRAIN drill
+      await saveCompletedSession({
+        uid: 'train-valid-1',
+        traineeUid: 'trainee-viper-2',
+        mode: 'TRAIN',
+        startedAt: 1000,
+        durationMs: 60000,
+        score: 75,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.4,
+        metrics: createMockMetrics(75, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+        aborted: false,
+        unverified: false,
+      }, 'VIPER-2');
+
+      // 2. Aborted TRAIN drill
+      await saveCompletedSession({
+        uid: 'train-aborted-2',
+        traineeUid: 'trainee-viper-2',
+        mode: 'TRAIN',
+        startedAt: 2000,
+        durationMs: 15000,
+        score: 30,
+        grade: 'NEEDS_RETRAINING',
+        dStart: 0.5,
+        metrics: createMockMetrics(30, 'NEEDS_RETRAINING', 'TRAIN'),
+        aborted: true,
+        unverified: false,
+      }, 'VIPER-2');
+
+      // 3. Unverified TRAIN drill
+      await saveCompletedSession({
+        uid: 'train-unverified-3',
+        traineeUid: 'trainee-viper-2',
+        mode: 'TRAIN',
+        startedAt: 3000,
+        durationMs: 60000,
+        score: 90,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.6,
+        metrics: createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+        aborted: false,
+        unverified: true,
+      }, 'VIPER-2');
+
+      // 4. Valid completed EVAL drill
+      await saveCompletedSession({
+        uid: 'eval-valid-4',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 4000,
+        durationMs: 120000,
+        score: 88,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.5,
+        metrics: createMockMetrics(88, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+        aborted: false,
+        unverified: false,
+      }, 'VIPER-2');
+
+      const summaries = await getUnitTraineeSummaries('REAL');
+      expect(summaries).toHaveLength(1);
+      const viper = summaries[0];
+
+      // Completed verified TRAIN drills must be exactly 1 (excluding aborted & unverified)
+      expect(viper.trainSessionsCount).toBe(1);
+
+      // Total TRAIN attempts must be 3 (all attempts regardless of outcome)
+      expect(viper.trainAttemptsCount).toBe(3);
+
+      // Valid EVAL drills must be 1
+      expect(viper.evalSessionsCount).toBe(1);
+
+      // Total session attempts recorded in repository is 4 (3 TRAIN + 1 EVAL)
+      expect(viper.totalSessions).toBe(4);
+    });
+  });
+
+  describe('7. Historical Metrics Handling & Missing Data Representation (Critical B)', () => {
+    it('preserves undefined gScore for historical sessions without inventing zero or arbitrary scores', async () => {
+      // Historical session where gScore is undefined
+      const legacySession: SessionRow = {
+        uid: 'sess-historical-missing-g',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 1000,
+        durationMs: 60000,
+        score: 84,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.5,
+        metrics: {
+          ...createMockMetrics(84, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+          gScore: undefined as unknown as number,
+        },
+      };
+
+      await saveCompletedSession(legacySession, 'VIPER-2');
+
+      const summaries = await getUnitTraineeSummaries('REAL');
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0].latestEvalMetrics?.gScore).toBeUndefined();
+      expect(summaries[0].latestEvalMetrics?.gScore).not.toBe(0);
+    });
+
+    it('correctly distinguishes a measured zero G score from missing data', async () => {
+      const zeroGSession: SessionRow = {
+        uid: 'sess-measured-zero-g',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 2000,
+        durationMs: 60000,
+        score: 40,
+        grade: 'NEEDS_RETRAINING',
+        dStart: 0.3,
+        metrics: {
+          ...createMockMetrics(40, 'NEEDS_RETRAINING', 'EVAL'),
+          gScore: 0,
+        },
+      };
+
+      await saveCompletedSession(zeroGSession, 'VIPER-2');
+
+      const summaries = await getUnitTraineeSummaries('REAL');
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0].latestEvalMetrics?.gScore).toBe(0);
+      expect(summaries[0].latestEvalMetrics?.gScore).not.toBeUndefined();
+    });
+  });
 });

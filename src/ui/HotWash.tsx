@@ -39,6 +39,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const setCallsign = useSessionStore((s) => s.setCallsign);
   const latestSavedSessionUid = useSessionStore((s) => s.latestSavedSessionUid);
   const sessionPersistenceStatus = useSessionStore((s) => s.sessionPersistenceStatus);
+  const retrySaveSession = useSessionStore((s) => s.retrySaveSession);
 
   const [traineeSessions, setTraineeSessions] = useState<SessionRow[]>([]);
   const [unitSummaries, setUnitSummaries] = useState<UnitTraineeSummary[]>([]);
@@ -124,7 +125,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   };
 
   return (
-    <div data-testid="aar-modal" className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+    <div data-testid="aar-modal" className="fixed inset-0 z-50 bg-carbon-950/95 flex items-center justify-center p-4 select-none">
       <div className="w-[960px] max-h-[90vh] bg-carbon-900 border border-line flex flex-col font-mono text-xs overflow-hidden">
         {/* Modal Header */}
         <div className="h-[42px] px-4 border-b border-line bg-carbon-800/80 flex items-center justify-between">
@@ -157,6 +158,44 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
                   <option value={currentCallsign}>{currentCallsign}</option>
                 )}
               </select>
+            </div>
+
+            {/* Persistence Status Indicator (Task 20-A1 High-priority E) */}
+            <div className="flex items-center gap-1.5 ml-2">
+              {sessionPersistenceStatus === 'SAVING' && (
+                <span
+                  data-testid="persistence-status-saving"
+                  className="text-[10px] text-amber border border-amber/40 bg-carbon-950 px-2 py-0.5 font-bold"
+                >
+                  PERSISTENCE: SAVING...
+                </span>
+              )}
+              {sessionPersistenceStatus === 'SAVED' && (
+                <span
+                  data-testid="persistence-status-saved"
+                  className="text-[10px] text-phosphor border border-phosphor/40 bg-carbon-950 px-2 py-0.5 font-bold"
+                >
+                  PERSISTED (IDB)
+                </span>
+              )}
+              {sessionPersistenceStatus === 'ERROR' && (
+                <div className="flex items-center gap-1" data-testid="persistence-status-error-container">
+                  <span
+                    data-testid="persistence-status-error"
+                    className="text-[10px] text-threat border border-threat bg-threat/10 px-2 py-0.5 font-bold"
+                  >
+                    PERSISTENCE FAILED
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="persistence-retry-btn"
+                    onClick={() => void retrySaveSession()}
+                    className="px-2 py-0.5 text-[10px] font-bold border border-threat hover:bg-threat hover:text-carbon-950 text-threat transition-colors"
+                  >
+                    RETRY SAVE
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

@@ -9,6 +9,7 @@ import type {
   SensorMode,
   EffectorId,
   TrackClass,
+  SessionMode,
 } from '@/sim/types';
 import {
   DEFAULT_SCENARIO_ID,
@@ -76,6 +77,8 @@ export interface SessionState {
   simSpeed: number;
   currentCallsign: string;
   latestSavedSessionUid: string | null;
+  lastFailedSessionRow: SessionRow | null;
+  retrySaveSession: () => Promise<boolean>;
   setCallsign: (callsign: string) => void;
 
   // Intelligent Operator Feedback
@@ -107,7 +110,7 @@ export interface SessionState {
 
   // Session lifecycle
   selectScenario: (id: string) => void;
-  startSession: (scenarioId?: string, customSeed?: number) => Promise<boolean>;
+  startSession: (scenarioId?: string, customSeed?: number, modeOverride?: SessionMode) => Promise<boolean>;
   returnToBriefing: () => void;
   loadScenario: (spec: ScenarioSpec) => Promise<void>;
   loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
@@ -142,6 +145,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   currentCallsign: 'VIPER-2',
   latestSavedSessionUid: null,
   sessionPersistenceStatus: 'IDLE',
+  lastFailedSessionRow: null,
+  retrySaveSession: async () => {
+    const failedRow = get().lastFailedSessionRow;
+    if (!failedRow) {
+      return false;
+    }
+    set({ sessionPersistenceStatus: 'SAVING' });
+    try {
+      await saveCompletedSession(failedRow, get().currentCallsign);
+      set({
+        latestSavedSessionUid: failedRow.uid,
+        sessionPersistenceStatus: 'SAVED',
+        lastFailedSessionRow: null,
+      });
+      return true;
+    } catch (error) {
+      console.error('[SessionStore] Retry save failed:', error);
+      set({ sessionPersistenceStatus: 'ERROR' });
+      return false;
+    }
+  },
   setCallsign: (callsign: string) => set({ currentCallsign: callsign }),
   feedbackList: [],
   activeFeedback: null,
@@ -335,7 +359,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ selectedScenarioId: id });
   },
 
-  startSession: async (scenarioId?: string, customSeed?: number): Promise<boolean> => {
+  startSession: async (scenarioId?: string, customSeed?: number, modeOverride?: SessionMode): Promise<boolean> => {
     // Seed initial demo data in the background if the local database is fresh
     void seedDemoSessionsIfEmpty();
 
@@ -354,6 +378,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     try {
       const { spec } = loadCatalogScenario(targetId, customSeed);
+      if (modeOverride) {
+        spec.mode = modeOverride;
+      }
       if (!validate(spec)) {
         console.error(`[SessionStore] Refusing to load invalid scenario: ${spec.id}`);
         return false;
@@ -472,23 +499,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             scenarioId: currentSpec.id,
             aborted: isAborted,
             unverified: false,
+            isSynthetic: false,
           };
-          set({ sessionPersistenceStatus: 'SAVING' });
+          set({ sessionPersistenceStatus: 'SAVING', lastFailedSessionRow: null });
           void (async () => {
             try {
               await saveCompletedSession(sessionRow, get().currentCallsign);
               set({
                 latestSavedSessionUid: sessionUid,
                 sessionPersistenceStatus: 'SAVED',
+                lastFailedSessionRow: null,
               });
             } catch (error) {
               console.error('[SessionStore] Failed to persist session to sessionRepo:', error);
-              set({ sessionPersistenceStatus: 'ERROR' });
+              set({
+                sessionPersistenceStatus: 'ERROR',
+                lastFailedSessionRow: sessionRow,
+              });
             }
           })();
         } catch (metricsError) {
           console.error('[SessionStore] Failed to aggregate metrics on SESSION_END:', metricsError);
-          set({ sessionPersistenceStatus: 'ERROR' });
+          set({ sessionPersistenceStatus: 'ERROR', lastFailedSessionRow: null });
         }
 
         void recorderForSession.stop().catch((error) => {

@@ -14,7 +14,7 @@ export default {
         amber: '#FF9900',
         threat: '#FF3333',
         friend: '#00CCFF',
-        unknown: '#FFCC00',
+        unknown: '#FF9900',
         'text-main': '#C9D1D9',
         'text-dim': '#7D8590',
       },

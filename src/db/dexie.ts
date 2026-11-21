@@ -1,5 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { SimEvent, AARMetrics, Grade, TrueClass } from '@/sim/types';
+import { aggregateAARMetrics } from '@/sim/metrics';
+import { getScenarioCatalogEntry } from '@/director/catalog';
 
 export interface UnitRow {
   uid: string;
@@ -109,7 +111,73 @@ export class DrishtiDatabase extends Dexie {
       difficulty: 'traineeUid',
       settings: 'key',
     });
+
+    this.version(2)
+      .stores({
+        sessions: 'uid, traineeUid, mode, startedAt, isSynthetic, [traineeUid+mode+startedAt], [mode+traineeUid+startedAt]',
+      })
+      .upgrade(async (tx) => {
+        const sessionsTable = tx.table<SessionRow, string>('sessions');
+        const eventsTable = tx.table<StoredSimEvent, number>('events');
+
+        const sessions = await sessionsTable.toArray();
+        for (const session of sessions) {
+          let events: StoredSimEvent[] | undefined;
+          if (
+            session.metrics &&
+            (session.metrics.gScore === undefined || session.metrics.gScore === null)
+          ) {
+            try {
+              events = await eventsTable.where('sessionUid').equals(session.uid).sortBy('seq');
+            } catch {
+              events = undefined;
+            }
+          }
+          migrateLegacySession(session, events);
+          await sessionsTable.put(session);
+        }
+      });
   }
+}
+
+/**
+ * Safe, repeatable migration logic for legacy Task 20 session records.
+ * Identifies legacy synthetic records (uid pattern: demo-{callsign}-{timestamp}),
+ * and reconstructs missing gScore if valid events are available.
+ */
+export function migrateLegacySession(
+  session: SessionRow,
+  storedEvents?: SimEvent[]
+): SessionRow {
+  // 1. Detect legacy synthetic records created by original Task 20 demo seeder
+  if (session.uid && typeof session.uid === 'string' && session.uid.startsWith('demo-')) {
+    session.isSynthetic = true;
+  } else if (session.isSynthetic === undefined) {
+    session.isSynthetic = false;
+  }
+
+  // 2. Reconstruct missing gScore if sufficient stored events exist
+  if (
+    session.metrics &&
+    (session.metrics.gScore === undefined || session.metrics.gScore === null)
+  ) {
+    if (storedEvents && storedEvents.length > 0) {
+      try {
+        const entry = session.scenarioId
+          ? getScenarioCatalogEntry(session.scenarioId)
+          : undefined;
+        const spec = entry ? entry.getSpec() : undefined;
+        const reconstructed = aggregateAARMetrics(storedEvents, spec);
+        if (reconstructed && typeof reconstructed.gScore === 'number') {
+          session.metrics.gScore = reconstructed.gScore;
+        }
+      } catch {
+        // If event reconstruction fails or data incomplete, do not invent G
+      }
+    }
+  }
+
+  return session;
 }
 
 export const db = new DrishtiDatabase();

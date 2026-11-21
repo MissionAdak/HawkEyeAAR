@@ -531,16 +531,21 @@ export const EngagementPanel: React.FC = () => {
     ? [...inRangeEffectors].sort((a, b) => a[1].costInr - b[1].costInr)[0]
     : null;
 
-  // Auto-switch to best in-envelope effector if current weapon is out of envelope
+  const lastTrackNoRef = useRef<string | null>(null);
+
+  // Auto-switch to best in-envelope effector ONLY when switching tracks if current weapon is out of envelope
   useEffect(() => {
     if (!selectedTrack || inRangeEffectors.length === 0) return;
-    const currentEff = CONFIG.effectors[activeEffector as keyof typeof CONFIG.effectors];
-    const isCurrentOutOfEnv =
-      currentEff && (rangeM < currentEff.envelopeMinM || rangeM > currentEff.envelopeMaxM);
-    if (isCurrentOutOfEnv && bestEffectorEntry) {
-      selectEffector(bestEffectorEntry[0] as EffectorId);
+    if (lastTrackNoRef.current !== selectedTrack.trackNo) {
+      lastTrackNoRef.current = selectedTrack.trackNo;
+      const currentEff = CONFIG.effectors[activeEffector as keyof typeof CONFIG.effectors];
+      const isCurrentOutOfEnv =
+        currentEff && (rangeM < currentEff.envelopeMinM || rangeM > currentEff.envelopeMaxM);
+      if (isCurrentOutOfEnv && bestEffectorEntry) {
+        selectEffector(bestEffectorEntry[0] as EffectorId);
+      }
     }
-  }, [selectedTrack?.trackNo, selectedTrack?.rangeKm, activeEffector, bestEffectorEntry, inRangeEffectors.length, rangeM, selectEffector, selectedTrack]);
+  }, [selectedTrack?.trackNo, inRangeEffectors.length, activeEffector, rangeM, bestEffectorEntry, selectEffector, selectedTrack]);
 
   const handleMissileMouseDown = useCallback(() => {
     if (!selectedTrack) return;
@@ -582,9 +587,9 @@ export const EngagementPanel: React.FC = () => {
     };
   }, []);
 
-  // Global [F] keyboard activation path for holding heavy missile when selected
+  // Global [F] keyboard activation path for effectors
   useEffect(() => {
-    if (activeEffector !== 'MISSILE' || !selectedTrack) return;
+    if (!selectedTrack) return;
 
     const missileEff = CONFIG.effectors.MISSILE;
     const isMissileQualityBlocked = selectedTrack.q < 0.6;
@@ -597,8 +602,14 @@ export const EngagementPanel: React.FC = () => {
         return;
       }
       if (e.key.toLowerCase() === 'f') {
-        if (!e.repeat && !isMissileHardBlocked) {
-          handleMissileMouseDown();
+        if (!e.repeat) {
+          if (activeEffector === 'MISSILE') {
+            if (!isMissileHardBlocked) {
+              handleMissileMouseDown();
+            }
+          } else {
+            fire(selectedTrack.trackNo);
+          }
         }
       }
     };
@@ -608,7 +619,9 @@ export const EngagementPanel: React.FC = () => {
         return;
       }
       if (e.key.toLowerCase() === 'f') {
-        handleMissileMouseUp();
+        if (activeEffector === 'MISSILE') {
+          handleMissileMouseUp();
+        }
       }
     };
 
@@ -618,7 +631,7 @@ export const EngagementPanel: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [activeEffector, selectedTrack, rangeM, handleMissileMouseDown, handleMissileMouseUp]);
+  }, [activeEffector, selectedTrack, rangeM, fire, handleMissileMouseDown, handleMissileMouseUp]);
 
   // Determine tactical assistant state
   const isTargetClosed = selectedTrack?.step === 'CLOSED';

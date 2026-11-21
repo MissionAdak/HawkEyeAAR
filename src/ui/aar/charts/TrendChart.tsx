@@ -21,7 +21,7 @@ const METRICS: MetricConfig[] = [
   { key: 'score', label: 'Score [S]', color: '#00FF66' },
   { key: 'd', label: 'Detection [D]', color: '#FF9900' },
   { key: 'c', label: 'Classify [C]', color: '#00CCFF' },
-  { key: 'g', label: 'Engage [G]', color: '#FFCC00' },
+  { key: 'g', label: 'Engage [G]', color: '#00A844' },
   { key: 'r', label: 'ROE [R]', color: '#FF3333' },
   { key: 'diff', label: 'Difficulty [d]', color: '#8B949E', dash: [4, 4], isRightAxis: true },
 ];
@@ -172,20 +172,20 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     }
 
     // Function to extract metric value for a session
-    const getMetricValue = (s: SessionRow, key: MetricConfig['key']) => {
+    const getMetricValue = (s: SessionRow, key: MetricConfig['key']): number | null => {
       switch (key) {
         case 'score':
           return s.score;
         case 'd':
-          return s.metrics?.dScore ?? 0;
+          return typeof s.metrics?.dScore === 'number' ? s.metrics.dScore : null;
         case 'c':
-          return s.metrics?.cScore ?? 0;
+          return typeof s.metrics?.cScore === 'number' ? s.metrics.cScore : null;
         case 'g':
-          return s.metrics?.gScore ?? 0;
+          return typeof s.metrics?.gScore === 'number' ? s.metrics.gScore : null;
         case 'r':
-          return s.metrics?.rScore ?? 0;
+          return typeof s.metrics?.rScore === 'number' ? s.metrics.rScore : null;
         case 'diff':
-          return s.dStart ?? 0.3;
+          return typeof s.dStart === 'number' ? s.dStart : 0.3;
       }
     };
 
@@ -198,13 +198,19 @@ export const TrendChart: React.FC<TrendChartProps> = ({
       ctx.lineWidth = metric.key === 'score' ? 2.5 : 1.5;
       ctx.setLineDash(metric.dash || []);
 
+      let hasStarted = false;
       for (let i = 0; i < n; i++) {
         const val = getMetricValue(chronologicalSessions[i], metric.key);
+        if (val === null) {
+          hasStarted = false;
+          continue;
+        }
         const x = getX(i);
         const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
 
-        if (i === 0) {
+        if (!hasStarted) {
           ctx.moveTo(x, y);
+          hasStarted = true;
         } else {
           ctx.lineTo(x, y);
         }
@@ -215,6 +221,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
       ctx.setLineDash([]);
       for (let i = 0; i < n; i++) {
         const val = getMetricValue(chronologicalSessions[i], metric.key);
+        if (val === null) continue;
         const x = getX(i);
         const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
 
@@ -248,6 +255,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
       for (const metric of METRICS) {
         if (!visibleMetrics[metric.key]) continue;
         const val = getMetricValue(activeSession, metric.key);
+        if (val === null) continue;
         const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
 
         ctx.beginPath();
@@ -332,7 +340,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
                 aria-pressed={isVisible}
                 className={`px-2 py-0.5 text-[10px] font-bold border transition-colors flex items-center gap-1 ${
                   isVisible
-                    ? 'bg-carbon-900 border-line text-text-main shadow-sm'
+                    ? 'bg-carbon-900 border-line text-text-main'
                     : 'bg-carbon-950 border-line/40 text-text-dim opacity-50 line-through'
                 }`}
                 style={{
@@ -363,7 +371,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
         {/* Interactive Hover Readout Overlay */}
         {activeSessionForTooltip && (
           <div
-            className="absolute top-2 right-14 bg-carbon-900 border border-line p-2 shadow-xl pointer-events-none text-[11px] space-y-1 z-10"
+            className="absolute top-2 right-14 bg-carbon-900 border border-line p-2 pointer-events-none text-[11px] space-y-1 z-10"
             data-testid="trend-chart-tooltip"
           >
             <div className="flex items-center justify-between gap-4 border-b border-line pb-1">

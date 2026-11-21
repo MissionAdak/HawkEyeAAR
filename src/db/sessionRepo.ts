@@ -1,4 +1,4 @@
-import { db, type SessionRow, type TraineeRow, type UnitRow } from './dexie';
+import { db, migrateLegacySession, type SessionRow, type TraineeRow, type UnitRow } from './dexie';
 import { createSessionUid } from './recorder';
 import type { AARMetrics, Grade, SessionMode } from '@/sim/types';
 
@@ -9,6 +9,8 @@ export interface UnitTraineeSummary {
   totalSessions: number;
   evalSessionsCount: number;
   trainSessionsCount: number;
+  trainAttemptsCount: number;
+  evalAttemptsCount: number;
   latestEvalScore: number | null; // null if no completed EVAL sessions (Rules.md R4.4)
   latestEvalGrade: Grade | null;
   highestTrainDifficulty: number; // max dStart among completed TRAIN sessions
@@ -53,6 +55,7 @@ export async function saveCompletedSession(
     ...session,
     startedAt,
     traineeUid,
+    isSynthetic: session.isSynthetic ?? false,
   };
 
   if (typeof indexedDB === 'undefined') {
@@ -114,6 +117,9 @@ export async function getTraineeSessions(
       ? await db.sessions.where('traineeUid').equals(targetUid).toArray()
       : await db.sessions.toArray();
   }
+
+  // Ensure legacy records are normalized
+  sessions = sessions.map((s) => migrateLegacySession(s));
 
   // Filter by dataset scope
   if (scope === 'REAL') {
@@ -177,7 +183,9 @@ export async function getUnitTraineeSummaries(
     );
 
     const evalSessionsCount = validEvalSessions.length;
-    const trainSessionsCount = traineeSessions.filter((s) => s.mode === 'TRAIN').length;
+    const trainSessionsCount = validTrainSessions.length;
+    const trainAttemptsCount = traineeSessions.filter((s) => s.mode === 'TRAIN').length;
+    const evalAttemptsCount = traineeSessions.filter((s) => s.mode === 'EVAL').length;
 
     let latestEvalScore: number | null = null;
     let latestEvalGrade: Grade | null = null;
@@ -210,6 +218,8 @@ export async function getUnitTraineeSummaries(
       totalSessions,
       evalSessionsCount,
       trainSessionsCount,
+      trainAttemptsCount,
+      evalAttemptsCount,
       latestEvalScore,
       latestEvalGrade,
       highestTrainDifficulty,
@@ -318,22 +328,24 @@ export function createMockMetrics(
   };
 }
 
-let isSeeding = false;
+let activeSeedingPromise: Promise<void> | null = null;
 
 /**
  * Pre-populates realistic longitudinal training and EVAL data for unit readiness
  * if the database has zero records.
+ * Uses a shared in-flight promise to guarantee concurrency safety for all readers.
  */
 export async function seedDemoSessionsIfEmpty(): Promise<void> {
-  if (isSeeding) {
-    return;
+  if (activeSeedingPromise) {
+    return await activeSeedingPromise;
   }
-  isSeeding = true;
-  try {
-    const existing = await getAllSessions('asc', 'ALL');
-    if (existing.length > 0) {
-      return;
-    }
+
+  activeSeedingPromise = (async () => {
+    try {
+      const existing = await getAllSessions('asc', 'ALL');
+      if (existing.length > 0) {
+        return;
+      }
 
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
@@ -479,8 +491,11 @@ export async function seedDemoSessionsIfEmpty(): Promise<void> {
     await saveCompletedSession(sessionRow, item.callsign, 'ALPHA COY');
   }
 } finally {
-  isSeeding = false;
+  activeSeedingPromise = null;
 }
+})();
+
+  return await activeSeedingPromise;
 }
 
 export function clearSessionRepoForTest(): void {

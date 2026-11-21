@@ -247,7 +247,7 @@ export interface AARMetrics {
   swarmSat: number | null;
   dScore: number;
   cScore: number;
-  gScore: number;
+  gScore?: number;
   econScore: number;
   rScore: number;
   confusion: number[][];

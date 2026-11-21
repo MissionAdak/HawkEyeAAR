@@ -145,23 +145,35 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     await expect(aarModal).not.toBeVisible({ timeout: 5000 });
   });
 
-  test('02. Real Browser IndexedDB Persistence, Reload Durability & EVAL Isolation Verification (Remediation G)', async ({ page }) => {
+  test('02. Real Browser IndexedDB Persistence, Reload Durability & EVAL Isolation Verification (Critical F)', async ({ page }) => {
     // 1. Navigate to application
     await page.goto('http://127.0.0.1:4173/HawkEyeAAR/', { waitUntil: 'networkidle' });
 
-    // 2. Start session
+    // 2. In Mission Briefing, assert initial state and explicitly select EVAL mode
+    const briefingDialog = page.getByRole('dialog', { name: /Mission Briefing/i });
+    await expect(briefingDialog).toBeVisible({ timeout: 10000 });
+
+    const evalModeBtn = page.getByTestId('briefing-mode-eval-btn');
+    await expect(evalModeBtn).toBeVisible();
+    await evalModeBtn.click();
+    await expect(evalModeBtn).toHaveClass(/border-phosphor/);
+
+    // 3. Start session in EVAL mode
     const startBtn = page.getByTestId('start-session-btn');
     await expect(startBtn).toBeVisible({ timeout: 10000 });
     await startBtn.click();
     await expect(startBtn).not.toBeVisible({ timeout: 5000 });
 
-    // 3. Wait for test bridge to be initialized
+    // 4. Wait for test bridge and assert simulation mode is strictly EVAL
     await page.waitForFunction(() => {
       const win = window as unknown as WindowWithDrishti;
       return Boolean(win.__DRISHTI_TEST__?.isReady());
     }, undefined, { timeout: 10000 });
 
-    // 4. Advance session to completion to trigger persistence to IndexedDB
+    // Assert TopBar displays EVAL mode
+    await expect(page.getByText('EVAL', { exact: true })).toBeVisible();
+
+    // 5. Advance session to completion to trigger persistence to IndexedDB
     await page.evaluate(() => {
       const win = window as unknown as WindowWithDrishti;
       win.__DRISHTI_TEST__?.advanceToSessionEnd();
@@ -176,7 +188,11 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     }
     await expect(aarModal).toBeVisible({ timeout: 5000 });
 
-    // 5. Query real Dexie IndexedDB sessions table directly via test bridge
+    // 6. Wait for persistence status to reach SAVED (no arbitrary delays!)
+    const savedBadge = page.getByTestId('persistence-status-saved');
+    await expect(savedBadge).toBeVisible({ timeout: 10000 });
+
+    // 7. Query real Dexie IndexedDB sessions table directly via test bridge
     const dbSessions = await page.evaluate(async () => {
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieSessions?.() ?? [];
@@ -190,18 +206,23 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
 
     const latestReal = realSessions[realSessions.length - 1];
     expect(latestReal.uid).toBeTruthy();
-    // Remediation E: startedAt must be a valid non-zero timestamp captured at session start
+    expect(latestReal.mode).toBe('EVAL');
+    expect(latestReal.traineeUid).toBe('trainee-viper-2');
     expect(latestReal.startedAt).toBeGreaterThan(0);
-    // Remediation A: gScore must be computed and present
+    expect(latestReal.durationMs).toBeGreaterThan(0);
+    expect(typeof latestReal.score).toBe('number');
+    expect(latestReal.grade).toBeTruthy();
+    expect(typeof latestReal.dStart).toBe('number');
     expect(typeof latestReal.metrics?.gScore).toBe('number');
     expect(latestReal.metrics?.gScore).toBeGreaterThanOrEqual(0);
     expect(latestReal.metrics?.gScore).toBeLessThanOrEqual(100);
-    // Remediation D: trainee association
-    expect(latestReal.traineeUid).toBe('trainee-viper-2');
+    expect(latestReal.aborted).toBe(false);
+    expect(latestReal.unverified).toBe(false);
+    expect(latestReal.isSynthetic).toBe(false);
 
     const targetUid = latestReal.uid;
 
-    // 6. Reload the page to test IndexedDB durability across full browser reloads
+    // 8. Reload the page to test IndexedDB durability across full browser reloads
     await page.reload({ waitUntil: 'networkidle' });
 
     await page.waitForFunction(() => {
@@ -209,7 +230,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
       return Boolean(win.__DRISHTI_TEST__);
     }, undefined, { timeout: 10000 });
 
-    // 7. Verify session remains in IndexedDB after reload
+    // 9. Verify exact record remains in IndexedDB after reload
     const reloadedSession = await page.evaluate(async (uid) => {
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieSession?.(uid);
@@ -217,11 +238,54 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
 
     expect(reloadedSession).toBeDefined();
     expect(reloadedSession?.uid).toBe(targetUid);
+    expect(reloadedSession?.mode).toBe('EVAL');
     expect(reloadedSession?.startedAt).toBe(latestReal.startedAt);
+    expect(reloadedSession?.durationMs).toBe(latestReal.durationMs);
+    expect(reloadedSession?.score).toBe(latestReal.score);
+    expect(reloadedSession?.grade).toBe(latestReal.grade);
+    expect(reloadedSession?.dStart).toBe(latestReal.dStart);
     expect(reloadedSession?.metrics?.gScore).toBe(latestReal.metrics?.gScore);
     expect(reloadedSession?.traineeUid).toBe('trainee-viper-2');
+    expect(reloadedSession?.isSynthetic).toBe(false);
 
-    // 8. Capture screenshot of verified IndexedDB durability
+    // 10. Reopen AAR modal and navigate to Unit Readiness
+    const standbyBtn = page.getByTestId('standby-view-btn');
+    if (await standbyBtn.isVisible()) {
+      await standbyBtn.click();
+    }
+    const standbyAarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
+    await expect(standbyAarBtn).toBeVisible({ timeout: 5000 });
+    await standbyAarBtn.click({ force: true });
+
+    const reloadedAarModal = page.getByTestId('aar-modal');
+    await expect(reloadedAarModal).toBeVisible({ timeout: 5000 });
+
+    const tabUnit = page.getByTestId('tab-unit');
+    await expect(tabUnit).toBeVisible();
+    await tabUnit.click();
+
+    // 11. Verify REAL operational roster contains expected operator and no synthetic-only operators
+    const unitLeaderboard = page.getByTestId('unit-leaderboard-table');
+    await expect(unitLeaderboard).toBeVisible();
+    await expect(unitLeaderboard.getByText('VIPER-2')).toBeVisible();
+    await expect(unitLeaderboard.getByText('HAWK-1')).not.toBeVisible();
+    await expect(unitLeaderboard.getByText('COBRA-3')).not.toBeVisible();
+    await expect(unitLeaderboard.getByText('GHOST-4')).not.toBeVisible();
+
+    // 12. Verify cohort EVAL KPI calculations from persisted real data
+    await expect(page.getByText('TOTAL EVAL DRILLS')).toBeVisible();
+    await expect(page.getByText('COHORT MEAN EVAL SCORE')).toBeVisible();
+
+    // 13. Switch to DEMO benchmark view and verify synthetic operators remain separately accessible
+    const scopeDemoBtn = page.getByTestId('scope-demo-btn');
+    await expect(scopeDemoBtn).toBeVisible();
+    await scopeDemoBtn.click();
+
+    await expect(unitLeaderboard.getByText('HAWK-1')).toBeVisible();
+    await expect(unitLeaderboard.getByText('COBRA-3')).toBeVisible();
+    await expect(unitLeaderboard.getByText('GHOST-4')).toBeVisible();
+
+    // 14. Capture screenshot of verified post-reload dashboard
     await saveShot(page, 'task20_03_indexeddb_persistence_durability.png');
   });
 });
