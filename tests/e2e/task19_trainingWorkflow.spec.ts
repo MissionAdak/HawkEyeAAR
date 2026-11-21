@@ -68,18 +68,17 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     expect(tableText).toMatch(/~RNG/i);
     expect(tableText).toMatch(/~SPD/i);
 
-    // 5. Select first track row
-    const trackRow = trackTable.locator('tr, div').filter({ hasText: /T-01|T-02|T-03/i }).first();
-    await expect(trackRow).toBeVisible({ timeout: 5000 });
-    await trackRow.click();
-
-    const selectedTrackNo = await page.evaluate(() => {
-      const win = window as unknown as WindowWithDrishti;
-      return win.__DRISHTI_TEST__?.getTrackList()[0]?.trackNo ?? 'T-01';
-    });
+    // 5. Select first track row directly from UI and extract its displayed track number
+    const trackButton = trackTable.locator('button').filter({ hasText: /T-\d+/ }).first();
+    await expect(trackButton).toBeVisible({ timeout: 5000 });
+    const trackText = await trackButton.innerText();
+    const trackMatch = trackText.match(/T-\d+/);
+    expect(trackMatch).not.toBeNull();
+    const selectedTrackNo = trackMatch![0];
+    await trackButton.click();
 
     // 6. Execute Operator Lifecycle: Designate -> Classify -> Arm Effector -> Fire
-    // Designate via Spacebar and assert actual emitted DESIGNATE event
+    // Designate via Spacebar and assert actual emitted DESIGNATE event for the selected track
     await page.keyboard.press('Space');
     await expect.poll(async () => {
       const events = await page.evaluate(() => {
@@ -89,7 +88,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       return events.some((e) => e.type === 'DESIGNATE' && e.trackNo === selectedTrackNo);
     }, { timeout: 5000 }).toBe(true);
 
-    // Classify via button or key and assert actual emitted CLASSIFY event
+    // Classify via button or key and assert actual emitted CLASSIFY event contains label: HOSTILE_ATTACK
     const classifyBtn = page.getByRole('button', { name: /⚡ CLASSIFY HOSTILE|\[HA\]/i }).first();
     if (await classifyBtn.isVisible()) {
       await classifyBtn.click();
@@ -101,14 +100,14 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
         const win = window as unknown as WindowWithDrishti;
         return win.__DRISHTI_TEST__?.getRecordedEvents() ?? [];
       });
-      return events.some((e) => e.type === 'CLASSIFY' && e.trackNo === selectedTrackNo);
-    }, { timeout: 5000 }).toBe(true);
+      const clsEv = events.find((e) => e.type === 'CLASSIFY' && e.trackNo === selectedTrackNo);
+      return clsEv?.payload?.label;
+    }, { timeout: 5000 }).toBe('HOSTILE_ATTACK');
 
-    // Arm Effector (RF Soft-Kill)
+    // Arm Effector (RF Soft-Kill): Require visible and click through the real UI
     const rfSoftkillBtn = page.locator('button').filter({ hasText: /RF Soft-Kill/i }).first();
-    if (await rfSoftkillBtn.isVisible()) {
-      await rfSoftkillBtn.click();
-    }
+    await expect(rfSoftkillBtn).toBeVisible({ timeout: 5000 });
+    await rfSoftkillBtn.click();
 
     // Fire via 'f' key and assert actual emitted ENGAGE or RELEASE_BLOCKED event
     await page.keyboard.press('f');
@@ -117,7 +116,31 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
         const win = window as unknown as WindowWithDrishti;
         return win.__DRISHTI_TEST__?.getRecordedEvents() ?? [];
       });
-      return events.some((e) => (e.type === 'ENGAGE' || e.type === 'RELEASE_BLOCKED') && e.trackNo === selectedTrackNo);
+      const fireEvent = events.find(
+        (e) => (e.type === 'ENGAGE' || e.type === 'RELEASE_BLOCKED') && e.trackNo === selectedTrackNo
+      );
+      if (!fireEvent) return false;
+
+      // Assert that the selected effector is actually RF_SOFTKILL using the resulting operator event payload
+      if (fireEvent.payload?.effector !== 'RF_SOFTKILL') return false;
+
+      // Where the result is RELEASE_BLOCKED, verify its actual documented rejection reason
+      if (fireEvent.type === 'RELEASE_BLOCKED') {
+        const documentedReasons = [
+          'OUT_OF_ENVELOPE',
+          'Q_MIN_VIOLATION',
+          'PNR_VIOLATION',
+          'INACTIVE_TARGET',
+          'RF_JAMMING_ACTIVE',
+          'RF_SILENT_TARGET',
+          'TRACK_NOT_FOUND',
+          'DUPLICATE_PENDING_FIRE',
+        ];
+        return documentedReasons.includes(String(fireEvent.payload?.reason));
+      }
+
+      // If ENGAGE, verified effector is RF_SOFTKILL and trackNo is selectedTrackNo
+      return true;
     }, { timeout: 5000 }).toBe(true);
 
     // 7. Fast-forward to session completion via test bridge
@@ -308,7 +331,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       { seq: 5, tMs: 10000, type: 'SESSION_END', payload: { durationMs: 10000 } },
     ];
 
-    // 1. Create properly signed export payload
+    // 1. Create export payload with unkeyed SHA-256 integrity checksum
     const validPayloadJson = await page.evaluate(async ({ uid, evs }) => {
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
@@ -405,7 +428,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
 
     expect(dupSeqError).toMatch(/duplicate event sequence numbers/i);
 
-    // 7. Verify transaction atomicity (failed import wrote 0 records for dupSeqUid)
+    // 7. Verify invalid-import rejection without partial writes (failed import wrote 0 records for dupSeqUid)
     const dupSeqDexieCount = await page.evaluate(async (uid) => {
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__!.getDexieEventsCount(uid);

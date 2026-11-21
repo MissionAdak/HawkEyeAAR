@@ -132,6 +132,7 @@ export interface DrishtiTestBridge {
   getDexieEventsCount: (sessionUid: string) => Promise<number>;
   clearDexieEvents: (sessionUid: string) => Promise<void>;
   createSignedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
+  createChecksummedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
 }
 
 declare global {
@@ -751,6 +752,7 @@ export function installDrishtiTestBridge(
     },
 
     async createSignedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {
+      // Computes unkeyed SHA-256 integrity checksum over canonical JSON representation
       const checksum = await sha256(stableJson({ sessionUid, events }));
       const payload = {
         format: 'drishti-aar-events',
@@ -762,6 +764,10 @@ export function installDrishtiTestBridge(
         sha256: checksum,
       };
       return JSON.stringify(payload, null, 2);
+    },
+
+    async createChecksummedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {
+      return this.createSignedAarPayload(sessionUid, events);
     },
   };
 

@@ -538,7 +538,8 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       // No collateral, civilian, or friendly engagement -> R = 100
       const expectedR = 100;
 
-      // Global Mission Score: S = 0.25*D + 0.35*C + 0.25*G + 0.15*R
+      // Global Mission Score for Hostile Target: S = 0.25*D + 0.20*C + 0.35*G + 0.20*R
+      // (Economic and timing scores contribute directly to G = 0.6*Econ + 0.4*Time, not separate global components)
       const { hostile } = CONFIG.scoringWeights;
       const expectedGlobalScore = Math.round(
         hostile.d * expectedD +
@@ -547,7 +548,7 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
         hostile.r * expectedR
       );
 
-      // Verify mathematical derivation: 0.25(87.5) + 0.35(100) + 0.25(100) + 0.15(100) = 21.875 + 35 + 25 + 15 = 96.875 -> 97
+      // Verify mathematical derivation: 0.25(87.5) + 0.20(100) + 0.35(100) + 0.20(100) = 21.875 + 20 + 35 + 20 = 96.875 -> 97
       expect(expectedGlobalScore).toBe(97);
       expect(getGrade(expectedGlobalScore)).toBe('PROFICIENT_IN_SIMULATION');
 
