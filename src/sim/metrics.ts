@@ -396,6 +396,7 @@ function computeSalMetrics(events: SimEvent[]): { salMs: number | null; salScore
 interface SessionScoreResults {
   dScore: number;
   cScore: number;
+  gScore: number;
   econScore: number;
   rScore: number;
   sessionScore: number;
@@ -409,6 +410,7 @@ function computeAggregatedScores(
 ): SessionScoreResults {
   let totalD = 0;
   let totalC = 0;
+  let totalG = 0;
   let totalEcon = 0;
   let totalR = 0;
   const totalTracksCount = Math.max(1, allTracks.length);
@@ -441,6 +443,7 @@ function computeAggregatedScores(
       kineticOverDenseZone: t.isKineticOverDenseZone,
       unclassifiedFired: t.unclassifiedFired,
     });
+    totalG += g;
 
     const r = computeRScore({
       effectorId: t.weaponUsed,
@@ -465,6 +468,7 @@ function computeAggregatedScores(
   return {
     dScore: Math.round(totalD / totalTracksCount),
     cScore: Math.round(totalC / totalTracksCount),
+    gScore: Math.round(totalG / totalTracksCount),
     econScore: Math.round(totalEcon / totalTracksCount),
     rScore: Math.round(totalR / totalTracksCount),
     sessionScore,
@@ -528,6 +532,7 @@ export function aggregateAARMetrics(
     swarmSat,
     dScore: scoreResults.dScore,
     cScore: scoreResults.cScore,
+    gScore: scoreResults.gScore,
     econScore: scoreResults.econScore,
     rScore: scoreResults.rScore,
     trainingAidTicks: meta.aidTicks,

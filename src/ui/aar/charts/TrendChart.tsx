@@ -20,10 +20,10 @@ interface MetricConfig {
 const METRICS: MetricConfig[] = [
   { key: 'score', label: 'Score [S]', color: '#00FF66' },
   { key: 'd', label: 'Detection [D]', color: '#FF9900' },
-  { key: 'c', label: 'Classify [C]', color: '#38BDF8' },
-  { key: 'g', label: 'Engage [G]', color: '#C084FC' },
-  { key: 'r', label: 'ROE [R]', color: '#F43F5E' },
-  { key: 'diff', label: 'Difficulty [d]', color: '#00CCFF', dash: [4, 4], isRightAxis: true },
+  { key: 'c', label: 'Classify [C]', color: '#00CCFF' },
+  { key: 'g', label: 'Engage [G]', color: '#FFCC00' },
+  { key: 'r', label: 'ROE [R]', color: '#FF3333' },
+  { key: 'diff', label: 'Difficulty [d]', color: '#8B949E', dash: [4, 4], isRightAxis: true },
 ];
 
 export const TrendChart: React.FC<TrendChartProps> = ({
@@ -66,9 +66,9 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Handle container dimensions and DPR
+    // Handle container dimensions and DPR (capped at 2 for performance)
     const rect = canvas.getBoundingClientRect();
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
     const width = rect.width || 800;
     const canvasHeight = height;
 
@@ -181,7 +181,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
         case 'c':
           return s.metrics?.cScore ?? 0;
         case 'g':
-          return s.metrics?.econScore ?? 0;
+          return s.metrics?.gScore ?? 0;
         case 'r':
           return s.metrics?.rScore ?? 0;
         case 'diff':
@@ -363,7 +363,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
         {/* Interactive Hover Readout Overlay */}
         {activeSessionForTooltip && (
           <div
-            className="absolute top-2 right-14 bg-carbon-900/95 border border-line p-2 shadow-xl pointer-events-none text-[11px] space-y-1 backdrop-blur-sm z-10"
+            className="absolute top-2 right-14 bg-carbon-900 border border-line p-2 shadow-xl pointer-events-none text-[11px] space-y-1 z-10"
             data-testid="trend-chart-tooltip"
           >
             <div className="flex items-center justify-between gap-4 border-b border-line pb-1">
@@ -388,7 +388,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
                 Classify [C]: <span className="font-bold text-friend">{activeSessionForTooltip.metrics?.cScore ?? '—'}</span>
               </div>
               <div>
-                Engage [G]: <span className="font-bold text-purple-400">{activeSessionForTooltip.metrics?.econScore ?? '—'}</span>
+                Engage [G]: <span className="font-bold text-amber">{activeSessionForTooltip.metrics?.gScore ?? '—'}</span>
               </div>
               <div>
                 ROE [R]: <span className="font-bold text-threat">{activeSessionForTooltip.metrics?.rScore ?? '—'}</span>

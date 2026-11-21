@@ -13,8 +13,10 @@ export interface UnitTraineeSummary {
   latestEvalGrade: Grade | null;
   highestTrainDifficulty: number; // max dStart among completed TRAIN sessions
   latestMetrics: AARMetrics | null;
+  latestEvalMetrics: AARMetrics | null;
   meanEvalScore: number | null;
   evalPassRate: number | null; // Percentage of EVAL sessions with score >= 70
+  isSynthetic?: boolean;
 }
 
 export interface UnitCohortStats {
@@ -23,6 +25,8 @@ export interface UnitCohortStats {
   totalEvalSessions: number;
   activeTraineesCount: number;
 }
+
+export type DatasetScope = 'REAL' | 'DEMO' | 'ALL';
 
 // In-memory fallbacks for Node.js / unit test environments where indexedDB is undefined
 const inMemorySessions: SessionRow[] = [];
@@ -92,7 +96,8 @@ export async function getAllTrainees(): Promise<TraineeRow[]> {
 
 export async function getTraineeSessions(
   traineeUidOrCallsign?: string,
-  sortOrder: 'asc' | 'desc' = 'asc'
+  sortOrder: 'asc' | 'desc' = 'asc',
+  scope: DatasetScope = 'ALL'
 ): Promise<SessionRow[]> {
   let targetUid = traineeUidOrCallsign;
   if (traineeUidOrCallsign && !traineeUidOrCallsign.startsWith('trainee-')) {
@@ -110,20 +115,30 @@ export async function getTraineeSessions(
       : await db.sessions.toArray();
   }
 
+  // Filter by dataset scope
+  if (scope === 'REAL') {
+    sessions = sessions.filter((s) => !s.isSynthetic);
+  } else if (scope === 'DEMO') {
+    sessions = sessions.filter((s) => Boolean(s.isSynthetic));
+  }
+
   return sessions.sort((a, b) =>
     sortOrder === 'asc' ? a.startedAt - b.startedAt : b.startedAt - a.startedAt
   );
 }
 
 export async function getAllSessions(
-  sortOrder: 'asc' | 'desc' = 'asc'
+  sortOrder: 'asc' | 'desc' = 'asc',
+  scope: DatasetScope = 'ALL'
 ): Promise<SessionRow[]> {
-  return await getTraineeSessions(undefined, sortOrder);
+  return await getTraineeSessions(undefined, sortOrder, scope);
 }
 
-export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
+export async function getUnitTraineeSummaries(
+  scope: DatasetScope = 'REAL'
+): Promise<UnitTraineeSummary[]> {
   const trainees = await getAllTrainees();
-  const allSessions = await getAllSessions('asc');
+  const allSessions = await getAllSessions('asc', scope);
 
   // Map trainees by UID
   const traineeMap = new Map<string, TraineeRow>();
@@ -131,7 +146,7 @@ export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
     traineeMap.set(t.uid, t);
   }
 
-  // Also discover any trainees present in sessions but not yet in trainees table
+  // Also discover any trainees present in scoped sessions but not yet in trainees table
   for (const s of allSessions) {
     if (!traineeMap.has(s.traineeUid)) {
       const derivedCallsign = s.traineeUid.replace(/^trainee-/, '').toUpperCase();
@@ -148,19 +163,25 @@ export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
   for (const [traineeUid, trainee] of traineeMap.entries()) {
     const traineeSessions = allSessions.filter((s) => s.traineeUid === traineeUid);
     const totalSessions = traineeSessions.length;
+    if (totalSessions === 0) {
+      continue;
+    }
 
     // Rules.md R4.4: Leaderboards and percentiles use EVAL sessions only.
     // Aborted and unverified sessions never enter aggregates.
     const validEvalSessions = traineeSessions.filter(
       (s) => s.mode === 'EVAL' && !s.aborted && !s.unverified
     );
-    const trainSessions = traineeSessions.filter((s) => s.mode === 'TRAIN');
+    const validTrainSessions = traineeSessions.filter(
+      (s) => s.mode === 'TRAIN' && !s.aborted && !s.unverified
+    );
 
     const evalSessionsCount = validEvalSessions.length;
-    const trainSessionsCount = trainSessions.length;
+    const trainSessionsCount = traineeSessions.filter((s) => s.mode === 'TRAIN').length;
 
     let latestEvalScore: number | null = null;
     let latestEvalGrade: Grade | null = null;
+    let latestEvalMetrics: AARMetrics | null = null;
     let meanEvalScore: number | null = null;
     let evalPassRate: number | null = null;
 
@@ -168,6 +189,7 @@ export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
       const latestEval = validEvalSessions[validEvalSessions.length - 1];
       latestEvalScore = latestEval.score;
       latestEvalGrade = latestEval.grade;
+      latestEvalMetrics = latestEval.metrics ?? null;
 
       const scoreSum = validEvalSessions.reduce((acc, s) => acc + s.score, 0);
       meanEvalScore = Math.round(scoreSum / evalSessionsCount);
@@ -177,14 +199,9 @@ export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
     }
 
     const highestTrainDifficulty =
-      trainSessions.length > 0
-        ? Math.max(...trainSessions.map((s) => s.dStart ?? 0))
+      validTrainSessions.length > 0
+        ? Math.max(...validTrainSessions.map((s) => s.dStart ?? 0))
         : 0;
-
-    const latestMetrics =
-      traineeSessions.length > 0
-        ? traineeSessions[traineeSessions.length - 1].metrics
-        : null;
 
     summaries.push({
       callsign: trainee.callsign,
@@ -196,9 +213,11 @@ export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
       latestEvalScore,
       latestEvalGrade,
       highestTrainDifficulty,
-      latestMetrics,
+      latestMetrics: latestEvalMetrics,
+      latestEvalMetrics,
       meanEvalScore,
       evalPassRate,
+      isSynthetic: traineeSessions.some((s) => s.isSynthetic),
     });
   }
 
@@ -219,8 +238,10 @@ export async function getUnitTraineeSummaries(): Promise<UnitTraineeSummary[]> {
   });
 }
 
-export async function getCohortStats(): Promise<UnitCohortStats> {
-  const summaries = await getUnitTraineeSummaries();
+export async function getCohortStats(
+  scope: DatasetScope = 'REAL'
+): Promise<UnitCohortStats> {
+  const summaries = await getUnitTraineeSummaries(scope);
   const traineesWithEval = summaries.filter((s) => s.latestEvalScore !== null);
 
   let cohortMeanEvalScore: number | null = null;
@@ -255,6 +276,8 @@ export function createMockMetrics(
   mode: SessionMode = 'TRAIN',
   overrides: Partial<AARMetrics> = {}
 ): AARMetrics {
+  const gScore = Math.min(100, Math.round(score * 1.0 + 1));
+  const econScore = Math.min(100, Math.round(score * 1.02 - 1));
   return {
     sessionUid: createSessionUid(),
     mode,
@@ -280,7 +303,8 @@ export function createMockMetrics(
     swarmSat: 0.25,
     dScore: Math.min(100, Math.round(score * 0.95 + 4)),
     cScore: Math.min(100, Math.round(score * 0.98 + 2)),
-    econScore: Math.min(100, Math.round(score * 1.02 - 1)),
+    gScore,
+    econScore,
     rScore: Math.min(100, Math.round(score * 1.0 + 1)),
     confusion: [
       [2, 0, 0, 0, 0, 0],
@@ -294,15 +318,22 @@ export function createMockMetrics(
   };
 }
 
+let isSeeding = false;
+
 /**
  * Pre-populates realistic longitudinal training and EVAL data for unit readiness
  * if the database has zero records.
  */
 export async function seedDemoSessionsIfEmpty(): Promise<void> {
-  const existing = await getAllSessions();
-  if (existing.length > 0) {
+  if (isSeeding) {
     return;
   }
+  isSeeding = true;
+  try {
+    const existing = await getAllSessions('asc', 'ALL');
+    if (existing.length > 0) {
+      return;
+    }
 
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
@@ -443,9 +474,13 @@ export async function seedDemoSessionsIfEmpty(): Promise<void> {
       scenarioId: item.scenarioId,
       aborted: false,
       unverified: false,
+      isSynthetic: true,
     };
     await saveCompletedSession(sessionRow, item.callsign, 'ALPHA COY');
   }
+} finally {
+  isSeeding = false;
+}
 }
 
 export function clearSessionRepoForTest(): void {

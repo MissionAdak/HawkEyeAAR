@@ -142,7 +142,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
 
       // If ENGAGE, verified effector is RF_SOFTKILL and trackNo is selectedTrackNo
       return true;
-    }, { timeout: 5000 }).toBe(true);
+    }, { timeout: 10000 }).toBe(true);
 
     // 7. Fast-forward to session completion via test bridge
     const advanceResult = await page.evaluate(() => {

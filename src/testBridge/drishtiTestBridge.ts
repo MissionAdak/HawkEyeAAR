@@ -131,6 +131,8 @@ export interface DrishtiTestBridge {
   testDexieImport: (payloadJson: string) => Promise<import('@/db/aarTransfer').AARImportResult>;
   getDexieEventsCount: (sessionUid: string) => Promise<number>;
   clearDexieEvents: (sessionUid: string) => Promise<void>;
+  getDexieSessions: () => Promise<import('@/db/dexie').SessionRow[]>;
+  getDexieSession: (uid: string) => Promise<import('@/db/dexie').SessionRow | undefined>;
   createSignedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
   createChecksummedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
 }
@@ -749,6 +751,16 @@ export function installDrishtiTestBridge(
     async clearDexieEvents(sessionUid: string): Promise<void> {
       if (typeof indexedDB === 'undefined') return;
       await db.events.where('sessionUid').equals(sessionUid).delete();
+    },
+
+    async getDexieSessions(): Promise<import('@/db/dexie').SessionRow[]> {
+      if (typeof indexedDB === 'undefined') return [];
+      return await db.sessions.toArray();
+    },
+
+    async getDexieSession(uid: string): Promise<import('@/db/dexie').SessionRow | undefined> {
+      if (typeof indexedDB === 'undefined') return undefined;
+      return await db.sessions.get(uid);
     },
 
     async createSignedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {

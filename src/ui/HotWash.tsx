@@ -37,6 +37,8 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
   const currentCallsign = useSessionStore((s) => s.currentCallsign);
   const setCallsign = useSessionStore((s) => s.setCallsign);
+  const latestSavedSessionUid = useSessionStore((s) => s.latestSavedSessionUid);
+  const sessionPersistenceStatus = useSessionStore((s) => s.sessionPersistenceStatus);
 
   const [traineeSessions, setTraineeSessions] = useState<SessionRow[]>([]);
   const [unitSummaries, setUnitSummaries] = useState<UnitTraineeSummary[]>([]);
@@ -47,6 +49,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
     activeTraineesCount: 0,
   });
   const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null);
+  const [cohortScope, setCohortScope] = useState<'REAL' | 'DEMO'>('REAL');
 
   // Load historical sessions & unit summaries
   useEffect(() => {
@@ -54,9 +57,9 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
     const loadData = async () => {
       try {
         await seedDemoSessionsIfEmpty();
-        const sessions = await getTraineeSessions(currentCallsign, 'asc');
-        const summaries = await getUnitTraineeSummaries();
-        const stats = await getCohortStats();
+        const sessions = await getTraineeSessions(currentCallsign, 'asc', cohortScope);
+        const summaries = await getUnitTraineeSummaries(cohortScope);
+        const stats = await getCohortStats(cohortScope);
         if (isMounted) {
           setTraineeSessions(sessions);
           setUnitSummaries(summaries);
@@ -70,7 +73,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
     return () => {
       isMounted = false;
     };
-  }, [currentCallsign]);
+  }, [currentCallsign, latestSavedSessionUid, sessionPersistenceStatus, cohortScope]);
 
   // Reconstruct metrics from raw event log
   const metrics = aggregateAARMetrics(
@@ -269,7 +272,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">ENGAGE [G]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.econScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.gScore}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">ROE [R]</div>
@@ -563,6 +566,8 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             summaries={unitSummaries}
             cohortStats={cohortStats}
             selectedTraineeCallsign={currentCallsign}
+            datasetScope={cohortScope}
+            onSelectScope={(scope) => setCohortScope(scope)}
             onSelectTrainee={(callsign) => {
               setCallsign(callsign);
               setActiveTab('TRENDS');

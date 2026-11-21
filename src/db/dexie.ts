@@ -34,6 +34,7 @@ export interface SessionRow {
   scenarioId?: string;
   aborted?: boolean;
   unverified?: boolean;
+  isSynthetic?: boolean;
 }
 
 export interface TrackResultRow {

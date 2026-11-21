@@ -20,16 +20,22 @@ let mockPersistenceFailure = false;
 
 export class EventRecorder {
   private readonly sessionUid: string;
+  private readonly startedAt: number;
   private buffer: StoredSimEvent[] = [];
   private flushIntervalId: number | null = null;
   private flushPromise: Promise<void> | null = null;
 
-  constructor(sessionUid: string = createSessionUid()) {
+  constructor(sessionUid: string = createSessionUid(), startedAt?: number) {
     this.sessionUid = sessionUid;
+    this.startedAt = startedAt ?? Date.now();
   }
 
   public getSessionUid(): string {
     return this.sessionUid;
+  }
+
+  public getStartedAt(): number {
+    return this.startedAt;
   }
 
   public start(): void {

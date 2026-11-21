@@ -104,7 +104,15 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     const unitLeaderboard = page.getByTestId('unit-leaderboard-table');
     await expect(unitLeaderboard).toBeVisible();
 
-    // Assert operators are displayed in leaderboard
+    // In operational roster, only real session (VIPER-2) exists
+    await expect(unitLeaderboard.getByText('VIPER-2')).toBeVisible();
+
+    // Switch to DEMO BENCHMARK dataset to inspect multi-operator cohort
+    const scopeDemoBtn = page.getByTestId('scope-demo-btn');
+    await expect(scopeDemoBtn).toBeVisible();
+    await scopeDemoBtn.click();
+
+    // Assert demo benchmark operators are displayed in leaderboard
     await expect(unitLeaderboard.getByText('HAWK-1')).toBeVisible();
     await expect(unitLeaderboard.getByText('VIPER-2')).toBeVisible();
     await expect(unitLeaderboard.getByText('GHOST-4')).toBeVisible();
@@ -135,5 +143,85 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     await expect(closeBtn).toBeVisible();
     await closeBtn.click();
     await expect(aarModal).not.toBeVisible({ timeout: 5000 });
+  });
+
+  test('02. Real Browser IndexedDB Persistence, Reload Durability & EVAL Isolation Verification (Remediation G)', async ({ page }) => {
+    // 1. Navigate to application
+    await page.goto('http://127.0.0.1:4173/HawkEyeAAR/', { waitUntil: 'networkidle' });
+
+    // 2. Start session
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 10000 });
+    await startBtn.click();
+    await expect(startBtn).not.toBeVisible({ timeout: 5000 });
+
+    // 3. Wait for test bridge to be initialized
+    await page.waitForFunction(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return Boolean(win.__DRISHTI_TEST__?.isReady());
+    }, undefined, { timeout: 10000 });
+
+    // 4. Advance session to completion to trigger persistence to IndexedDB
+    await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      win.__DRISHTI_TEST__?.advanceToSessionEnd();
+    });
+
+    const aarModal = page.getByTestId('aar-modal');
+    if (!(await aarModal.isVisible())) {
+      const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
+      if (await aarBtn.isVisible()) {
+        await aarBtn.click({ force: true });
+      }
+    }
+    await expect(aarModal).toBeVisible({ timeout: 5000 });
+
+    // 5. Query real Dexie IndexedDB sessions table directly via test bridge
+    const dbSessions = await page.evaluate(async () => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__?.getDexieSessions?.() ?? [];
+    });
+
+    expect(dbSessions.length).toBeGreaterThanOrEqual(1);
+
+    // Locate the operational session recorded
+    const realSessions = dbSessions.filter((s) => !s.isSynthetic);
+    expect(realSessions.length).toBeGreaterThanOrEqual(1);
+
+    const latestReal = realSessions[realSessions.length - 1];
+    expect(latestReal.uid).toBeTruthy();
+    // Remediation E: startedAt must be a valid non-zero timestamp captured at session start
+    expect(latestReal.startedAt).toBeGreaterThan(0);
+    // Remediation A: gScore must be computed and present
+    expect(typeof latestReal.metrics?.gScore).toBe('number');
+    expect(latestReal.metrics?.gScore).toBeGreaterThanOrEqual(0);
+    expect(latestReal.metrics?.gScore).toBeLessThanOrEqual(100);
+    // Remediation D: trainee association
+    expect(latestReal.traineeUid).toBe('trainee-viper-2');
+
+    const targetUid = latestReal.uid;
+
+    // 6. Reload the page to test IndexedDB durability across full browser reloads
+    await page.reload({ waitUntil: 'networkidle' });
+
+    await page.waitForFunction(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return Boolean(win.__DRISHTI_TEST__);
+    }, undefined, { timeout: 10000 });
+
+    // 7. Verify session remains in IndexedDB after reload
+    const reloadedSession = await page.evaluate(async (uid) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__?.getDexieSession?.(uid);
+    }, targetUid);
+
+    expect(reloadedSession).toBeDefined();
+    expect(reloadedSession?.uid).toBe(targetUid);
+    expect(reloadedSession?.startedAt).toBe(latestReal.startedAt);
+    expect(reloadedSession?.metrics?.gScore).toBe(latestReal.metrics?.gScore);
+    expect(reloadedSession?.traineeUid).toBe('trainee-viper-2');
+
+    // 8. Capture screenshot of verified IndexedDB durability
+    await saveShot(page, 'task20_03_indexeddb_persistence_durability.png');
   });
 });

@@ -301,32 +301,125 @@ describe('TASK 20 — Unit Performance Repository & Longitudinal Tracking (Rules
     });
   });
 
-  describe('4. Automated Demo Seeding', () => {
-    it('seeds demo sessions when database is empty and leaves existing data intact', async () => {
+  describe('4. Automated Demo Seeding & Synthetic Isolation (Remediation D)', () => {
+    it('seeds demo sessions when database is empty, isolates them from real scope, and leaves existing data intact', async () => {
       const initial = await getAllSessions();
       expect(initial).toHaveLength(0);
 
       await seedDemoSessionsIfEmpty();
 
-      const seeded = await getAllSessions();
+      const seeded = await getAllSessions('asc', 'ALL');
       expect(seeded.length).toBeGreaterThan(5);
 
-      const trainees = await getUnitTraineeSummaries();
-      expect(trainees.map((t) => t.callsign)).toContain('VIPER-2');
-      expect(trainees.map((t) => t.callsign)).toContain('HAWK-1');
-      expect(trainees.map((t) => t.callsign)).toContain('COBRA-3');
-      expect(trainees.map((t) => t.callsign)).toContain('GHOST-4');
+      // In real scope, synthetic sessions are strictly isolated: 0 real records
+      const realTrainees = await getUnitTraineeSummaries('REAL');
+      expect(realTrainees).toHaveLength(0);
+      const realCohort = await getCohortStats('REAL');
+      expect(realCohort.totalEvalSessions).toBe(0);
+      expect(realCohort.cohortMeanEvalScore).toBeNull();
+      expect(realCohort.cohortEvalPassRate).toBeNull();
+
+      // In demo scope, all 4 demo trainees are present
+      const demoTrainees = await getUnitTraineeSummaries('DEMO');
+      expect(demoTrainees.map((t) => t.callsign)).toContain('VIPER-2');
+      expect(demoTrainees.map((t) => t.callsign)).toContain('HAWK-1');
+      expect(demoTrainees.map((t) => t.callsign)).toContain('COBRA-3');
+      expect(demoTrainees.map((t) => t.callsign)).toContain('GHOST-4');
 
       // GHOST-4 in demo data is TRAIN-only, so their latestEvalScore must be null
-      const ghost = trainees.find((t) => t.callsign === 'GHOST-4');
+      const ghost = demoTrainees.find((t) => t.callsign === 'GHOST-4');
       expect(ghost).toBeDefined();
       expect(ghost?.latestEvalScore).toBeNull();
 
-      // Running seedDemoSessionsIfEmpty a second time does not duplicate rows
+      // Running seedDemoSessionsIfEmpty a second time does not duplicate rows (concurrency/idempotence check)
       const countBefore = seeded.length;
       await seedDemoSessionsIfEmpty();
-      const countAfter = (await getAllSessions()).length;
+      const countAfter = (await getAllSessions('asc', 'ALL')).length;
       expect(countAfter).toBe(countBefore);
+    });
+  });
+
+  describe('5. Session Start Timestamp & EVAL Metric Separation (Remediations C & E)', () => {
+    it('preserves real session startedAt timestamp without overwriting with current time', async () => {
+      const explicitStart = 1700000000000;
+      await saveCompletedSession({
+        uid: 'sess-timestamp-test',
+        traineeUid: 'trainee-viper-2',
+        mode: 'TRAIN',
+        startedAt: explicitStart,
+        durationMs: 45000,
+        score: 85,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.5,
+        metrics: createMockMetrics(85, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+      }, 'VIPER-2');
+
+      const retrieved = await getTraineeSessions('VIPER-2', 'asc', 'REAL');
+      expect(retrieved).toHaveLength(1);
+      expect(retrieved[0].startedAt).toBe(explicitStart);
+    });
+
+    it('strictly separates latestEvalMetrics from later TRAIN sessions and excludes aborted TRAIN from highestTrainDifficulty', async () => {
+      // 1. Valid EVAL session (score 90, dStart 0.5, MET 3200ms)
+      const mEval = createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'EVAL', { metMs: 3200 });
+      await saveCompletedSession({
+        uid: 'sess-eval-1',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 1000,
+        durationMs: 40000,
+        score: 90,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.5,
+        metrics: mEval,
+        aborted: false,
+        unverified: false,
+      }, 'VIPER-2');
+
+      // 2. Aborted TRAIN session with high difficulty (dStart 0.9) - MUST NOT count as highestTrainDifficulty!
+      const mAbortedTrain = createMockMetrics(40, 'NEEDS_RETRAINING', 'TRAIN');
+      await saveCompletedSession({
+        uid: 'sess-train-abort',
+        traineeUid: 'trainee-viper-2',
+        mode: 'TRAIN',
+        startedAt: 2000,
+        durationMs: 10000,
+        score: 40,
+        grade: 'NEEDS_RETRAINING',
+        dStart: 0.9,
+        metrics: mAbortedTrain,
+        aborted: true,
+        unverified: false,
+      }, 'VIPER-2');
+
+      // 3. Completed valid TRAIN session (dStart 0.65, score 75, MET 8000ms)
+      const mTrain = createMockMetrics(75, 'PROFICIENT_IN_SIMULATION', 'TRAIN', { metMs: 8000 });
+      await saveCompletedSession({
+        uid: 'sess-train-valid',
+        traineeUid: 'trainee-viper-2',
+        mode: 'TRAIN',
+        startedAt: 3000,
+        durationMs: 40000,
+        score: 75,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.65,
+        metrics: mTrain,
+        aborted: false,
+        unverified: false,
+      }, 'VIPER-2');
+
+      const summaries = await getUnitTraineeSummaries('REAL');
+      expect(summaries).toHaveLength(1);
+      const viper = summaries[0];
+
+      // Highest train difficulty must be 0.65 (not the aborted 0.9)
+      expect(viper.highestTrainDifficulty).toBe(0.65);
+
+      // Latest EVAL metrics must be from sess-eval-1 (score 90, metMs 3200), NOT from the later TRAIN session!
+      expect(viper.latestEvalScore).toBe(90);
+      expect(viper.latestEvalMetrics?.score).toBe(90);
+      expect(viper.latestEvalMetrics?.metMs).toBe(3200);
+      expect(viper.latestMetrics?.score).toBe(90);
     });
   });
 });

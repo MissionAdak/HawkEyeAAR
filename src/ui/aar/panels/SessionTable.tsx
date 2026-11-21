@@ -19,15 +19,29 @@ export const SessionTable: React.FC<SessionTableProps> = ({
     return [...sessions].sort((a, b) => b.startedAt - a.startedAt);
   }, [sessions]);
 
-  // Compute delta S relative to the chronologically prior session
+  // Rules.md R4.4 & Remediation B: Compute delta S ONLY between consecutive valid benchmark EVAL sessions
   const deltasByUid = useMemo(() => {
-    const chron = [...sessions].sort((a, b) => a.startedAt - b.startedAt);
     const deltas: Record<string, number | null> = {};
-    for (let i = 0; i < chron.length; i++) {
-      if (i === 0) {
-        deltas[chron[i].uid] = null;
-      } else {
-        deltas[chron[i].uid] = chron[i].score - chron[i - 1].score;
+    const traineeEvals: Record<string, SessionRow[]> = {};
+
+    for (const s of sessions) {
+      deltas[s.uid] = null;
+      const isValidEval = s.mode === 'EVAL' && !s.aborted && !s.unverified && !s.isSynthetic;
+      if (isValidEval) {
+        const tId = s.traineeUid || 'default';
+        traineeEvals[tId] ??= [];
+        traineeEvals[tId].push(s);
+      }
+    }
+
+    for (const evals of Object.values(traineeEvals)) {
+      evals.sort((a, b) => a.startedAt - b.startedAt);
+      for (let i = 0; i < evals.length; i++) {
+        if (i === 0) {
+          deltas[evals[i].uid] = null;
+        } else {
+          deltas[evals[i].uid] = evals[i].score - evals[i - 1].score;
+        }
       }
     }
     return deltas;
@@ -45,7 +59,7 @@ export const SessionTable: React.FC<SessionTableProps> = ({
       case 'TRAIN':
         return 'text-friend border-friend bg-friend/20';
       case 'DEMO':
-        return 'text-purple-400 border-purple-500 bg-purple-900/30';
+        return 'text-cyan border-cyan/60 bg-carbon-800';
       default:
         return 'text-text-main border-line bg-carbon-800';
     }
@@ -190,7 +204,7 @@ export const SessionTable: React.FC<SessionTableProps> = ({
                     </td>
                     <td className="py-1.5 px-2 text-right text-text-dim">{session.metrics?.dScore ?? '—'}</td>
                     <td className="py-1.5 px-2 text-right text-text-dim">{session.metrics?.cScore ?? '—'}</td>
-                    <td className="py-1.5 px-2 text-right text-text-dim">{session.metrics?.econScore ?? '—'}</td>
+                    <td className="py-1.5 px-2 text-right text-text-dim">{session.metrics?.gScore ?? '—'}</td>
                     <td className="py-1.5 px-2 text-right text-text-dim">{session.metrics?.rScore ?? '—'}</td>
                     <td className="py-1.5 px-2 text-right text-text-dim">{metSec}</td>
                     <td className="py-1.5 px-2 text-right text-friend">{session.dStart.toFixed(2)}</td>

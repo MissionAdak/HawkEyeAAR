@@ -21,6 +21,7 @@ describe('TASK 20 UI — Unit Readiness View, Longitudinal Trend Chart & Session
       latestEvalGrade: 'PROFICIENT_IN_SIMULATION',
       highestTrainDifficulty: 0.5,
       latestMetrics: createMockMetrics(94, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+      latestEvalMetrics: createMockMetrics(94, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
       meanEvalScore: 94,
       evalPassRate: 100,
     },
@@ -35,6 +36,7 @@ describe('TASK 20 UI — Unit Readiness View, Longitudinal Trend Chart & Session
       latestEvalGrade: 'PROFICIENT_IN_SIMULATION',
       highestTrainDifficulty: 0.6,
       latestMetrics: createMockMetrics(86, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+      latestEvalMetrics: createMockMetrics(86, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
       meanEvalScore: 86,
       evalPassRate: 100,
     },
@@ -48,7 +50,8 @@ describe('TASK 20 UI — Unit Readiness View, Longitudinal Trend Chart & Session
       latestEvalScore: null, // Rules.md R4.4: TRAIN-only must display '—'
       latestEvalGrade: null,
       highestTrainDifficulty: 0.35,
-      latestMetrics: createMockMetrics(64, 'DEVELOPING', 'TRAIN'),
+      latestMetrics: null,
+      latestEvalMetrics: null,
       meanEvalScore: null,
       evalPassRate: null,
     },
@@ -96,6 +99,18 @@ describe('TASK 20 UI — Unit Readiness View, Longitudinal Trend Chart & Session
       grade: 'PROFICIENT_IN_SIMULATION',
       dStart: 0.5,
       metrics: createMockMetrics(86, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+      scenarioId: 'DEMO-1',
+    },
+    {
+      uid: 'sess-4',
+      traineeUid: 'trainee-viper-2',
+      mode: 'EVAL',
+      startedAt: 400000,
+      durationMs: 85000,
+      score: 94,
+      grade: 'PROFICIENT_IN_SIMULATION',
+      dStart: 0.5,
+      metrics: createMockMetrics(94, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
       scenarioId: 'DEMO-1',
     },
   ];
@@ -147,6 +162,8 @@ describe('TASK 20 UI — Unit Readiness View, Longitudinal Trend Chart & Session
       // Rank 3 GHOST-4 (TRAIN ONLY) MUST show '—' and 'IN TRAINING' badge
       expect(html).toContain('IN TRAINING');
       expect(html).toContain('d=0.35');
+      // Sub-metrics D, C, G, R, MET for TRAIN-only must display '—'
+      expect(html).toContain('—');
     });
   });
 
@@ -196,11 +213,11 @@ describe('TASK 20 UI — Unit Readiness View, Longitudinal Trend Chart & Session
       expect(html).toContain('>EVAL<');
       expect(html).toContain('>TRAIN<');
 
-      // Drill rows & delta S
+      // Drill rows & delta S (Rules.md R4.4 & Remediation B: Delta only between consecutive valid EVAL)
       expect(html).toContain('PROCEDURAL-1');
       expect(html).toContain('DEMO-1');
-      expect(html).toContain('+8'); // 72 - 64
-      expect(html).toContain('+14'); // 86 - 72
+      expect(html).toContain('+8'); // 94 - 86 between consecutive valid EVAL sessions
+      expect(html).toContain('—'); // TRAIN sessions and first EVAL session display '—'
       expect(html).toContain('0.50');
     });
   });

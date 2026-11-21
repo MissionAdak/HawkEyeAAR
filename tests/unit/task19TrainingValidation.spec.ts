@@ -597,6 +597,7 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       expect(metrics.grade).toBe('PROFICIENT_IN_SIMULATION');
       expect(metrics.dScore).toBe(Math.round(expectedD)); // 88
       expect(metrics.cScore).toBe(expectedC); // 100
+      expect(metrics.gScore).toBe(expectedG); // 100
       expect(metrics.econScore).toBe(expectedEcon); // 100
       expect(metrics.rScore).toBe(expectedR); // 100
       expect(metrics.confusion[0][1]).toBe(1); // True-positive for HOSTILE_ATTACK in Column 1 (HA)

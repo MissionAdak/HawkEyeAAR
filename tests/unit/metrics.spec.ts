@@ -448,5 +448,56 @@ describe('AAR Metrics Aggregation (TASK-P3-03)', () => {
       expect(Math.round(metrics.score)).toBe(55);
     });
   });
+
+  describe('Remediation A: Engagement Metric G vs Economic Score E_econ Disambiguation (Task 20-A)', () => {
+    it('proves aggregate gScore and econScore diverge for unopposed hostile leakers', () => {
+      // 1 Hostile target that leaks unopposed: never engaged
+      const leakerEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'TRAIN', scenarioId: 'TEST-LEAKER' } },
+        { seq: 2, tMs: 1000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 } },
+        { seq: 3, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', entityId: 'H-01', payload: {} },
+        { seq: 4, tMs: 4000, type: 'DESIGNATE', trackNo: 'T-01', entityId: 'H-01', payload: { via: 'KEY' } },
+        { seq: 5, tMs: 6000, type: 'CLASSIFY', trackNo: 'T-01', entityId: 'H-01', payload: { label: 'HOSTILE_ATTACK' } },
+        // Never engaged! Leaks at 30,000ms
+        { seq: 6, tMs: 30000, type: 'LEAK', trackNo: 'T-01', entityId: 'H-01', payload: { rangeM: 400 } },
+        { seq: 7, tMs: 30000, type: 'SESSION_END', payload: { durationMs: 30000 } },
+      ];
+
+      const metrics = aggregateAARMetrics(leakerEvents);
+
+      // E_econ is 100 (no effector spent)
+      expect(metrics.econScore).toBe(100);
+      // G score is strictly 0 (unopposed hostile leaker)
+      expect(metrics.gScore).toBe(0);
+      expect(metrics.gScore).not.toBe(metrics.econScore);
+      expect(metrics.leakers).toBe(1);
+    });
+
+    it('proves aggregate gScore and econScore diverge for engaged hostile leakers (G = 0.3 * E_econ)', () => {
+      // 1 Hostile target engaged with optimal cost effector (RF_SOFTKILL, 100 INR / 100,000 INR -> CER <= 1 -> E_econ = 100)
+      // but target was not neutralized and leaked past PNR
+      const engagedLeakerEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'TRAIN', scenarioId: 'TEST-ENGAGED-LEAKER' } },
+        { seq: 2, tMs: 1000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 } },
+        { seq: 3, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', entityId: 'H-01', payload: {} },
+        { seq: 4, tMs: 4000, type: 'DESIGNATE', trackNo: 'T-01', entityId: 'H-01', payload: { via: 'KEY' } },
+        { seq: 5, tMs: 6000, type: 'CLASSIFY', trackNo: 'T-01', entityId: 'H-01', payload: { label: 'HOSTILE_ATTACK' } },
+        { seq: 6, tMs: 8000, type: 'ENGAGE', trackNo: 'T-01', entityId: 'H-01', payload: { effector: 'RF_SOFTKILL', rangeM: 1000, cer: 0.001, roeGate: { classifiedOk: true, zoneOk: true } } },
+        // ENGAGE_RESULT killed: false (target survives)
+        { seq: 7, tMs: 8050, type: 'ENGAGE_RESULT', trackNo: 'T-01', entityId: 'H-01', payload: { killed: false } },
+        { seq: 8, tMs: 25000, type: 'LEAK', trackNo: 'T-01', entityId: 'H-01', payload: { rangeM: 400 } },
+        { seq: 9, tMs: 25000, type: 'SESSION_END', payload: { durationMs: 25000 } },
+      ];
+
+      const metrics = aggregateAARMetrics(engagedLeakerEvents);
+
+      // E_econ is 100 (CER = 0.001 <= 1.0)
+      expect(metrics.econScore).toBe(100);
+      // G score is 0.3 * E_econ = 30
+      expect(metrics.gScore).toBe(30);
+      expect(metrics.gScore).not.toBe(metrics.econScore);
+      expect(metrics.leakers).toBe(1);
+    });
+  });
 });
 

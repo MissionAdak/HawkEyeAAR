@@ -59,10 +59,13 @@ const initialSnapshot: UiSnapshot = {
   activeEffector: 'RF_SOFTKILL',
 };
 
+export type SessionPersistenceStatus = 'IDLE' | 'SAVING' | 'SAVED' | 'ERROR';
+
 export interface SessionState {
   ui: UiSnapshot;
   isSimRunning: boolean;
   sessionStatus: SessionStatus;
+  sessionPersistenceStatus: SessionPersistenceStatus;
 
   isAarOpen: boolean;
   isQuickGuideOpen: boolean;
@@ -138,6 +141,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   simSpeed: 1.0,
   currentCallsign: 'VIPER-2',
   latestSavedSessionUid: null,
+  sessionPersistenceStatus: 'IDLE',
   setCallsign: (callsign: string) => set({ currentCallsign: callsign }),
   feedbackList: [],
   activeFeedback: null,
@@ -459,7 +463,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             uid: sessionUid,
             traineeUid: '',
             mode: engineInstance.mode,
-            startedAt: 0,
+            startedAt: recorderForSession.getStartedAt(),
             durationMs: engineInstance.tickIndex * 50,
             score: metrics.score,
             grade: metrics.grade,
@@ -469,12 +473,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             aborted: isAborted,
             unverified: false,
           };
-          void saveCompletedSession(sessionRow, get().currentCallsign).catch((error) => {
-            console.error('[SessionStore] Failed to persist session to sessionRepo:', error);
-          });
-          set({ latestSavedSessionUid: sessionUid });
+          set({ sessionPersistenceStatus: 'SAVING' });
+          void (async () => {
+            try {
+              await saveCompletedSession(sessionRow, get().currentCallsign);
+              set({
+                latestSavedSessionUid: sessionUid,
+                sessionPersistenceStatus: 'SAVED',
+              });
+            } catch (error) {
+              console.error('[SessionStore] Failed to persist session to sessionRepo:', error);
+              set({ sessionPersistenceStatus: 'ERROR' });
+            }
+          })();
         } catch (metricsError) {
           console.error('[SessionStore] Failed to aggregate metrics on SESSION_END:', metricsError);
+          set({ sessionPersistenceStatus: 'ERROR' });
         }
 
         void recorderForSession.stop().catch((error) => {

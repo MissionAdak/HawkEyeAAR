@@ -6,6 +6,8 @@ interface UnitViewProps {
   cohortStats: UnitCohortStats;
   selectedTraineeCallsign: string;
   onSelectTrainee: (callsign: string) => void;
+  datasetScope?: 'REAL' | 'DEMO';
+  onSelectScope?: (scope: 'REAL' | 'DEMO') => void;
 }
 
 export const UnitView: React.FC<UnitViewProps> = ({
@@ -13,6 +15,8 @@ export const UnitView: React.FC<UnitViewProps> = ({
   cohortStats,
   selectedTraineeCallsign,
   onSelectTrainee,
+  datasetScope = 'REAL',
+  onSelectScope,
 }) => {
   const getGradeBadge = (grade: string | null) => {
     switch (grade) {
@@ -107,10 +111,47 @@ export const UnitView: React.FC<UnitViewProps> = ({
               STANDARDIZED EVAL PACKS
             </span>
           </div>
-          <div className="text-[10px] text-text-dim">
-            Click operator callsign to view longitudinal trend
+          <div className="flex items-center gap-2">
+            {onSelectScope && (
+              <div className="flex items-center gap-1 border border-line p-0.5 bg-carbon-900" role="group" aria-label="Dataset scope">
+                <button
+                  type="button"
+                  data-testid="scope-operational-btn"
+                  onClick={() => onSelectScope('REAL')}
+                  className={`px-2 py-0.5 text-[9px] font-bold border transition-colors ${
+                    datasetScope === 'REAL'
+                      ? 'bg-phosphor text-carbon-950 border-phosphor'
+                      : 'text-text-dim border-transparent hover:text-text-main'
+                  }`}
+                >
+                  OPERATIONAL ROSTER
+                </button>
+                <button
+                  type="button"
+                  data-testid="scope-demo-btn"
+                  onClick={() => onSelectScope('DEMO')}
+                  className={`px-2 py-0.5 text-[9px] font-bold border transition-colors ${
+                    datasetScope === 'DEMO'
+                      ? 'bg-cyan text-carbon-950 border-cyan'
+                      : 'text-text-dim border-transparent hover:text-text-main'
+                  }`}
+                >
+                  DEMO BENCHMARK
+                </button>
+              </div>
+            )}
+            <div className="text-[10px] text-text-dim">
+              Click operator callsign to view longitudinal trend
+            </div>
           </div>
         </div>
+
+        {datasetScope === 'DEMO' && (
+          <div className="px-2 py-1 bg-carbon-900 border border-cyan/40 text-cyan text-[10px] flex items-center justify-between">
+            <span>SYNTHETIC DEMO BENCHMARK DATASET ACTIVE</span>
+            <span className="text-text-dim text-[9px]">ISOLATED FROM OPERATIONAL ROLL-UPS</span>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse" data-testid="unit-leaderboard-table">
@@ -135,15 +176,15 @@ export const UnitView: React.FC<UnitViewProps> = ({
               {summaries.length === 0 ? (
                 <tr>
                   <td colSpan={13} className="py-8 text-center text-text-dim text-[11px]">
-                    No unit data recorded yet. Complete sessions to generate leaderboard.
+                    No operational evaluation sessions recorded yet. Complete EVAL drills to generate unit readiness baseline.
                   </td>
                 </tr>
               ) : (
                 summaries.map((trainee, idx) => {
                   const isCurrent = trainee.callsign === selectedTraineeCallsign;
                   const hasEval = trainee.latestEvalScore !== null;
-                  const metSec = trainee.latestMetrics?.metMs
-                    ? `${(trainee.latestMetrics.metMs / 1000).toFixed(1)}s`
+                  const metSec = hasEval && trainee.latestEvalMetrics?.metMs
+                    ? `${(trainee.latestEvalMetrics.metMs / 1000).toFixed(1)}s`
                     : '—';
 
                   return (
@@ -211,11 +252,11 @@ export const UnitView: React.FC<UnitViewProps> = ({
                           : '—'}
                       </td>
 
-                      {/* D, C, G, R */}
-                      <td className="py-2 px-2.5 text-right text-text-dim">{trainee.latestMetrics?.dScore ?? '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{trainee.latestMetrics?.cScore ?? '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{trainee.latestMetrics?.econScore ?? '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{trainee.latestMetrics?.rScore ?? '—'}</td>
+                      {/* D, C, G, R: Rules.md R4.4 & Remediation C (Strictly from latest valid EVAL) */}
+                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.dScore ?? '—') : '—'}</td>
+                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.cScore ?? '—') : '—'}</td>
+                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.gScore ?? '—') : '—'}</td>
+                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.rScore ?? '—') : '—'}</td>
                       <td className="py-2 px-2.5 text-right text-text-dim">{metSec}</td>
 
                       {/* Drills Count */}
