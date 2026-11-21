@@ -6,6 +6,8 @@ import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
 import type { ApprovedSensorObservation } from '@/render3d/types';
 import { evaluateSensorObservation } from '@/sim/sensorObservation';
 import { useSessionStore } from '@/store/sessionStore';
+import { db } from '@/db/dexie';
+import { importSessionJson, stableJson, sha256 } from '@/db/aarTransfer';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -125,6 +127,11 @@ export interface DrishtiTestBridge {
   injectObservationOverride: (trackNo: string, obs: Partial<ApprovedSensorObservation> | null) => boolean;
   overrideTrackEstimate: (trackNo: string, estimate: TrackEstimateOverride | null) => boolean;
   clearOverrides: () => void;
+  getRecordedEvents: () => import('@/sim/types').SimEvent[];
+  testDexieImport: (payloadJson: string) => Promise<import('@/db/aarTransfer').AARImportResult>;
+  getDexieEventsCount: (sessionUid: string) => Promise<number>;
+  clearDexieEvents: (sessionUid: string) => Promise<void>;
+  createSignedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
 }
 
 declare global {
@@ -722,6 +729,39 @@ export function installDrishtiTestBridge(
             isCoasting?: boolean;
           }> }).entities,
         }));
+    },
+
+    getRecordedEvents(): import('@/sim/types').SimEvent[] {
+      return engine.events.slice();
+    },
+
+    async testDexieImport(payloadJson: string): Promise<import('@/db/aarTransfer').AARImportResult> {
+      const file = new File([payloadJson], 'test-session.json', { type: 'application/json' });
+      return await importSessionJson(file);
+    },
+
+    async getDexieEventsCount(sessionUid: string): Promise<number> {
+      if (typeof indexedDB === 'undefined') return 0;
+      return await db.events.where('sessionUid').equals(sessionUid).count();
+    },
+
+    async clearDexieEvents(sessionUid: string): Promise<void> {
+      if (typeof indexedDB === 'undefined') return;
+      await db.events.where('sessionUid').equals(sessionUid).delete();
+    },
+
+    async createSignedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {
+      const checksum = await sha256(stableJson({ sessionUid, events }));
+      const payload = {
+        format: 'drishti-aar-events',
+        version: 1,
+        sessionUid,
+        exportedAt: new Date().toISOString(),
+        eventCount: events.length,
+        events,
+        sha256: checksum,
+      };
+      return JSON.stringify(payload, null, 2);
     },
   };
 

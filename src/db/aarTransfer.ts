@@ -31,7 +31,7 @@ export interface AARImportResult {
   invalid: number;
 }
 
-function stableJson(value: unknown): string {
+export function stableJson(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }
@@ -48,7 +48,7 @@ function stableJson(value: unknown): string {
   ).join(',')}}`;
 }
 
-async function sha256(value: string): Promise<string> {
+export async function sha256(value: string): Promise<string> {
   if (!globalThis.crypto?.subtle) {
     throw new Error(
       'SHA-256 requires Web Crypto. Use HTTPS or localhost in a supported browser.',

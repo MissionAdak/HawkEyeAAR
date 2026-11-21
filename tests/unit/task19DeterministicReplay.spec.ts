@@ -239,7 +239,9 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       expect(res60Hz.engine.tickIndex).toBe(200);
       expect(res144Hz.engine.tickIndex).toBe(200);
 
-      // Verify that all entity positions match exactly across all display frame rates
+      // Verify that all entity positions match exactly across all display frame rates (3D invariant: x, y, z)
+      // Note: SimClock is the accumulator-based simulation time driver driving fixed 50 ms ticks.
+      // Display rendering (requestAnimationFrame) is decoupled from simulation physics progression.
       for (let i = 0; i < res60Hz.engine.curr.length; i++) {
         const e60 = res60Hz.engine.curr[i];
         const e30 = res30Hz.engine.curr[i];
@@ -247,8 +249,10 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
 
         expect(e30.pos.x).toBeCloseTo(e60.pos.x, 3);
         expect(e30.pos.y).toBeCloseTo(e60.pos.y, 3);
+        expect(e30.pos.z).toBeCloseTo(e60.pos.z, 3);
         expect(e144.pos.x).toBeCloseTo(e60.pos.x, 3);
         expect(e144.pos.y).toBeCloseTo(e60.pos.y, 3);
+        expect(e144.pos.z).toBeCloseTo(e60.pos.z, 3);
       }
     });
 
@@ -256,10 +260,11 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       const clock = new SimClock();
       clock.advance(0); // Initialize
 
-      // Simulate a 1000 ms stutter (e.g. background tab or garbage collection)
+      // Simulate a 1000 ms stutter (e.g. background tab or garbage collection hitch)
       const { ticksToRun } = clock.advance(1000);
 
-      // With MAX_FRAME_MS = 250, delta is clamped to 250 ms -> exactly 5 ticks of 50 ms
+      // With MAX_FRAME_MS = 250, any delta >= 250 ms is strictly clamped to 250 ms -> exactly 5 ticks of 50 ms.
+      // This bounds execution to prevent spiral of death during severe CPU hitches.
       expect(MAX_FRAME_MS).toBe(250);
       expect(ticksToRun).toBe(5);
     });
@@ -313,7 +318,10 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       const t01At10s = replayAt10s.tracks.find((t) => t.trackNo === 'T-01');
       expect(t01At10s).toBeDefined();
       expect(t01At10s?.trueClass).toBe('HOSTILE_ATTACK');
-      expect(t01At10s?.truthPos.x).toBeDefined();
+      // Assert exact coordinates at T+10s (DEMO-1 threat H-1 flies from (2836, 2216, 120) toward (0, 0, 20) at 40 m/s)
+      expect(t01At10s?.truthPos.x).toBe(2521);
+      expect(t01At10s?.truthPos.y).toBe(1970);
+      expect(t01At10s?.truthPos.z).toBe(120);
 
       // Convert to 2D ReplayCanvas entities
       const replayEntities10s = convertToReplayEntities(replayAt10s.tracks);
@@ -323,11 +331,19 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       const replayAt50s = reconstructAarReplayState(storedEvents, 50000, spec);
       const t01At50s = replayAt50s.tracks.find((t) => t.trackNo === 'T-01');
       expect(t01At50s).toBeDefined();
+      expect(t01At50s?.truthPos.x).toBe(1260);
+      expect(t01At50s?.truthPos.y).toBe(985);
+      expect(t01At50s?.truthPos.z).toBe(120);
 
-      // Target has moved between 10s and 50s
+      // Note on inward trajectory: T-01 moves toward protected asset at (0, 0, 20).
+      // At T+10s: range to asset = hypot(2521, 1970) = 3199 m.
+      // At T+50s: range to asset = hypot(1260, 985) = 1599 m.
+      // Range monotonically decreases as the threat approaches the asset (dist50s < dist10s).
       const dist10s = Math.hypot(t01At10s!.truthPos.x, t01At10s!.truthPos.y);
       const dist50s = Math.hypot(t01At50s!.truthPos.x, t01At50s!.truthPos.y);
       expect(dist50s).toBeLessThan(dist10s);
+      expect(dist10s).toBeCloseTo(3199.3, 0);
+      expect(dist50s).toBeCloseTo(1599.4, 0);
 
       // 3. Backward navigation: seeking backward to 10s reproduces exact same coordinates
       const replayRewind10s = reconstructAarReplayState(storedEvents, 10000, spec);

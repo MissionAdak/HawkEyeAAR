@@ -19,7 +19,7 @@ import {
   addFallbackEventsForTest,
 } from '@/db/recorder';
 import type { StoredSimEvent } from '@/db/dexie';
-import type { TrackEntity } from '@/sim/types';
+import type { TrackEntity, ScenarioSpec, SimEvent } from '@/sim/types';
 import type { OperatorFeedback } from '@/sim/operatorFeedback';
 
 function stableJson(value: unknown): string {
@@ -46,57 +46,72 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
   });
 
   describe('1. Sensor Observation & Track Estimation Lifecycle', () => {
-    it('enforces 2-in-3 radar detection rule before initiating firm track', () => {
+    it('enforces 2-in-3 radar detection rule before initiating firm track through engine.step()', () => {
       const engine = new SimEngine();
       engine.load(spec);
 
-      // Grab first active target entity
       const target = engine.curr[0];
       expect(target).toBeDefined();
+      expect(target.step).toBe('UNDETECTED');
+      // On scenario load, initial sweep at T=0 runs. Target at 3600m has low Pd -> Miss occurs
+      expect(target.hitHistory).toEqual([false]);
+      expect(target.tTrk).toBeNull();
+      expect(target.tVis).toBeNull();
 
-      // Reset hit history for controlled testing of initiation pipeline
-      target.hitHistory = [];
-      target.step = 'UNDETECTED';
-      target.tTrk = null;
-      target.tVis = null;
-
-      // Sweep 1: 1st hit -> Transitions to FIND, but tTrk remains null (no firm track)
-      target.hitHistory.push(true);
-      if (target.step === 'UNDETECTED') {
-        target.step = 'FIND';
-        target.tVis = 2000;
+      // Sweep 1: Ticks 1..40 (t = 2000 ms). Radar is OK -> 1st hit occurs
+      engine.baselineSensorHealth.RADAR = 'OK';
+      for (let t = 0; t < 40; t++) {
+        engine.step();
       }
       expect(target.step).toBe('FIND');
-      expect(target.hitHistory.filter(Boolean).length).toBe(1);
-      expect(target.tTrk).toBeNull(); // 1 hit in 3 is insufficient for track initiation
+      expect(target.tVis).toBe(2000);
+      expect(target.hitHistory).toEqual([false, true]);
+      expect(target.tTrk).toBeNull(); // 1 hit in window is insufficient for track initiation
+      expect(engine.events.some((e) => e.type === 'DETECT' && e.trackNo === target.trackNo)).toBe(true);
+      expect(engine.events.some((e) => e.type === 'TRACK_INIT' && e.trackNo === target.trackNo)).toBe(false);
 
-      // Sweep 2: Miss -> hitHistory = [true, false]. Still 1 hit in 3
-      target.hitHistory.push(false);
-      expect(target.hitHistory.filter(Boolean).length).toBe(1);
-      expect(target.tTrk).toBeNull();
+      // Sweep 2: Ticks 41..80 (t = 4000 ms). Suppress radar via baselineSensorHealth -> Miss occurs
+      engine.baselineSensorHealth.RADAR = 'OUT';
+      for (let t = 0; t < 40; t++) {
+        engine.step();
+      }
+      expect(target.hitHistory).toEqual([false, true, false]);
+      expect(target.tTrk).toBeNull(); // Still only 1 hit in window
+      expect(engine.events.some((e) => e.type === 'TRACK_INIT' && e.trackNo === target.trackNo)).toBe(false);
 
-      // Sweep 3: 2nd hit within 3 sweeps -> hitHistory = [true, false, true]. Hits = 2 >= 2!
-      target.hitHistory.push(true);
+      // Sweep 3: Ticks 81..120 (t = 6000 ms). Restore radar OK -> 2nd hit in 3 sweeps!
+      engine.baselineSensorHealth.RADAR = 'OK';
+      for (let t = 0; t < 40; t++) {
+        engine.step();
+      }
+      // Oldest miss at T=0 shifted out, leaving [true, false, true]
+      expect(target.hitHistory).toEqual([true, false, true]);
       const hitsIn3 = target.hitHistory.filter(Boolean).length;
       expect(hitsIn3).toBe(2);
-
-      // Track initiates
-      if (hitsIn3 >= 2 && target.tTrk === null) {
-        target.tTrk = 6000;
-      }
       expect(target.tTrk).toBe(6000);
       expect(target.step).toBe('FIND');
+      expect(engine.events.some((e) => e.type === 'TRACK_INIT' && e.trackNo === target.trackNo)).toBe(true);
 
-      // Test window expiration: if hits do not accumulate 2-in-3, old hits expire
-      const expiredTarget = { ...target, hitHistory: [true, false, false], tTrk: null };
-      expect(expiredTarget.hitHistory.filter(Boolean).length).toBe(1);
+      // Test window expiration on fresh engine: 1 hit followed by 3 misses -> oldest hit shifted out
+      const engineExpired = new SimEngine();
+      engineExpired.load(spec);
+      const targetExp = engineExpired.curr[0];
 
-      // Fourth sweep arrives with a miss -> oldest hit is shifted out
-      expiredTarget.hitHistory.push(false);
-      if (expiredTarget.hitHistory.length > 3) expiredTarget.hitHistory.shift();
-      expect(expiredTarget.hitHistory).toEqual([false, false, false]);
-      expect(expiredTarget.hitHistory.filter(Boolean).length).toBe(0);
-      expect(expiredTarget.tTrk).toBeNull();
+      // Sweep 0: Miss at T=0
+      expect(targetExp.hitHistory).toEqual([false]);
+
+      // Sweep 1 (t = 2000 ms): Hit
+      engineExpired.baselineSensorHealth.RADAR = 'OK';
+      for (let t = 0; t < 40; t++) engineExpired.step();
+      expect(targetExp.hitHistory).toEqual([false, true]);
+
+      // Sweeps 2, 3, 4 (t = 4000, 6000, 8000 ms): 3 consecutive misses
+      engineExpired.baselineSensorHealth.RADAR = 'OUT';
+      for (let t = 0; t < 40 * 3; t++) engineExpired.step();
+      expect(targetExp.hitHistory).toEqual([false, false, false]);
+      expect(targetExp.hitHistory.filter(Boolean).length).toBe(0);
+      expect(targetExp.tTrk).toBeNull();
+      expect(engineExpired.events.some((e) => e.type === 'TRACK_INIT' && e.trackNo === targetExp.trackNo)).toBe(false);
     });
 
     it('advances Alpha-Beta track estimates according to canonical filtering equations', () => {
@@ -223,6 +238,69 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       // Masked targets have aEnv = 0 -> zero detection probability
       const maskedPd = calculateRadarPd(0.01, Math.hypot(maskedPos.x, maskedPos.y), 0.0);
       expect(maskedPd.pd).toBe(0.0);
+    });
+
+    it('executes integrated line-of-sight masking -> radar suppression -> tracker coasting -> reacquisition pipeline', () => {
+      const initR = 3200;
+      const initCoord = initR / Math.SQRT2;
+      const maskingSpec: ScenarioSpec = {
+        ...spec,
+        durationMs: 120000,
+        threats: [
+          {
+            id: 'T-MASK-1',
+            droneType: 'FPV_ATTACK',
+            trueClass: 'HOSTILE_ATTACK',
+            spawnTMs: 0,
+            waypoints: [
+              { x: Math.round(initCoord), y: Math.round(initCoord), z: 30 },
+              { x: 0, y: 0, z: 30 },
+            ],
+            speedMps: 50,
+            profile: 'TERRAIN_HUG',
+            rcsM2: 0.05,
+            valueInr: 100000,
+            emitsRf: true,
+            remoteId: false,
+            iff: false,
+          },
+        ],
+        decoys: [],
+        chaos: [],
+      };
+
+      const engine = new SimEngine();
+      engine.load(maskingSpec);
+
+      // Phase 1: Unmasked approach (t = 0 to 4s = 80 ticks).
+      // Advance to t = 4s (tick 80). Track should be detected and initiated while in clear line of sight.
+      for (let t = 0; t < 80; t++) engine.step();
+      const t01 = engine.curr[0];
+      expect(t01.masked).toBe(false);
+      expect(t01.tTrk).toBe(2000);
+      const est4s = engine.tracker.getTrackEstimate(t01.trackNo!);
+      expect(est4s).toBeDefined();
+      expect(est4s!.isCoasting).toBe(false);
+      const uncert4s = est4s!.uncertaintyM;
+
+      // Phase 2: Target enters building shadow (t = 4s to 24s, tick 80 to 480).
+      // Advance through shadow. Masking event must fire and tracker must coast.
+      for (let t = 80; t < 480; t++) engine.step();
+      expect(t01.masked).toBe(true);
+      expect(engine.events.some((e) => e.type === 'MASKED' && e.trackNo === t01.trackNo)).toBe(true);
+      const est24s = engine.tracker.getTrackEstimate(t01.trackNo!);
+      expect(est24s!.isCoasting).toBe(true);
+      const uncert24s = est24s!.uncertaintyM;
+      expect(uncert24s).toBeGreaterThan(uncert4s);
+
+      // Phase 3: Target emerges in front of building (t = 24s to 34s, tick 480 to 680).
+      // Advance until target unmasks and radar sweep reacquires track.
+      for (let t = 480; t < 680; t++) engine.step();
+      expect(t01.masked).toBe(false);
+      expect(engine.events.some((e) => e.type === 'REACQUIRE' && e.trackNo === t01.trackNo)).toBe(true);
+      const est34s = engine.tracker.getTrackEstimate(t01.trackNo!);
+      expect(est34s!.isCoasting).toBe(false);
+      expect(est34s!.uncertaintyM).toBeLessThan(uncert24s);
     });
 
     it('evaluates dynamic sensor degradation and recovery during environmental chaos through engine lifecycle', () => {
@@ -436,7 +514,7 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       expect(getGrade(0)).toBe('NEEDS_RETRAINING');
     });
 
-    it('independently computes score from mathematical formulas without calling aggregateAARMetrics', () => {
+    it('independently computes score from mathematical formulas and asserts strict match with aggregateAARMetrics', () => {
       // Controlled training parameters:
       // Track appearance at tTrk = 2000 ms, tPnr = 50000 ms (budget = 48000 ms)
       // Trainee designates at tDesig = 8000 ms (latency = 6000 ms)
@@ -448,11 +526,11 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       const matrix = CONFIG.classificationMatrix as Record<string, Record<string, number>>;
       const expectedC = matrix.HOSTILE_ATTACK.HOSTILE_ATTACK; // 100
 
-      // Engagement: RF_SOFTKILL (cost 1000) on 100,000 INR target
-      const cer = 1000 / 100000; // 0.01 <= 1.0 -> econScore = 100
-      expect(cer).toBe(0.01);
+      // Engagement: RF_SOFTKILL (cost 100 INR in CONFIG) on 100,000 INR target
+      const cer = 100 / 100000; // 0.001 <= 1.0 -> econScore = 100
+      expect(cer).toBe(0.001);
       const expectedEcon = 100;
-      // Laser envelope [100, 3000], R_opt = 1550m, fired at 1550m -> deviation = 0 -> timeScore = 100
+      // RF_SOFTKILL envelope [200, 2000], R_opt = 1100m, fired at 1100m -> deviation = 0 -> timeScore = 100
       const expectedTime = 100;
       // Neutralised before PNR -> G = 0.6 * econ + 0.4 * time = 100
       const expectedG = 0.6 * expectedEcon + 0.4 * expectedTime; // 100
@@ -472,18 +550,116 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       // Verify mathematical derivation: 0.25(87.5) + 0.35(100) + 0.25(100) + 0.15(100) = 21.875 + 35 + 25 + 15 = 96.875 -> 97
       expect(expectedGlobalScore).toBe(97);
       expect(getGrade(expectedGlobalScore)).toBe('PROFICIENT_IN_SIMULATION');
+
+      // Now pass identical deterministic event history fixture to production aggregateAARMetrics
+      const fixtureSpec: ScenarioSpec = {
+        ...spec,
+        durationMs: 120000,
+        threats: [
+          {
+            id: 'H-01',
+            droneType: 'FPV_ATTACK',
+            trueClass: 'HOSTILE_ATTACK',
+            spawnTMs: 2000,
+            waypoints: [{ x: 2000, y: 2000, z: 120 }, { x: 0, y: 0, z: 20 }],
+            speedMps: 40,
+            profile: 'DIRECT',
+            rcsM2: 0.01,
+            valueInr: 100000,
+            emitsRf: true,
+            remoteId: false,
+            iff: false,
+          },
+        ],
+        decoys: [],
+        chaos: [],
+      };
+
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { scenarioId: 'TEST-SCORING', seed: 42, mode: 'TRAIN' } },
+        { seq: 2, tMs: 2000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK', valueInr: 100000 } },
+        { seq: 3, tMs: 2000, type: 'DETECT', trackNo: 'T-01', entityId: 'H-01', payload: { rangeM: 2800 } },
+        { seq: 4, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', entityId: 'H-01', payload: { rangeM: 2800 } },
+        { seq: 5, tMs: 8000, type: 'DESIGNATE', trackNo: 'T-01', entityId: 'H-01', payload: { via: 'KEY' } },
+        { seq: 6, tMs: 10000, type: 'CLASSIFY', trackNo: 'T-01', entityId: 'H-01', payload: { label: 'HOSTILE_ATTACK' } },
+        { seq: 7, tMs: 15000, type: 'ENGAGE', trackNo: 'T-01', entityId: 'H-01', payload: { effector: 'RF_SOFTKILL', rangeM: 1100, cer: 0.001, roeGate: { classifiedOk: true, zoneOk: true } } },
+        { seq: 8, tMs: 15500, type: 'ENGAGE_RESULT', trackNo: 'T-01', entityId: 'H-01', payload: { killed: true } },
+        { seq: 9, tMs: 50000, type: 'LEAK', trackNo: 'T-01', entityId: 'H-01', payload: { rangeM: 500 } },
+        { seq: 10, tMs: 50000, type: 'SESSION_END', payload: { durationMs: 50000 } },
+      ];
+
+      const metrics = aggregateAARMetrics(events, fixtureSpec);
+
+      // Verify production metrics match independent calculation
+      expect(Math.round(metrics.score)).toBe(expectedGlobalScore); // 97
+      expect(metrics.score).toBeCloseTo(96.88, 1);
+      expect(metrics.grade).toBe('PROFICIENT_IN_SIMULATION');
+      expect(metrics.dScore).toBe(Math.round(expectedD)); // 88
+      expect(metrics.cScore).toBe(expectedC); // 100
+      expect(metrics.econScore).toBe(expectedEcon); // 100
+      expect(metrics.rScore).toBe(expectedR); // 100
+      expect(metrics.confusion[0][1]).toBe(1); // True-positive for HOSTILE_ATTACK in Column 1 (HA)
     });
 
-    it('evaluates confusion matrix structure with 6 truth rows and 8 prediction columns', () => {
-      const engine = new SimEngine();
-      engine.load(spec);
-      engine.step();
+    it('evaluates confusion matrix structure (6x8) with non-zero representative true-positive and unclassified cells', () => {
+      // Scenario with 1 Hostile target and 1 Civil UAS decoy
+      const matrixSpec: ScenarioSpec = {
+        ...spec,
+        threats: [
+          {
+            id: 'H-01',
+            droneType: 'FPV_ATTACK',
+            trueClass: 'HOSTILE_ATTACK',
+            spawnTMs: 0,
+            waypoints: [{ x: 2000, y: 2000, z: 120 }],
+            speedMps: 40,
+            profile: 'DIRECT',
+            rcsM2: 0.01,
+            valueInr: 100000,
+            emitsRf: true,
+            remoteId: false,
+            iff: false,
+          },
+        ],
+        decoys: [
+          {
+            id: 'C-01',
+            droneType: 'CIVIL_UAS',
+            trueClass: 'CIVIL_UAS',
+            spawnTMs: 0,
+            waypoints: [{ x: 1500, y: 1500, z: 50 }],
+            speedMps: 10,
+            profile: 'LOITER',
+            rcsM2: 0.02,
+            valueInr: 50000,
+            emitsRf: true,
+            remoteId: true,
+            iff: false,
+          },
+        ],
+        chaos: [],
+      };
 
-      const metrics = aggregateAARMetrics(engine.events, spec);
+      // Events: H-01 is classified as HOSTILE_ATTACK, C-01 is left unclassified
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { scenarioId: 'CONFUSION-TEST', seed: 42, mode: 'TRAIN' } },
+        { seq: 2, tMs: 2000, type: 'SPAWN', trackNo: 'T-01', entityId: 'H-01', payload: { trueClass: 'HOSTILE_ATTACK' } },
+        { seq: 3, tMs: 2000, type: 'SPAWN', trackNo: 'T-02', entityId: 'C-01', payload: { trueClass: 'CIVIL_UAS' } },
+        { seq: 4, tMs: 4000, type: 'CLASSIFY', trackNo: 'T-01', entityId: 'H-01', payload: { label: 'HOSTILE_ATTACK' } },
+        { seq: 5, tMs: 10000, type: 'SESSION_END', payload: { durationMs: 10000 } },
+      ];
+
+      const metrics = aggregateAARMetrics(events, matrixSpec);
       expect(metrics.confusion.length).toBe(6); // 6 canonical truth rows
       for (const row of metrics.confusion) {
         expect(row.length).toBe(8); // 7 canonical classes + NONE column (column 7)
       }
+
+      // True-positive for HOSTILE_ATTACK (row 0, col 1: HA in PRED_COLUMNS)
+      expect(metrics.confusion[0][1]).toBe(1);
+
+      // Unclassified CIVIL_UAS falls into column 7 (NONE) for row 3 (CIVIL_UAS)
+      expect(metrics.confusion[3][7]).toBe(1);
     });
   });
 

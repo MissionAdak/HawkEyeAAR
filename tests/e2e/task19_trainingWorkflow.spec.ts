@@ -73,17 +73,36 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     await expect(trackRow).toBeVisible({ timeout: 5000 });
     await trackRow.click();
 
-    // 6. Execute Operator Lifecycle: Designate -> Classify -> Arm Effector -> Fire
-    // Designate via Spacebar
-    await page.keyboard.press('Space');
+    const selectedTrackNo = await page.evaluate(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.getTrackList()[0]?.trackNo ?? 'T-01';
+    });
 
-    // Classify via button or key
+    // 6. Execute Operator Lifecycle: Designate -> Classify -> Arm Effector -> Fire
+    // Designate via Spacebar and assert actual emitted DESIGNATE event
+    await page.keyboard.press('Space');
+    await expect.poll(async () => {
+      const events = await page.evaluate(() => {
+        const win = window as unknown as WindowWithDrishti;
+        return win.__DRISHTI_TEST__?.getRecordedEvents() ?? [];
+      });
+      return events.some((e) => e.type === 'DESIGNATE' && e.trackNo === selectedTrackNo);
+    }, { timeout: 5000 }).toBe(true);
+
+    // Classify via button or key and assert actual emitted CLASSIFY event
     const classifyBtn = page.getByRole('button', { name: /⚡ CLASSIFY HOSTILE|\[HA\]/i }).first();
     if (await classifyBtn.isVisible()) {
       await classifyBtn.click();
     } else {
       await page.keyboard.press('c');
     }
+    await expect.poll(async () => {
+      const events = await page.evaluate(() => {
+        const win = window as unknown as WindowWithDrishti;
+        return win.__DRISHTI_TEST__?.getRecordedEvents() ?? [];
+      });
+      return events.some((e) => e.type === 'CLASSIFY' && e.trackNo === selectedTrackNo);
+    }, { timeout: 5000 }).toBe(true);
 
     // Arm Effector (RF Soft-Kill)
     const rfSoftkillBtn = page.locator('button').filter({ hasText: /RF Soft-Kill/i }).first();
@@ -91,8 +110,15 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       await rfSoftkillBtn.click();
     }
 
-    // Fire via 'f' key
+    // Fire via 'f' key and assert actual emitted ENGAGE or RELEASE_BLOCKED event
     await page.keyboard.press('f');
+    await expect.poll(async () => {
+      const events = await page.evaluate(() => {
+        const win = window as unknown as WindowWithDrishti;
+        return win.__DRISHTI_TEST__?.getRecordedEvents() ?? [];
+      });
+      return events.some((e) => (e.type === 'ENGAGE' || e.type === 'RELEASE_BLOCKED') && e.trackNo === selectedTrackNo);
+    }, { timeout: 5000 }).toBe(true);
 
     // 7. Fast-forward to session completion via test bridge
     const advanceResult = await page.evaluate(() => {
@@ -127,25 +153,24 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     await replayTab.click();
     await expect(aarModal.getByText(/SYNCHRONIZED AAR TIMELINE REPLAY/i)).toBeVisible();
 
-    // Interact with timeline scrubber or jump button
-    const timelineJumpBtn = aarModal.locator('button').filter({ hasText: /T\+/ }).first();
-    if (await timelineJumpBtn.isVisible()) {
-      await timelineJumpBtn.click();
-    } else {
-      const slider = aarModal.locator('input[type="range"]');
-      if (await slider.isVisible()) {
-        await slider.evaluate((el: HTMLInputElement) => {
-          el.value = '5000';
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-      }
-    }
+    // Verify slider element is present and visible
+    const slider = aarModal.locator('input[type="range"]');
+    await expect(slider).toBeVisible({ timeout: 5000 });
+
+    // 9a. Seek forward to 20,000 ms and assert clock and active tracks update
+    await slider.fill('20000');
+    await expect(aarModal.getByText(/ACTIVE TRACKS AT T\+00:20\.000/i)).toBeVisible({ timeout: 5000 });
+    await expect(aarModal.locator('.font-clock').last()).toContainText('00:20.000');
+
+    // 9b. Seek backward to 5,000 ms and assert clock and active tracks update
+    await slider.fill('5000');
+    await expect(aarModal.getByText(/ACTIVE TRACKS AT T\+00:05\.000/i)).toBeVisible({ timeout: 5000 });
+    await expect(aarModal.locator('.font-clock').last()).toContainText('00:05.000');
 
     // Capture screenshot of AAR modal in Replay view
     await saveShot(page, 'task19_01_training_workflow_aar.png');
 
-    // 10. Verify JSON Export file download
+    // 10. Verify JSON Export file download with hardened assertions
     const exportJsonBtn = aarModal.getByTestId('aar-export-json-btn');
     await expect(exportJsonBtn).toBeVisible();
     const [jsonDownload] = await Promise.all([
@@ -154,19 +179,33 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     ]);
     expect(jsonDownload.suggestedFilename()).toMatch(/^aar-.*\.json$/);
     const jsonStream = await jsonDownload.createReadStream();
-    if (jsonStream) {
-      const jsonChunks: Buffer[] = [];
-      for await (const chunk of jsonStream) {
-        jsonChunks.push(Buffer.from(chunk));
-      }
-      const jsonContent = Buffer.concat(jsonChunks).toString('utf-8');
-      const parsed = JSON.parse(jsonContent);
-      expect(parsed.sessionUid).toBeTruthy();
-      expect(Array.isArray(parsed.events)).toBe(true);
-      expect(parsed.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(jsonStream).not.toBeNull();
+    const jsonChunks: Buffer[] = [];
+    for await (const chunk of jsonStream!) {
+      jsonChunks.push(Buffer.from(chunk));
+    }
+    const jsonContent = Buffer.concat(jsonChunks).toString('utf-8');
+    const parsed = JSON.parse(jsonContent);
+    expect(parsed.sessionUid).toBeTruthy();
+    expect(Array.isArray(parsed.events)).toBe(true);
+    expect(parsed.events.length).toBeGreaterThan(0);
+    expect(parsed.eventCount).toBe(parsed.events.length);
+    expect(parsed.sha256).toMatch(/^[a-f0-9]{64}$/);
+
+    // Validate sequential sequence numbers, valid timestamps, and known event types
+    let expectedSeq = 1;
+    let lastTMs = -1;
+    for (const ev of parsed.events) {
+      expect(typeof ev.seq).toBe('number');
+      expect(ev.seq).toBe(expectedSeq++);
+      expect(typeof ev.tMs).toBe('number');
+      expect(ev.tMs).toBeGreaterThanOrEqual(lastTMs);
+      lastTMs = ev.tMs;
+      expect(typeof ev.type).toBe('string');
+      expect(ev.type.length).toBeGreaterThan(0);
     }
 
-    // 11. Verify CSV Export file download
+    // 11. Verify CSV Export file download with hardened assertions
     const exportCsvBtn = aarModal.getByTestId('aar-export-csv-btn');
     await expect(exportCsvBtn).toBeVisible();
     const [csvDownload] = await Promise.all([
@@ -175,13 +214,18 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     ]);
     expect(csvDownload.suggestedFilename()).toMatch(/^aar-.*\.csv$/);
     const csvStream = await csvDownload.createReadStream();
-    if (csvStream) {
-      const csvChunks: Buffer[] = [];
-      for await (const chunk of csvStream) {
-        csvChunks.push(Buffer.from(chunk));
-      }
-      const csvContent = Buffer.concat(csvChunks).toString('utf-8');
-      expect(csvContent).toMatch(/sessionUid.*seq.*tMs.*type/i);
+    expect(csvStream).not.toBeNull();
+    const csvChunks: Buffer[] = [];
+    for await (const chunk of csvStream!) {
+      csvChunks.push(Buffer.from(chunk));
+    }
+    const csvContent = Buffer.concat(csvChunks).toString('utf-8');
+    const lines = csvContent.trim().split('\n').filter((l: string) => l.trim().length > 0);
+    expect(lines[0]).toMatch(/sessionUid.*seq.*tMs.*type/i);
+    const dataLines = lines.slice(1);
+    expect(dataLines.length).toBe(parsed.eventCount);
+    for (const row of dataLines) {
+      expect(row).toContain(parsed.sessionUid);
     }
 
     // 12. Return to Mission Briefing via [B] MISSION BRIEFING button
@@ -244,5 +288,135 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       const win = window as unknown as WindowWithDrishti;
       return (win.__DRISHTI_TEST__?.getTrackList().length ?? 0) > 0;
     }, undefined, { timeout: 10000 });
+  });
+
+  test('03. Real Dexie IndexedDB Import Path Validation', async ({ page }) => {
+    await page.goto('http://127.0.0.1:4173/HawkEyeAAR/', { waitUntil: 'networkidle' });
+
+    // Wait for test bridge
+    await page.waitForFunction(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return !!win.__DRISHTI_TEST__;
+    }, undefined, { timeout: 10000 });
+
+    const testUid = `dexie-e2e-import-${Date.now()}`;
+    const validEvents = [
+      { seq: 1, tMs: 0, type: 'SIM_START', payload: { scenarioId: 'DEMO-1', seed: 42, mode: 'TRAIN' } },
+      { seq: 2, tMs: 2000, type: 'DETECT', trackNo: 'T-01', payload: { rangeM: 2500 } },
+      { seq: 3, tMs: 4000, type: 'DESIGNATE', trackNo: 'T-01', payload: { via: 'KEY' } },
+      { seq: 4, tMs: 5000, type: 'CLASSIFY', trackNo: 'T-01', payload: { label: 'HOSTILE_ATTACK' } },
+      { seq: 5, tMs: 10000, type: 'SESSION_END', payload: { durationMs: 10000 } },
+    ];
+
+    // 1. Create properly signed export payload
+    const validPayloadJson = await page.evaluate(async ({ uid, evs }) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
+    }, { uid: testUid, evs: validEvents });
+
+    // Ensure clean start in Dexie
+    await page.evaluate(async (uid) => {
+      const win = window as unknown as WindowWithDrishti;
+      await win.__DRISHTI_TEST__!.clearDexieEvents(uid);
+    }, testUid);
+
+    // 2. Initial valid import into Dexie
+    const importRes1 = await page.evaluate(async (json) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.testDexieImport(json);
+    }, validPayloadJson);
+
+    expect(importRes1.imported).toBe(validEvents.length);
+    expect(importRes1.duplicates).toBe(0);
+
+    const dexieCount1 = await page.evaluate(async (uid) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.getDexieEventsCount(uid);
+    }, testUid);
+    expect(dexieCount1).toBe(validEvents.length);
+
+    // 3. Re-import identical payload -> clean duplicate detection
+    const importRes2 = await page.evaluate(async (json) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.testDexieImport(json);
+    }, validPayloadJson);
+
+    expect(importRes2.imported).toBe(0);
+    expect(importRes2.duplicates).toBe(validEvents.length);
+
+    // 4. Conflicting sequence rejection
+    const conflictEvents = [
+      { seq: 1, tMs: 0, type: 'SIM_START', payload: { scenarioId: 'CONFLICTING-SCENARIO', seed: 999, mode: 'TRAIN' } },
+    ];
+    const conflictPayloadJson = await page.evaluate(async ({ uid, evs }) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
+    }, { uid: testUid, evs: conflictEvents });
+
+    const conflictError = await page.evaluate(async (json) => {
+      const win = window as unknown as WindowWithDrishti;
+      try {
+        await win.__DRISHTI_TEST__!.testDexieImport(json);
+        return null;
+      } catch (err: any) {
+        return err.message;
+      }
+    }, conflictPayloadJson);
+
+    expect(conflictError).toMatch(/Conflicting data for event sequence 1/i);
+
+    // 5. Tampered checksum rejection
+    const parsedObj = JSON.parse(validPayloadJson);
+    parsedObj.sha256 = '0000000000000000000000000000000000000000000000000000000000000000';
+    const tamperedPayloadJson = JSON.stringify(parsedObj);
+
+    const tamperError = await page.evaluate(async (json) => {
+      const win = window as unknown as WindowWithDrishti;
+      try {
+        await win.__DRISHTI_TEST__!.testDexieImport(json);
+        return null;
+      } catch (err: any) {
+        return err.message;
+      }
+    }, tamperedPayloadJson);
+
+    expect(tamperError).toMatch(/SHA-256 verification failed/i);
+
+    // 6. Duplicate sequence in file rejection
+    const dupSeqEvents = [
+      { seq: 1, tMs: 0, type: 'SIM_START', payload: { scenarioId: 'DEMO-1', seed: 42, mode: 'TRAIN' } },
+      { seq: 1, tMs: 100, type: 'DETECT', trackNo: 'T-01', payload: { rangeM: 2500 } },
+    ];
+    const dupSeqUid = `${testUid}-dup-seq`;
+    const dupSeqPayloadJson = await page.evaluate(async ({ uid, evs }) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
+    }, { uid: dupSeqUid, evs: dupSeqEvents });
+
+    const dupSeqError = await page.evaluate(async (json) => {
+      const win = window as unknown as WindowWithDrishti;
+      try {
+        await win.__DRISHTI_TEST__!.testDexieImport(json);
+        return null;
+      } catch (err: any) {
+        return err.message;
+      }
+    }, dupSeqPayloadJson);
+
+    expect(dupSeqError).toMatch(/duplicate event sequence numbers/i);
+
+    // 7. Verify transaction atomicity (failed import wrote 0 records for dupSeqUid)
+    const dupSeqDexieCount = await page.evaluate(async (uid) => {
+      const win = window as unknown as WindowWithDrishti;
+      return await win.__DRISHTI_TEST__!.getDexieEventsCount(uid);
+    }, dupSeqUid);
+    expect(dupSeqDexieCount).toBe(0);
+
+    // 8. Cleanup test sessions from Dexie
+    await page.evaluate(async ({ uid1, uid2 }) => {
+      const win = window as unknown as WindowWithDrishti;
+      await win.__DRISHTI_TEST__!.clearDexieEvents(uid1);
+      await win.__DRISHTI_TEST__!.clearDexieEvents(uid2);
+    }, { uid1: testUid, uid2: dupSeqUid });
   });
 });
