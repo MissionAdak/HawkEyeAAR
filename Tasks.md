@@ -704,6 +704,15 @@ Files: `src/ui/HotWash.tsx`, `tests/unit/task20CrossTaskIntegration.spec.ts`, `M
 - [x] Section 7 (UI Metric Display Hardening): Updated `src/ui/HotWash.tsx` scorecard breakdown strip ($D, C, G, R$) to use nullish coalescing `metrics.gScore ?? '—'` ensuring missing historical metrics render `'—'` rather than blank or zero.
 - [x] Final Regression Verification Gate: `tsc --noEmit` clean (0 errors), ESLint clean (0 errors, 0 warnings), 47 Vitest test files (631 unit/integration tests passing 100%), production and E2E builds clean, full Playwright E2E suite (53 tests passing across all 10 suites). Protected deployment branch `gh-pages` preserved untouched at `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`.
 
+### TASK-20-A5R — Screenshot Evidence Provenance & Published Commit-Scope Reconciliation · P0 · B/D · 1.0 h
+Files: `reports/screenshots/`, `MEMORY.md`, `Tasks.md`
+- [x] Baseline Inspection & Scope Identification: Verified Git publication discrepancy where commit `b7869c7` contained 39 modified PNG screenshots in addition to the 4 canonical implementation files. Verified all 39 screenshot paths across `task17_2/`, `task17_3/`, `task17_4/`, `task17_5/`, `task18/`, `task19/`, and `task20/`.
+- [x] Provenance & Root Cause Determination: Proved that all 39 screenshot modifications were generated during the execution of `npx playwright test` by test scripts writing directly to `reports/screenshots/`. Changes consisted solely of dynamic runtime variations (rotating radar PPI sweep beam angle, simulation clock advance, and wall-clock timestamps in session table rows). Confirmed that 0 of the 39 screenshots represented intentional product evidence updates for TASK 20-A5.
+- [x] Duplicate Asset Identification: Identified 11 duplicate pairs (22 files) between `reports/screenshots/task17_4/` and `reports/screenshots/task17_5/` produced by `fs.copyFileSync` in `task17_3_sensorObservation.spec.ts`.
+- [x] Evidence Restoration & Scope Reconciliation: Restored all 39 unintentional modifications to their exact bit-for-bit parent baseline (`94d55ba`), preserving historical evidence provenance and isolating the published repository changes against `94d55ba` strictly to the 4 canonical files (`MEMORY.md`, `Tasks.md`, `src/ui/HotWash.tsx`, and `tests/unit/task20CrossTaskIntegration.spec.ts`).
+- [x] Regression & Release Verification Gate: All 47 Vitest test suites (631 unit/integration tests) pass 100%. TypeScript typecheck and ESLint clean (0 errors, 0 warnings). Production deployment branch `gh-pages` preserved strictly untouched at `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`.
+
+
 
 
 
