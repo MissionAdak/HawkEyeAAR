@@ -31,6 +31,9 @@ export interface SessionRow {
   grade: Grade;
   dStart: number;
   metrics: AARMetrics;
+  scenarioId?: string;
+  aborted?: boolean;
+  unverified?: boolean;
 }
 
 export interface TrackResultRow {

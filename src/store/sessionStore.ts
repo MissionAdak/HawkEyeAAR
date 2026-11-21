@@ -18,6 +18,9 @@ import {
 } from '@/director/catalog';
 import { validate } from '@/director/validate';
 import { type OperatorFeedback, createOperatorFeedback } from '@/sim/operatorFeedback';
+import { aggregateAARMetrics } from '@/sim/metrics';
+import { saveCompletedSession, seedDemoSessionsIfEmpty } from '@/db/sessionRepo';
+import type { SessionRow } from '@/db/dexie';
 
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
@@ -68,6 +71,9 @@ export interface SessionState {
   currentScenarioId: string;
   selectedScenarioId: string;
   simSpeed: number;
+  currentCallsign: string;
+  latestSavedSessionUid: string | null;
+  setCallsign: (callsign: string) => void;
 
   // Intelligent Operator Feedback
   feedbackList: OperatorFeedback[];
@@ -130,6 +136,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isScenarioModalOpen: false,
   currentScenarioId: DEFAULT_SCENARIO_ID,
   simSpeed: 1.0,
+  currentCallsign: 'VIPER-2',
+  latestSavedSessionUid: null,
+  setCallsign: (callsign: string) => set({ currentCallsign: callsign }),
   feedbackList: [],
   activeFeedback: null,
 
@@ -323,6 +332,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   startSession: async (scenarioId?: string, customSeed?: number): Promise<boolean> => {
+    // Seed initial demo data in the background if the local database is fresh
+    void seedDemoSessionsIfEmpty();
+
     const state = get();
     if (state.sessionStatus === 'STARTING' || isFinalizingSession) {
       console.warn('[SessionStore] Session is already starting.');
@@ -437,6 +449,34 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           sessionStatus: isAborted ? 'ABORTED' : 'COMPLETED',
           isSimRunning: false,
         });
+
+        // Persist session to sessionRepo (Rules.md R4.4, Task 20)
+        try {
+          const currentSpec = engineInstance.spec ?? spec;
+          const metrics = aggregateAARMetrics(engineInstance.events, currentSpec);
+          const sessionUid = recorderForSession.getSessionUid();
+          const sessionRow: SessionRow = {
+            uid: sessionUid,
+            traineeUid: '',
+            mode: engineInstance.mode,
+            startedAt: 0,
+            durationMs: engineInstance.tickIndex * 50,
+            score: metrics.score,
+            grade: metrics.grade,
+            dStart: currentSpec.difficulty ?? 0.3,
+            metrics,
+            scenarioId: currentSpec.id,
+            aborted: isAborted,
+            unverified: false,
+          };
+          void saveCompletedSession(sessionRow, get().currentCallsign).catch((error) => {
+            console.error('[SessionStore] Failed to persist session to sessionRepo:', error);
+          });
+          set({ latestSavedSessionUid: sessionUid });
+        } catch (metricsError) {
+          console.error('[SessionStore] Failed to aggregate metrics on SESSION_END:', metricsError);
+        }
+
         void recorderForSession.stop().catch((error) => {
           console.error('[Recorder] Failed to finish session:', error);
         });

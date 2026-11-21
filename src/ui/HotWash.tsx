@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSessionStore, engineInstance, getActiveRecorder } from '@/store/sessionStore';
 import { exportSessionJson, exportSessionCsv } from '@/db/io';
 import { aggregateAARMetrics } from '@/sim/metrics';
@@ -12,6 +12,18 @@ import {
   type AarEngagementInspectionData,
 } from './aar/engagementInspectorData';
 import { AarReplaySection } from './aar/AarReplaySection';
+import { TrendChart } from './aar/charts/TrendChart';
+import { SessionTable } from './aar/panels/SessionTable';
+import { UnitView } from './aar/panels/UnitView';
+import {
+  getTraineeSessions,
+  getUnitTraineeSummaries,
+  getCohortStats,
+  seedDemoSessionsIfEmpty,
+  type UnitTraineeSummary,
+  type UnitCohortStats,
+} from '@/db/sessionRepo';
+import type { SessionRow } from '@/db/dexie';
 
 interface HotWashProps {
   onClose: () => void;
@@ -23,6 +35,42 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
   const returnToBriefing = useSessionStore((s) => s.returnToBriefing);
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
+  const currentCallsign = useSessionStore((s) => s.currentCallsign);
+  const setCallsign = useSessionStore((s) => s.setCallsign);
+
+  const [traineeSessions, setTraineeSessions] = useState<SessionRow[]>([]);
+  const [unitSummaries, setUnitSummaries] = useState<UnitTraineeSummary[]>([]);
+  const [cohortStats, setCohortStats] = useState<UnitCohortStats>({
+    cohortMeanEvalScore: null,
+    cohortEvalPassRate: null,
+    totalEvalSessions: 0,
+    activeTraineesCount: 0,
+  });
+  const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null);
+
+  // Load historical sessions & unit summaries
+  useEffect(() => {
+    let isMounted = true;
+    const loadData = async () => {
+      try {
+        await seedDemoSessionsIfEmpty();
+        const sessions = await getTraineeSessions(currentCallsign, 'asc');
+        const summaries = await getUnitTraineeSummaries();
+        const stats = await getCohortStats();
+        if (isMounted) {
+          setTraineeSessions(sessions);
+          setUnitSummaries(summaries);
+          setCohortStats(stats);
+        }
+      } catch (err) {
+        console.error('[HotWash] Failed to load historical sessions:', err);
+      }
+    };
+    void loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentCallsign]);
 
   // Reconstruct metrics from raw event log
   const metrics = aggregateAARMetrics(
@@ -57,7 +105,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   };
 
   const [inspectingEngagement, setInspectingEngagement] = useState<AarEngagementInspectionData | null>(null);
-  const [activeTab, setActiveTab] = useState<'SCORECARD' | 'REPLAY'>('SCORECARD');
+  const [activeTab, setActiveTab] = useState<'SCORECARD' | 'REPLAY' | 'TRENDS' | 'UNIT'>('SCORECARD');
 
   // Find all engaged tracks to show Oracle decision comparison
   const engagedTracks = engineInstance.curr.filter((e) => e.engagements > 0);
@@ -87,6 +135,26 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             <span className="text-[10px] text-phosphor border border-line px-1.5 py-0.5 font-bold bg-carbon-950">
               SCENARIO: {engineInstance.spec?.id ?? currentScenarioId}
             </span>
+            <div className="flex items-center gap-1 ml-2">
+              <span className="text-[10px] text-text-dim border border-line px-1.5 py-0.5">
+                OPERATOR:
+              </span>
+              <select
+                value={currentCallsign}
+                onChange={(e) => setCallsign(e.target.value)}
+                className="bg-carbon-950 border border-line text-phosphor font-bold text-[10px] px-1 py-0.5 cursor-pointer outline-none hover:border-phosphor/60"
+                data-testid="operator-callsign-select"
+              >
+                {unitSummaries.map((u) => (
+                  <option key={u.callsign} value={u.callsign}>
+                    {u.callsign} ({u.unitName})
+                  </option>
+                ))}
+                {!unitSummaries.some((u) => u.callsign === currentCallsign) && (
+                  <option value={currentCallsign}>{currentCallsign}</option>
+                )}
+              </select>
+            </div>
           </div>
 
           <button
@@ -98,34 +166,69 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
         </div>
 
         {/* Modal Navigation Tabs */}
-        <div className="px-4 py-1.5 border-b border-line bg-carbon-800/60 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab('SCORECARD')}
-            className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
-              activeTab === 'SCORECARD'
-                ? 'bg-phosphor text-carbon-950 border-phosphor'
-                : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
-            }`}
-          >
-            SCORECARD
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('REPLAY')}
-            className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
-              activeTab === 'REPLAY'
-                ? 'bg-phosphor text-carbon-950 border-phosphor'
-                : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
-            }`}
-          >
-            REPLAY
-          </button>
+        <div className="px-4 py-1.5 border-b border-line bg-carbon-800/60 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="tab-scorecard"
+              onClick={() => setActiveTab('SCORECARD')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'SCORECARD'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              SCORECARD
+            </button>
+            <button
+              type="button"
+              data-testid="tab-replay"
+              onClick={() => setActiveTab('REPLAY')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'REPLAY'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              REPLAY
+            </button>
+            <button
+              type="button"
+              data-testid="tab-trends"
+              onClick={() => setActiveTab('TRENDS')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'TRENDS'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              TRENDS & HISTORY
+            </button>
+            <button
+              type="button"
+              data-testid="tab-unit"
+              onClick={() => setActiveTab('UNIT')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'UNIT'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              UNIT READINESS
+            </button>
+          </div>
+
+          <div className="text-[10px] text-text-dim">
+            {activeTab === 'SCORECARD' && 'SINGLE-DRILL MISSION DEBRIEF'}
+            {activeTab === 'REPLAY' && '2D/3D SYNCHRONIZED TIMELINE'}
+            {activeTab === 'TRENDS' && `OPERATOR ${currentCallsign} MULTI-SESSION PROGRESSION`}
+            {activeTab === 'UNIT' && 'ALPHA COY STANDARDIZED EVALUATION LEADERBOARD'}
+          </div>
         </div>
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-          {activeTab === 'SCORECARD' ? (
+          {activeTab === 'SCORECARD' && (
             <>
               {/* 1. Scorecard Hero Strip */}
           <div className="p-4 border border-line bg-carbon-950 flex items-center justify-between">
@@ -426,13 +529,46 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </div>
           </div>
         </>
-      ) : (
-        /* Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */
+      )}
+
+      {/* Tab 2: Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */}
+      {activeTab === 'REPLAY' && (
         <AarReplaySection
           events={engineInstance.events}
           spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
           zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
         />
+      )}
+
+      {/* Tab 3: Longitudinal Trend Chart and Session Drill Table (Task 20 / P3-09) */}
+      {activeTab === 'TRENDS' && (
+        <div className="space-y-4" data-testid="aar-trends-panel">
+          <TrendChart
+            sessions={traineeSessions}
+            selectedSessionUid={selectedSession?.uid}
+            onSelectSession={(s) => setSelectedSession(s)}
+          />
+          <SessionTable
+            sessions={traineeSessions}
+            selectedSessionUid={selectedSession?.uid}
+            onSelectSession={(s) => setSelectedSession(s)}
+          />
+        </div>
+      )}
+
+      {/* Tab 4: Unit Readiness View & Cohort Leaderboard (Task 20 / P3-10 / Rules.md R4.4) */}
+      {activeTab === 'UNIT' && (
+        <div data-testid="aar-unit-panel">
+          <UnitView
+            summaries={unitSummaries}
+            cohortStats={cohortStats}
+            selectedTraineeCallsign={currentCallsign}
+            onSelectTrainee={(callsign) => {
+              setCallsign(callsign);
+              setActiveTab('TRENDS');
+            }}
+          />
+        </div>
       )}
     </div>
 

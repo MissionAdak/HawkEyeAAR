@@ -108,6 +108,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     const rfSoftkillBtn = page.locator('button').filter({ hasText: /RF Soft-Kill/i }).first();
     await expect(rfSoftkillBtn).toBeVisible({ timeout: 5000 });
     await rfSoftkillBtn.click();
+    await rfSoftkillBtn.blur();
 
     // Fire via 'f' key and assert actual emitted ENGAGE or RELEASE_BLOCKED event
     await page.keyboard.press('f');
