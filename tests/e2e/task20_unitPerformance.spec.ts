@@ -320,8 +320,9 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     }, undefined, { timeout: 10000 });
 
     const realUid = 'session-legacy-real-eval-001';
+    const tamperedUid = 'session-legacy-tampered-digest-004';
 
-    await page.evaluate(async (uid) => {
+    const { expectedG } = await page.evaluate(async ({ uid, tamperedUid }) => {
       const win = window as unknown as WindowWithDrishti;
       await win.__DRISHTI_TEST__?.closeDb?.();
 
@@ -332,6 +333,60 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
         delReq.onerror = () => resolve();
         delReq.onblocked = () => resolve();
       });
+
+      const catalog = win.__DRISHTI_TEST__?.loadCatalogScenario?.('DEMO-1', 2026, 0.3);
+      if (!catalog) throw new Error('Catalog DEMO-1 not found');
+      const spec = catalog.spec;
+      spec.mode = 'EVAL';
+      const canonicalHash = win.__DRISHTI_TEST__?.computeScenarioSnapshotHash?.(spec);
+      const appConfigHash = win.__DRISHTI_TEST__?.getConfigHash?.();
+
+      const realEvents = [
+        {
+          sessionUid: uid,
+          seq: 1,
+          tMs: 0,
+          type: 'SIM_START',
+          payload: {
+            mode: 'EVAL',
+            scenarioId: 'DEMO-1',
+            seed: 2026,
+            difficulty: 0.3,
+            configHash: appConfigHash,
+            scenarioSnapshotHash: canonicalHash,
+            simVersion: '1.1.0',
+            schemaVersion: 1,
+          },
+        },
+        { sessionUid: uid, seq: 2, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', payload: { rangeM: 1500 } },
+        { sessionUid: uid, seq: 3, tMs: 7000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+
+      const expectedG = win.__DRISHTI_TEST__?.aggregateAARMetrics?.(
+        realEvents as import('@/sim/types').SimEvent[],
+        spec
+      )?.gScore;
+
+      const tamperedEvents = [
+        {
+          sessionUid: tamperedUid,
+          seq: 1,
+          tMs: 0,
+          type: 'SIM_START',
+          payload: {
+            mode: 'EVAL',
+            scenarioId: 'DEMO-1',
+            seed: 2026,
+            difficulty: 0.3,
+            configHash: appConfigHash,
+            scenarioSnapshotHash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+            simVersion: '1.1.0',
+            schemaVersion: 1,
+          },
+        },
+        { sessionUid: tamperedUid, seq: 2, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', payload: { rangeM: 1500 } },
+        { sessionUid: tamperedUid, seq: 3, tMs: 7000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
 
       // Create v1 Dexie database fixture (creates native IndexedDB version 10)
       await win.__DRISHTI_TEST__?.createLegacyV1Database?.('DrishtiCuasDb', {
@@ -358,7 +413,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
           {
             uid: uid,
             traineeUid: 'trainee-viper-2',
-            mode: 'DEMO',
+            mode: 'EVAL',
             startedAt: 1700000005000,
             durationMs: 120000,
             score: 95,
@@ -395,14 +450,30 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
             metrics: { score: 75, grade: 'PROFICIENT_IN_SIMULATION' } as unknown as import('@/sim/types').AARMetrics,
             scenarioId: 'DEMO-1',
           },
+          // 5. Legacy session with tampered snapshot digest (fail-closed, G undefined)
+          {
+            uid: tamperedUid,
+            traineeUid: 'trainee-viper-2',
+            mode: 'EVAL',
+            startedAt: 1700000020000,
+            durationMs: 120000,
+            score: 80,
+            grade: 'PROFICIENT_IN_SIMULATION',
+            dStart: 0.3,
+            metrics: { score: 80, grade: 'PROFICIENT_IN_SIMULATION' } as unknown as import('@/sim/types').AARMetrics,
+            scenarioId: 'DEMO-1',
+            scenarioSeed: 2026,
+            scenarioDifficulty: 0.3,
+          },
         ],
         events: [
-          { sessionUid: uid, seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'DEMO', scenarioId: 'DEMO-1', seed: 2026, difficulty: 0.3 } },
-          { sessionUid: uid, seq: 2, tMs: 2000, type: 'TRACK_INIT', trackNo: 'T-01', payload: { rangeM: 1500 } },
-          { sessionUid: uid, seq: 3, tMs: 7000, type: 'SESSION_END', payload: { aborted: false } },
-        ],
+          ...realEvents,
+          ...tamperedEvents,
+        ] as import('@/db/dexie').StoredSimEvent[],
       });
-    }, realUid);
+
+      return { expectedG };
+    }, { uid: realUid, tamperedUid });
 
     // Verify database was created at native version 10 (Dexie schema version 1)
     const v1Check = await page.evaluate(async () => {
@@ -452,6 +523,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     const realSession = sessions.find((s) => s.uid === realUid);
     const trainSession = sessions.find((s) => s.uid === 'session-legacy-real-train-002');
     const noEventsSession = sessions.find((s) => s.uid === 'session-legacy-no-events-003');
+    const tamperedSession = sessions.find((s) => s.uid === tamperedUid);
 
     // Verify synthetic vs real classification
     expect(demoSession?.isSynthetic).toBe(true);
@@ -459,6 +531,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     expect(demoSession?.startedAt).toBe(1700000000000);
 
     expect(realSession?.isSynthetic).toBe(false);
+    expect(realSession?.mode).toBe('EVAL');
     expect(realSession?.score).toBe(95);
     expect(realSession?.startedAt).toBe(1700000005000);
 
@@ -466,14 +539,17 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     expect(trainSession?.traineeUid).toBe('trainee-ghost-4');
     expect(trainSession?.score).toBe(64);
 
-    // Verify historical G reconstruction for genuine verifiable session
-    expect(typeof realSession?.metrics?.gScore).toBe('number');
-    expect(realSession?.metrics?.gScore).toBeGreaterThanOrEqual(0);
-    expect(realSession?.metrics?.gScore).toBeLessThanOrEqual(100);
+    // Verify historical G reconstruction for genuine verifiable session: EXACT expectedG
+    expect(typeof expectedG).toBe('number');
+    expect(realSession?.metrics?.gScore).toBe(expectedG);
 
     // Legacy record without events remains without fabricated G
     expect(noEventsSession?.isSynthetic).toBe(false);
     expect(noEventsSession?.metrics?.gScore).toBeUndefined();
+
+    // Legacy record with tampered snapshot digest fails closed: G strictly undefined
+    expect(tamperedSession?.isSynthetic).toBe(false);
+    expect(tamperedSession?.metrics?.gScore).toBeUndefined();
 
     // Verify event records are preserved
     const realEvents = await page.evaluate(async (uid) => {
@@ -496,6 +572,8 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     expect(reloadedSessions.length).toBe(sessions.length);
     const reloadedReal = reloadedSessions.find((s) => s.uid === realUid);
     expect(reloadedReal?.metrics?.gScore).toBe(realSession?.metrics?.gScore);
+    const reloadedTampered = reloadedSessions.find((s) => s.uid === tamperedUid);
+    expect(reloadedTampered?.metrics?.gScore).toBeUndefined();
   });
 
   test('04. Retry Attribution After Operator Switching in AAR', async ({ page }) => {

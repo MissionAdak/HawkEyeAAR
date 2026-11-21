@@ -11,11 +11,13 @@ import type {
   EffectorId,
   TrackClass,
 } from './types';
+import { SIM_VERSION, SCHEMA_VERSION } from './types';
 import { InputQueue } from './inputQueue';
 import { streamSeed, mulberry32, keyedU } from './rng';
 import { clockInstance } from './clock';
 import { SHORT_CODES, isHostile } from './taxonomy';
-import { CONFIG } from '@/config';
+import { CONFIG, CONFIG_HASH } from '@/config';
+import { computeScenarioSnapshotHash } from './snapshotHash';
 import { canTransition, evaluateReleaseGating } from './roe';
 import { resolveEngagement } from './effectors';
 import { aggregateAARMetrics } from './metrics';
@@ -187,7 +189,7 @@ export class SimEngine {
     return this.spec?.mode ?? 'TRAIN';
   }
 
-  public load(spec: ScenarioSpec): void {
+  public load(spec: ScenarioSpec, provenance?: { snapshotHash?: string; appConfigHash?: string }): void {
     this.spec = spec;
     this.tickIndex = 0;
     this.eventSeq = 0;
@@ -271,15 +273,30 @@ export class SimEngine {
     const firstInitiated = this.curr.find((e) => e.step !== 'UNDETECTED');
     this.selectedTrackNo = firstInitiated?.trackNo ?? (this.curr.length > 0 ? this.curr[0].trackNo : null);
 
+    // Compute or verify canonical provenance fields
+    const snapshotHash = provenance?.snapshotHash ?? computeScenarioSnapshotHash(spec);
+    const appConfigHash = provenance?.appConfigHash ?? CONFIG_HASH;
+    const simVersion = spec.simVersion || SIM_VERSION;
+    const schemaVersion = spec.schemaVersion || SCHEMA_VERSION;
+    const difficulty =
+      typeof spec.difficulty === 'number' && Number.isFinite(spec.difficulty)
+        ? spec.difficulty
+        : 0.3;
+    const seed =
+      typeof spec.seed === 'number' && Number.isFinite(spec.seed)
+        ? spec.seed
+        : 2026;
+
     // Log SIM_START event
     this.appendEvent('SIM_START', {
       scenarioId: spec.id,
-      seed: spec.seed,
+      seed,
       mode: spec.mode,
-      difficulty: spec.difficulty,
-      configHash: spec.configHash,
-      simVersion: spec.simVersion,
-      schemaVersion: spec.schemaVersion,
+      difficulty,
+      configHash: appConfigHash,
+      scenarioSnapshotHash: snapshotHash,
+      simVersion,
+      schemaVersion,
     });
 
     // Initial radar sweep at T=0

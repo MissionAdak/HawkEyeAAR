@@ -10,6 +10,10 @@ import { db, DrishtiDatabase } from '@/db/dexie';
 import Dexie from 'dexie';
 import { setMockPersistenceFailureMode } from '@/db/recorder';
 import { importSessionJson, stableJson, sha256 } from '@/db/aarTransfer';
+import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
+import { CONFIG_HASH } from '@/config';
+import { loadCatalogScenario } from '@/director/catalog';
+import { aggregateAARMetrics } from '@/sim/metrics';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -160,6 +164,10 @@ export interface DrishtiTestBridge {
   openCustomDatabase: (databaseName: string) => Promise<{ verno: number; sessions: import('@/db/dexie').SessionRow[] }>;
   createSignedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
   createChecksummedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
+  computeScenarioSnapshotHash?: (spec: import('@/sim/types').ScenarioSpec) => string;
+  getConfigHash?: () => string;
+  loadCatalogScenario?: (id: string, seed?: number, difficulty?: number) => { spec: import('@/sim/types').ScenarioSpec };
+  aggregateAARMetrics?: (events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) => import('@/sim/types').AARMetrics;
 }
 
 declare global {
@@ -887,6 +895,22 @@ export function installDrishtiTestBridge(
 
     async createChecksummedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {
       return this.createSignedAarPayload(sessionUid, events);
+    },
+
+    computeScenarioSnapshotHash(spec: import('@/sim/types').ScenarioSpec): string {
+      return computeScenarioSnapshotHash(spec);
+    },
+
+    getConfigHash(): string {
+      return CONFIG_HASH;
+    },
+
+    loadCatalogScenario(id: string, seed?: number, difficulty?: number) {
+      return loadCatalogScenario(id, seed, difficulty);
+    },
+
+    aggregateAARMetrics(events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) {
+      return aggregateAARMetrics(events, spec);
     },
   };
 

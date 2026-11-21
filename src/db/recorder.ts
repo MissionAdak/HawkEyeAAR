@@ -17,11 +17,17 @@ export function createSessionUid(): string {
 // Fallback in-memory storage for test/Node environments where indexedDB is not available
 const inMemoryFallbackEvents: StoredSimEvent[] = [];
 
-export type MockPersistenceFailureMode = 'NONE' | 'EVENTS' | 'SESSION' | 'BOTH';
+export type MockPersistenceFailureMode = 'NONE' | 'EVENTS' | 'EVENT' | 'SESSION' | 'BOTH' | null;
 let mockPersistenceFailureMode: MockPersistenceFailureMode = 'NONE';
 
 export function setMockPersistenceFailureMode(mode: MockPersistenceFailureMode): void {
-  mockPersistenceFailureMode = mode;
+  if (mode === 'EVENT') {
+    mockPersistenceFailureMode = 'EVENTS';
+  } else if (!mode) {
+    mockPersistenceFailureMode = 'NONE';
+  } else {
+    mockPersistenceFailureMode = mode;
+  }
 }
 
 export function getMockPersistenceFailureMode(): MockPersistenceFailureMode {

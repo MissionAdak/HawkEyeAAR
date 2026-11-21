@@ -134,6 +134,9 @@ export interface TriggerSpec {
 
 export type SessionMode = 'TRAIN' | 'EVAL' | 'DEMO';
 
+export const SIM_VERSION = '1.1.0';
+export const SCHEMA_VERSION = 1;
+
 export interface ScenarioSpec {
   id: string;
   schemaVersion: 1;

@@ -11,6 +11,9 @@ import type {
   TrackClass,
   SessionMode,
 } from '@/sim/types';
+import { SIM_VERSION, SCHEMA_VERSION } from '@/sim/types';
+import { CONFIG_HASH } from '@/config';
+import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
 import {
   DEFAULT_SCENARIO_ID,
   getScenarioCatalogEntry,
@@ -28,6 +31,16 @@ export const engineInstance = new SimEngine();
 export { clockInstance };
 let activeRecorder: EventRecorder | null = null;
 let isFinalizingSession = false;
+let activeSessionScenarioSnapshot: ScenarioSpec | null = null;
+let activeSessionSnapshotHash: string | null = null;
+
+export function getActiveSessionScenarioSnapshot(): ScenarioSpec | null {
+  return activeSessionScenarioSnapshot;
+}
+
+export function getActiveSessionSnapshotHash(): string | null {
+  return activeSessionSnapshotHash;
+}
 
 export function getActiveRecorder(): EventRecorder | null {
   return activeRecorder;
@@ -193,6 +206,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   lastFailedSessionRow: null,
   lastFailedRecorder: null,
   retrySaveSession: async () => {
+    if (get().sessionPersistenceStatus === 'SAVED') {
+      return true;
+    }
     const failedRow = get().lastFailedSessionRow;
     if (!failedRow) {
       return false;
@@ -468,6 +484,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     engineInstance.tracker.clear();
     engineInstance.rfMeasurements = [];
     activeRecorder = null;
+    activeSessionScenarioSnapshot = null;
+    activeSessionSnapshotHash = null;
     clockInstance.reset();
     set({
       sessionStatus: 'READY',
@@ -497,6 +515,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.error(`[SessionStore] Refusing to load invalid scenario: ${spec.id}`);
       return;
     }
+
+    // Critical A (Task 20-A4): Pre-sim scenario snapshot capture.
+    // Deep-clone and capture snapshot BEFORE engineInstance.load(spec) to guarantee mutation immunity.
+    const preSimSnapshot: ScenarioSpec = JSON.parse(JSON.stringify(spec));
+    const preSimSnapshotHash = computeScenarioSnapshotHash(preSimSnapshot);
+    activeSessionScenarioSnapshot = preSimSnapshot;
+    activeSessionSnapshotHash = preSimSnapshotHash;
 
     isFinalizingSession = true;
     set({ sessionStatus: 'STARTING' });
@@ -545,18 +570,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           isSimRunning: false,
         });
 
-        // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2, Task 20-A3)
+        // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2, Task 20-A3, Task 20-A4)
         try {
-          const currentSpec = engineInstance.spec ?? spec;
-          const metrics = aggregateAARMetrics(engineInstance.events, currentSpec);
+          const snapshotToUse = activeSessionScenarioSnapshot ?? JSON.parse(JSON.stringify(spec));
+          const snapshotHashToUse = activeSessionSnapshotHash ?? computeScenarioSnapshotHash(snapshotToUse);
+          const metrics = aggregateAARMetrics(engineInstance.events, snapshotToUse);
           const sessionUid = recorderForSession.getSessionUid();
           const immutableTraineeUid =
             get().currentSessionTraineeUid || callsignToUid(get().currentCallsign);
           const sessionCallsign = immutableTraineeUid.startsWith('trainee-')
             ? immutableTraineeUid.replace(/^trainee-/, '').toUpperCase()
             : get().currentCallsign;
-
-          const snapshot: ScenarioSpec = JSON.parse(JSON.stringify(currentSpec));
 
           const sessionRow: SessionRow = {
             uid: sessionUid,
@@ -566,17 +590,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             durationMs: engineInstance.tickIndex * 50,
             score: metrics.score,
             grade: metrics.grade,
-            dStart: currentSpec.difficulty ?? 0.3,
+            dStart: snapshotToUse.difficulty ?? 0.3,
             metrics,
-            scenarioId: currentSpec.id,
+            scenarioId: snapshotToUse.id,
             aborted: isAborted,
             unverified: false,
             isSynthetic: false,
-            scenarioSpecSnapshot: snapshot,
-            scenarioSeed: currentSpec.seed,
-            scenarioDifficulty: currentSpec.difficulty,
-            scenarioConfigHash: currentSpec.configHash,
-            scenarioSimVersion: currentSpec.simVersion,
+            scenarioSpecSnapshot: snapshotToUse,
+            scenarioSeed: snapshotToUse.seed,
+            scenarioDifficulty: snapshotToUse.difficulty,
+            scenarioConfigHash: CONFIG_HASH,
+            scenarioSnapshotHash: snapshotHashToUse,
+            scenarioSimVersion: snapshotToUse.simVersion ?? SIM_VERSION,
+            scenarioSchemaVersion: snapshotToUse.schemaVersion ?? SCHEMA_VERSION,
           };
 
           void persistCompletedSession(sessionRow, recorderForSession, sessionCallsign);
@@ -600,7 +626,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     recorderForSession.start();
 
-    engineInstance.load(spec);
+    engineInstance.load(spec, {
+      snapshotHash: preSimSnapshotHash,
+      appConfigHash: CONFIG_HASH,
+    });
     try {
       await recorderForSession.flush();
     } catch (flushError) {

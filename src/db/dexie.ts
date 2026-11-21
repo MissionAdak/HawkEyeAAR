@@ -1,7 +1,11 @@
 import Dexie, { type Table } from 'dexie';
 import type { SimEvent, AARMetrics, Grade, TrueClass, ScenarioSpec, SessionMode } from '@/sim/types';
+import { SIM_VERSION, SCHEMA_VERSION } from '@/sim/types';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { loadCatalogScenario } from '@/director/catalog';
+import { validate } from '@/director/validate';
+import { CONFIG_HASH } from '@/config';
+import { computeScenarioSnapshotHash, validateScenarioStructure } from '@/sim/snapshotHash';
 
 export interface UnitRow {
   uid: string;
@@ -37,12 +41,14 @@ export interface SessionRow {
   aborted?: boolean;
   unverified?: boolean;
   isSynthetic?: boolean;
-  // Immutable scenario configuration snapshot and metadata (TASK 20-A3)
+  // Immutable scenario configuration snapshot and metadata (TASK 20-A3, TASK 20-A4)
   scenarioSpecSnapshot?: ScenarioSpec;
   scenarioSeed?: number;
   scenarioDifficulty?: number;
   scenarioConfigHash?: string;
+  scenarioSnapshotHash?: string;
   scenarioSimVersion?: string;
+  scenarioSchemaVersion?: number;
 }
 
 export interface TrackResultRow {
@@ -184,51 +190,11 @@ export function validateHistoricalEventLog(
     };
   }
 
-  const simStartPayload = firstEvent.payload as {
-    mode?: string;
-    scenarioId?: string;
-    seed?: number;
-    difficulty?: number;
-    configHash?: string;
-    simVersion?: string;
-    schemaVersion?: number;
-  } | undefined;
-
-  // Explicit, valid SIM_START.payload.mode
-  if (
-    !simStartPayload?.mode ||
-    !['TRAIN', 'EVAL', 'DEMO'].includes(simStartPayload.mode)
-  ) {
-    return {
-      isValid: false,
-      reason: `SIM_START must contain explicit valid mode ('TRAIN' | 'EVAL' | 'DEMO'), found: ${simStartPayload?.mode}`,
-    };
-  }
-
-  // Explicit, valid SIM_START.payload.scenarioId
-  if (
-    !simStartPayload?.scenarioId ||
-    typeof simStartPayload.scenarioId !== 'string' ||
-    simStartPayload.scenarioId.trim() === ''
-  ) {
-    return {
-      isValid: false,
-      reason: `SIM_START must contain explicit non-empty scenarioId, found: ${simStartPayload?.scenarioId}`,
-    };
-  }
-
   const lastEvent = events[events.length - 1];
   if (lastEvent.type !== 'SESSION_END') {
     return {
       isValid: false,
       reason: `Terminal event must be SESSION_END, received ${lastEvent.type}`,
-    };
-  }
-
-  if (Boolean(lastEvent.payload?.aborted) || Boolean(session?.aborted)) {
-    return {
-      isValid: false,
-      reason: 'Session was aborted; event history is non-terminal or incomplete',
     };
   }
 
@@ -268,6 +234,56 @@ export function validateHistoricalEventLog(
     }
   }
 
+  // Strict check: SESSION_END.payload.aborted === false
+  const lastPayload = lastEvent.payload as { aborted?: unknown } | undefined;
+  if (!lastPayload || lastPayload.aborted !== false) {
+    return {
+      isValid: false,
+      reason: `SESSION_END payload must explicitly have aborted === false, found: ${lastPayload?.aborted}`,
+    };
+  }
+
+  if (session && session.aborted !== false && session.aborted !== undefined) {
+    return {
+      isValid: false,
+      reason: `Session metadata indicates session was aborted or non-terminal (${session.aborted})`,
+    };
+  }
+
+  const simStartPayload = firstEvent.payload as {
+    mode?: string;
+    scenarioId?: string;
+    seed?: number;
+    difficulty?: number;
+    configHash?: string;
+    scenarioSnapshotHash?: string;
+    simVersion?: string;
+    schemaVersion?: number;
+  } | undefined;
+
+  // Explicit, valid SIM_START.payload.mode
+  if (
+    !simStartPayload?.mode ||
+    !['TRAIN', 'EVAL', 'DEMO'].includes(simStartPayload.mode)
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain explicit valid mode ('TRAIN' | 'EVAL' | 'DEMO'), found: ${simStartPayload?.mode}`,
+    };
+  }
+
+  // Explicit, valid SIM_START.payload.scenarioId
+  if (
+    !simStartPayload?.scenarioId ||
+    typeof simStartPayload.scenarioId !== 'string' ||
+    simStartPayload.scenarioId.trim() === ''
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain explicit non-empty scenarioId, found: ${simStartPayload?.scenarioId}`,
+    };
+  }
+
   if (session) {
     if (session.mode !== simStartPayload.mode) {
       return {
@@ -281,14 +297,140 @@ export function validateHistoricalEventLog(
         reason: `Session scenarioId (${session.scenarioId}) differs from SIM_START scenarioId (${simStartPayload.scenarioId})`,
       };
     }
+  }
 
-    // If scenarioSpecSnapshot is present, validate its identity
+  // Finite numeric seed
+  if (
+    typeof simStartPayload.seed !== 'number' ||
+    !Number.isFinite(simStartPayload.seed)
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain finite numeric seed, found: ${simStartPayload?.seed}`,
+    };
+  }
+
+  // Finite numeric difficulty
+  if (
+    typeof simStartPayload.difficulty !== 'number' ||
+    !Number.isFinite(simStartPayload.difficulty)
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain finite numeric difficulty, found: ${simStartPayload?.difficulty}`,
+    };
+  }
+
+  // Non-empty application configHash
+  if (
+    !simStartPayload.configHash ||
+    typeof simStartPayload.configHash !== 'string' ||
+    simStartPayload.configHash.trim() === ''
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain non-empty application configHash, found: ${simStartPayload?.configHash}`,
+    };
+  }
+
+  // Non-empty scenarioSnapshotHash
+  if (
+    !simStartPayload.scenarioSnapshotHash ||
+    typeof simStartPayload.scenarioSnapshotHash !== 'string' ||
+    simStartPayload.scenarioSnapshotHash.trim() === ''
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain non-empty scenarioSnapshotHash, found: ${simStartPayload?.scenarioSnapshotHash}`,
+    };
+  }
+
+  // Non-empty simVersion
+  if (
+    !simStartPayload.simVersion ||
+    typeof simStartPayload.simVersion !== 'string' ||
+    simStartPayload.simVersion.trim() === ''
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain non-empty simVersion, found: ${simStartPayload?.simVersion}`,
+    };
+  }
+
+  // Finite numeric schemaVersion
+  if (
+    typeof simStartPayload.schemaVersion !== 'number' ||
+    !Number.isFinite(simStartPayload.schemaVersion)
+  ) {
+    return {
+      isValid: false,
+      reason: `SIM_START must contain finite numeric schemaVersion, found: ${simStartPayload?.schemaVersion}`,
+    };
+  }
+
+  if (session) {
+    if (session.scenarioSeed !== undefined && session.scenarioSeed !== simStartPayload.seed) {
+      return {
+        isValid: false,
+        reason: `Session scenarioSeed (${session.scenarioSeed}) differs from SIM_START seed (${simStartPayload.seed})`,
+      };
+    }
+    if (
+      session.scenarioDifficulty !== undefined &&
+      session.scenarioDifficulty !== simStartPayload.difficulty
+    ) {
+      return {
+        isValid: false,
+        reason: `Session scenarioDifficulty (${session.scenarioDifficulty}) differs from SIM_START difficulty (${simStartPayload.difficulty})`,
+      };
+    }
+    if (session.scenarioConfigHash && session.scenarioConfigHash !== simStartPayload.configHash) {
+      return {
+        isValid: false,
+        reason: `Session scenarioConfigHash (${session.scenarioConfigHash}) differs from SIM_START configHash (${simStartPayload.configHash})`,
+      };
+    }
+    if (
+      session.scenarioSnapshotHash &&
+      session.scenarioSnapshotHash !== simStartPayload.scenarioSnapshotHash
+    ) {
+      return {
+        isValid: false,
+        reason: `Session scenarioSnapshotHash (${session.scenarioSnapshotHash}) differs from SIM_START scenarioSnapshotHash (${simStartPayload.scenarioSnapshotHash})`,
+      };
+    }
+    if (
+      session.scenarioSimVersion &&
+      session.scenarioSimVersion !== simStartPayload.simVersion
+    ) {
+      return {
+        isValid: false,
+        reason: `Session scenarioSimVersion (${session.scenarioSimVersion}) differs from SIM_START simVersion (${simStartPayload.simVersion})`,
+      };
+    }
+    if (
+      session.scenarioSchemaVersion !== undefined &&
+      session.scenarioSchemaVersion !== simStartPayload.schemaVersion
+    ) {
+      return {
+        isValid: false,
+        reason: `Session scenarioSchemaVersion (${session.scenarioSchemaVersion}) differs from SIM_START schemaVersion (${simStartPayload.schemaVersion})`,
+      };
+    }
+
+    // If scenarioSpecSnapshot is present, validate structure, kinematic fairness, and digest
     if (session.scenarioSpecSnapshot) {
       const snap = session.scenarioSpecSnapshot;
-      if (!snap.id || !Array.isArray(snap.threats) || !Array.isArray(snap.decoys) || !snap.asset) {
+      if (!validateScenarioStructure(snap)) {
         return {
           isValid: false,
           reason: 'Corrupt or malformed scenarioSpecSnapshot schema',
+        };
+      }
+      if (!validate(snap)) {
+        return {
+          isValid: false,
+          reason: 'Scenario snapshot failed kinematic or fairness validation',
         };
       }
       if (snap.id !== session.scenarioId || snap.id !== simStartPayload.scenarioId) {
@@ -303,29 +445,43 @@ export function validateHistoricalEventLog(
           reason: `Scenario snapshot mode (${snap.mode}) does not match session mode (${session.mode})`,
         };
       }
-      if (typeof simStartPayload.seed === 'number' && snap.seed !== simStartPayload.seed) {
+      if (snap.seed !== simStartPayload.seed) {
         return {
           isValid: false,
           reason: `Scenario snapshot seed (${snap.seed}) does not match SIM_START seed (${simStartPayload.seed})`,
         };
       }
-      if (
-        typeof simStartPayload.difficulty === 'number' &&
-        snap.difficulty !== simStartPayload.difficulty
-      ) {
+      if (snap.difficulty !== simStartPayload.difficulty) {
         return {
           isValid: false,
           reason: `Scenario snapshot difficulty (${snap.difficulty}) does not match SIM_START difficulty (${simStartPayload.difficulty})`,
         };
       }
-      if (
-        simStartPayload.configHash &&
-        snap.configHash &&
-        snap.configHash !== simStartPayload.configHash
-      ) {
+      if (snap.simVersion !== simStartPayload.simVersion) {
         return {
           isValid: false,
-          reason: `Scenario snapshot configHash (${snap.configHash}) does not match SIM_START configHash (${simStartPayload.configHash})`,
+          reason: `Scenario snapshot simVersion (${snap.simVersion}) does not match SIM_START simVersion (${simStartPayload.simVersion})`,
+        };
+      }
+      if (snap.schemaVersion !== simStartPayload.schemaVersion) {
+        return {
+          isValid: false,
+          reason: `Scenario snapshot schemaVersion (${snap.schemaVersion}) does not match SIM_START schemaVersion (${simStartPayload.schemaVersion})`,
+        };
+      }
+
+      // Recompute canonical SHA-256 digest
+      const computedHash = computeScenarioSnapshotHash(snap);
+      if (computedHash !== simStartPayload.scenarioSnapshotHash) {
+        return {
+          isValid: false,
+          reason: `Scenario snapshot digest mismatch: recomputed ${computedHash} does not match SIM_START scenarioSnapshotHash ${simStartPayload.scenarioSnapshotHash}`,
+        };
+      }
+      if (session.scenarioSnapshotHash && session.scenarioSnapshotHash !== computedHash) {
+        return {
+          isValid: false,
+          reason: `Scenario snapshot digest mismatch: recomputed ${computedHash} does not match session scenarioSnapshotHash ${session.scenarioSnapshotHash}`,
         };
       }
     }
@@ -339,15 +495,20 @@ export function validateHistoricalEventLog(
  *
  * Rules:
  * 1. Prefer the stored scenarioSpecSnapshot whenever available and validated.
- * 2. Deterministic reconstruction from catalog is ONLY allowed if scenarioId is known
- *    and for dynamic/procedural scenarios, explicit finite seed and difficulty exist.
- * 3. Never call getSpec() with missing or default parameters.
- * 4. Never return undefined spec to aggregateAARMetrics() to avoid fallback hostile defaults.
+ * 2. Fail-closed catalog reconstruction for legacy records WITHOUT snapshot (Critical D).
+ *    Permit catalog reconstruction ONLY when:
+ *    - The historical catalog artifact is identifiable.
+ *    - Its exact version is identifiable.
+ *    - The original scenario parameters are present and valid (finite seed and difficulty).
+ *    - The historical artifact's canonical scenario digest matches the value recorded in the session's original event provenance.
+ *    - The simulation and application configuration versions are compatible with the historical record.
+ * 3. Never return undefined spec to aggregateAARMetrics() to avoid fallback hostile defaults.
  */
 export function resolveHistoricalScenarioSpec(
   session: SessionRow,
   events: SimEvent[]
 ): ScenarioSpec | undefined {
+  if (!events || events.length < 2) return undefined;
   const firstEvent = events[0];
   const simStartPayload = firstEvent?.payload as {
     scenarioId?: string;
@@ -355,6 +516,7 @@ export function resolveHistoricalScenarioSpec(
     seed?: number;
     difficulty?: number;
     configHash?: string;
+    scenarioSnapshotHash?: string;
     simVersion?: string;
     schemaVersion?: number;
   } | undefined;
@@ -362,17 +524,14 @@ export function resolveHistoricalScenarioSpec(
   // 1. Immutable stored snapshot has absolute priority
   if (session.scenarioSpecSnapshot) {
     const snap = session.scenarioSpecSnapshot;
-    if (
-      !snap.id ||
-      !Array.isArray(snap.threats) ||
-      !Array.isArray(snap.decoys) ||
-      !snap.asset
-    ) {
-      return undefined;
-    }
+    if (!validateScenarioStructure(snap)) return undefined;
+    if (!validate(snap)) return undefined;
+
     // Verify against session
     if (session.scenarioId && snap.id !== session.scenarioId) return undefined;
     if (session.mode && snap.mode !== session.mode) return undefined;
+    if (session.scenarioSeed !== undefined && snap.seed !== session.scenarioSeed) return undefined;
+    if (session.scenarioDifficulty !== undefined && snap.difficulty !== session.scenarioDifficulty) return undefined;
 
     // Verify against SIM_START event
     if (simStartPayload?.scenarioId && snap.id !== simStartPayload.scenarioId) return undefined;
@@ -384,72 +543,88 @@ export function resolveHistoricalScenarioSpec(
     ) {
       return undefined;
     }
-    if (
-      simStartPayload?.configHash &&
-      snap.configHash &&
-      snap.configHash !== simStartPayload.configHash
-    ) {
+    if (simStartPayload?.simVersion && snap.simVersion !== simStartPayload.simVersion) return undefined;
+    if (simStartPayload?.schemaVersion !== undefined && snap.schemaVersion !== simStartPayload.schemaVersion) return undefined;
+
+    // Canonical digest verification
+    const computedDigest = computeScenarioSnapshotHash(snap);
+    if (simStartPayload?.scenarioSnapshotHash && computedDigest !== simStartPayload.scenarioSnapshotHash) {
+      return undefined;
+    }
+    if (session.scenarioSnapshotHash && computedDigest !== session.scenarioSnapshotHash) {
       return undefined;
     }
 
     return snap;
   }
 
-  // 2. Deterministic recovery from catalog IF AND ONLY IF parameters are known and verified
+  // 2. Fail-closed catalog reconstruction for legacy records WITHOUT snapshot (Critical D)
   const scenarioId = session.scenarioId ?? simStartPayload?.scenarioId;
-  if (!scenarioId) {
+  if (!scenarioId || typeof scenarioId !== 'string') return undefined;
+
+  const seed =
+    typeof simStartPayload?.seed === 'number' && Number.isFinite(simStartPayload.seed)
+      ? simStartPayload.seed
+      : (typeof session.scenarioSeed === 'number' && Number.isFinite(session.scenarioSeed) ? session.scenarioSeed : undefined);
+
+  const difficulty =
+    typeof simStartPayload?.difficulty === 'number' && Number.isFinite(simStartPayload.difficulty)
+      ? simStartPayload.difficulty
+      : (typeof session.scenarioDifficulty === 'number' && Number.isFinite(session.scenarioDifficulty) ? session.scenarioDifficulty : undefined);
+
+  if (seed === undefined || difficulty === undefined) {
     return undefined;
   }
 
-  const seed =
-    typeof simStartPayload?.seed === 'number'
-      ? simStartPayload.seed
-      : session.scenarioSeed;
-  const difficulty =
-    typeof simStartPayload?.difficulty === 'number'
-      ? simStartPayload.difficulty
-      : session.scenarioDifficulty ?? session.dStart;
-
-  // Fixed catalog scenarios (DEMO-1, DEMO-2, SWARM-1, COAST-1, SPECTRUM-1)
-  const isFixedCatalog = ['DEMO-1', 'DEMO-2', 'SWARM-1', 'COAST-1', 'SPECTRUM-1'].includes(scenarioId);
-  if (isFixedCatalog) {
-    try {
-      const { spec } = loadCatalogScenario(scenarioId, seed, difficulty);
-      return spec;
-    } catch {
-      return undefined;
-    }
+  // Require recorded scenarioSnapshotHash in SIM_START provenance
+  const recordedSnapshotHash = simStartPayload?.scenarioSnapshotHash ?? session.scenarioSnapshotHash;
+  if (!recordedSnapshotHash || typeof recordedSnapshotHash !== 'string' || recordedSnapshotHash.trim() === '') {
+    return undefined;
   }
 
-  // Dynamic / procedural scenarios (PROCEDURAL-*, RANDOM-*, FORMATION-*, POPUP-*)
-  const isDynamic =
-    scenarioId.startsWith('PROCEDURAL') ||
-    scenarioId.startsWith('RANDOM') ||
-    scenarioId.startsWith('FORMATION') ||
-    scenarioId.startsWith('POPUP');
-
-  if (isDynamic) {
-    // Both seed and difficulty MUST be finite numbers. Never guess or default!
-    if (typeof seed !== 'number' || !Number.isFinite(seed)) {
-      return undefined;
-    }
-    if (typeof difficulty !== 'number' || !Number.isFinite(difficulty)) {
-      return undefined;
-    }
-    try {
-      const { spec } = loadCatalogScenario(scenarioId, seed, difficulty);
-      return spec;
-    } catch {
-      return undefined;
-    }
+  // Require compatible application configHash
+  const recordedConfigHash = simStartPayload?.configHash ?? session.scenarioConfigHash;
+  if (!recordedConfigHash || recordedConfigHash !== CONFIG_HASH) {
+    return undefined;
   }
 
-  return undefined;
+  // Require compatible simVersion
+  const recordedSimVersion = simStartPayload?.simVersion ?? session.scenarioSimVersion;
+  if (!recordedSimVersion || recordedSimVersion !== SIM_VERSION) {
+    return undefined;
+  }
+
+  // Require compatible schemaVersion
+  const recordedSchemaVersion = simStartPayload?.schemaVersion ?? session.scenarioSchemaVersion;
+  if (recordedSchemaVersion !== undefined && recordedSchemaVersion !== SCHEMA_VERSION) {
+    return undefined;
+  }
+
+  // Attempt to load candidate scenario from catalog
+  try {
+    const { spec: candidateSpec } = loadCatalogScenario(scenarioId, seed, difficulty);
+    const targetMode = session.mode ?? simStartPayload?.mode;
+    if (targetMode) {
+      candidateSpec.mode = targetMode;
+    }
+    if (!validateScenarioStructure(candidateSpec) || !validate(candidateSpec)) return undefined;
+
+    // Verify canonical digest of candidate catalog artifact matches recorded provenance
+    const candidateHash = computeScenarioSnapshotHash(candidateSpec);
+    if (candidateHash !== recordedSnapshotHash) {
+      return undefined;
+    }
+
+    return candidateSpec;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * Safe, repeatable migration logic for legacy Task 20 session records.
  * Identifies legacy synthetic records (uid pattern: demo-{callsign}-{timestamp}),
+ * preserves any existing valid numeric G score without recomputation,
  * and reconstructs missing gScore only if a complete, valid event log is available
  * AND an exact matching scenario specification is recoverable.
  */
@@ -464,7 +639,16 @@ export function migrateLegacySession(
     session.isSynthetic = false;
   }
 
-  // 2. Reconstruct missing gScore ONLY if complete, valid stored events exist AND exact scenario spec is recoverable
+  // 2. Preserve any already-recorded valid numeric G score, including genuine zero, without recomputing it
+  if (
+    session.metrics &&
+    typeof session.metrics.gScore === 'number' &&
+    Number.isFinite(session.metrics.gScore)
+  ) {
+    return session;
+  }
+
+  // 3. Reconstruct missing gScore ONLY if complete, valid stored events exist AND exact scenario spec is recoverable
   if (
     session.metrics &&
     (session.metrics.gScore === undefined || session.metrics.gScore === null)
