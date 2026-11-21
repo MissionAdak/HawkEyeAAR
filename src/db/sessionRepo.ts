@@ -1,5 +1,5 @@
 import { db, migrateLegacySession, type SessionRow, type TraineeRow, type UnitRow } from './dexie';
-import { createSessionUid } from './recorder';
+import { createSessionUid, getMockPersistenceFailureMode } from './recorder';
 import type { AARMetrics, Grade, SessionMode } from '@/sim/types';
 
 export interface UnitTraineeSummary {
@@ -35,11 +35,11 @@ const inMemorySessions: SessionRow[] = [];
 const inMemoryTrainees: TraineeRow[] = [];
 const inMemoryUnits: UnitRow[] = [];
 
-function callsignToUid(callsign: string): string {
+export function callsignToUid(callsign: string): string {
   return `trainee-${callsign.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function unitNameToUid(name: string): string {
+export function unitNameToUid(name: string): string {
   return `unit-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
@@ -48,9 +48,21 @@ export async function saveCompletedSession(
   traineeCallsign = 'VIPER-2',
   unitName = 'ALPHA COY'
 ): Promise<void> {
+  if (
+    getMockPersistenceFailureMode() === 'SESSION' ||
+    getMockPersistenceFailureMode() === 'BOTH'
+  ) {
+    throw new Error('Simulated SessionRepo persistence failure');
+  }
+
   const traineeUid = session.traineeUid || callsignToUid(traineeCallsign);
   const unitUid = unitNameToUid(unitName);
   const startedAt = session.startedAt && session.startedAt > 0 ? session.startedAt : Date.now();
+  const resolvedCallsign =
+    session.traineeUid && session.traineeUid.startsWith('trainee-')
+      ? session.traineeUid.replace(/^trainee-/, '').toUpperCase()
+      : traineeCallsign;
+
   const sessionToSave: SessionRow = {
     ...session,
     startedAt,
@@ -64,7 +76,7 @@ export async function saveCompletedSession(
       inMemoryUnits.push({ uid: unitUid, name: unitName });
     }
     if (!inMemoryTrainees.some((t) => t.uid === traineeUid)) {
-      inMemoryTrainees.push({ uid: traineeUid, unitUid, callsign: traineeCallsign });
+      inMemoryTrainees.push({ uid: traineeUid, unitUid, callsign: resolvedCallsign });
     }
     const existingIndex = inMemorySessions.findIndex((s) => s.uid === sessionToSave.uid);
     if (existingIndex >= 0) {
@@ -83,7 +95,7 @@ export async function saveCompletedSession(
 
     const existingTrainee = await db.trainees.get(traineeUid);
     if (!existingTrainee) {
-      await db.trainees.put({ uid: traineeUid, unitUid, callsign: traineeCallsign });
+      await db.trainees.put({ uid: traineeUid, unitUid, callsign: resolvedCallsign });
     }
 
     await db.sessions.put(sessionToSave);

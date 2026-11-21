@@ -97,8 +97,8 @@ export class DrishtiDatabase extends Dexie {
   public difficulty!: Table<DifficultyRow, string>;
   public settings!: Table<SettingRow, string>;
 
-  constructor() {
-    super('DrishtiCuasDb');
+  constructor(databaseName = 'DrishtiCuasDb') {
+    super(databaseName);
     this.version(1).stores({
       units: 'uid, name',
       trainees: 'uid, unitUid, &callsign',
@@ -140,10 +140,115 @@ export class DrishtiDatabase extends Dexie {
   }
 }
 
+export interface EventLogValidationResult {
+  isValid: boolean;
+  reason?: string;
+}
+
+/**
+ * Validates the completeness and integrity of a historical simulation event log
+ * before permitting AAR metric reconstruction (e.g., G-score).
+ *
+ * Rules:
+ * - Must contain at least SIM_START and terminal SESSION_END.
+ * - Sequence numbers must be strictly 1-based and contiguous (seq = i + 1).
+ * - All events with sessionUid must match the session or initial event's sessionUid.
+ * - Aborted sessions are rejected as incomplete.
+ * - If session is provided, mode and scenarioId must match between session and SIM_START.
+ */
+export function validateHistoricalEventLog(
+  events?: SimEvent[],
+  session?: SessionRow
+): EventLogValidationResult {
+  if (!events || events.length < 2) {
+    return {
+      isValid: false,
+      reason: 'Event stream must contain at least SIM_START and SESSION_END',
+    };
+  }
+
+  const firstEvent = events[0];
+  if (firstEvent.type !== 'SIM_START') {
+    return {
+      isValid: false,
+      reason: `First event must be SIM_START, received ${firstEvent.type}`,
+    };
+  }
+
+  const lastEvent = events[events.length - 1];
+  if (lastEvent.type !== 'SESSION_END') {
+    return {
+      isValid: false,
+      reason: `Terminal event must be SESSION_END, received ${lastEvent.type}`,
+    };
+  }
+
+  if (Boolean(lastEvent.payload?.aborted) || Boolean(session?.aborted)) {
+    return {
+      isValid: false,
+      reason: 'Session was aborted; event history is non-terminal or incomplete',
+    };
+  }
+
+  const expectedSessionUid = session?.uid;
+  const firstStoredUid = (firstEvent as StoredSimEvent).sessionUid;
+
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.seq !== i + 1) {
+      return {
+        isValid: false,
+        reason: `Discontinuous sequence number at index ${i}: expected seq ${i + 1}, found ${ev.seq}`,
+      };
+    }
+
+    const storedEv = ev as StoredSimEvent;
+    if (storedEv.sessionUid) {
+      if (expectedSessionUid && storedEv.sessionUid !== expectedSessionUid) {
+        return {
+          isValid: false,
+          reason: `Event sessionUid mismatch at seq ${ev.seq}: expected ${expectedSessionUid}, found ${storedEv.sessionUid}`,
+        };
+      }
+      if (firstStoredUid && storedEv.sessionUid !== firstStoredUid) {
+        return {
+          isValid: false,
+          reason: `Inconsistent sessionUid within event stream at seq ${ev.seq}`,
+        };
+      }
+    }
+  }
+
+  if (session) {
+    if (
+      firstEvent.payload?.mode &&
+      session.mode &&
+      firstEvent.payload.mode !== session.mode
+    ) {
+      return {
+        isValid: false,
+        reason: `Session mode (${session.mode}) differs from SIM_START mode (${firstEvent.payload.mode})`,
+      };
+    }
+    if (
+      firstEvent.payload?.scenarioId &&
+      session.scenarioId &&
+      firstEvent.payload.scenarioId !== session.scenarioId
+    ) {
+      return {
+        isValid: false,
+        reason: `Session scenarioId (${session.scenarioId}) differs from SIM_START scenarioId (${firstEvent.payload.scenarioId})`,
+      };
+    }
+  }
+
+  return { isValid: true };
+}
+
 /**
  * Safe, repeatable migration logic for legacy Task 20 session records.
  * Identifies legacy synthetic records (uid pattern: demo-{callsign}-{timestamp}),
- * and reconstructs missing gScore if valid events are available.
+ * and reconstructs missing gScore only if a complete, valid event log is available.
  */
 export function migrateLegacySession(
   session: SessionRow,
@@ -156,23 +261,26 @@ export function migrateLegacySession(
     session.isSynthetic = false;
   }
 
-  // 2. Reconstruct missing gScore if sufficient stored events exist
+  // 2. Reconstruct missing gScore ONLY if complete, valid stored events exist
   if (
     session.metrics &&
     (session.metrics.gScore === undefined || session.metrics.gScore === null)
   ) {
     if (storedEvents && storedEvents.length > 0) {
-      try {
-        const entry = session.scenarioId
-          ? getScenarioCatalogEntry(session.scenarioId)
-          : undefined;
-        const spec = entry ? entry.getSpec() : undefined;
-        const reconstructed = aggregateAARMetrics(storedEvents, spec);
-        if (reconstructed && typeof reconstructed.gScore === 'number') {
-          session.metrics.gScore = reconstructed.gScore;
+      const validation = validateHistoricalEventLog(storedEvents, session);
+      if (validation.isValid) {
+        try {
+          const entry = session.scenarioId
+            ? getScenarioCatalogEntry(session.scenarioId)
+            : undefined;
+          const spec = entry ? entry.getSpec() : undefined;
+          const reconstructed = aggregateAARMetrics(storedEvents, spec);
+          if (reconstructed && typeof reconstructed.gScore === 'number') {
+            session.metrics.gScore = reconstructed.gScore;
+          }
+        } catch {
+          // If event reconstruction fails or data incomplete, do not invent G
         }
-      } catch {
-        // If event reconstruction fails or data incomplete, do not invent G
       }
     }
   }

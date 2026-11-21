@@ -7,6 +7,7 @@ import type { ApprovedSensorObservation } from '@/render3d/types';
 import { evaluateSensorObservation } from '@/sim/sensorObservation';
 import { useSessionStore } from '@/store/sessionStore';
 import { db } from '@/db/dexie';
+import { setMockPersistenceFailureMode } from '@/db/recorder';
 import { importSessionJson, stableJson, sha256 } from '@/db/aarTransfer';
 
 export interface DrishtiPresentationRecord {
@@ -133,6 +134,19 @@ export interface DrishtiTestBridge {
   clearDexieEvents: (sessionUid: string) => Promise<void>;
   getDexieSessions: () => Promise<import('@/db/dexie').SessionRow[]>;
   getDexieSession: (uid: string) => Promise<import('@/db/dexie').SessionRow | undefined>;
+  getDexieEvents: (sessionUid: string) => Promise<import('@/db/dexie').StoredSimEvent[]>;
+  closeDb: () => Promise<void>;
+  openAar: () => void;
+  setCallsign: (callsign: string) => void;
+  getDexieVersion: () => number;
+  setMockPersistenceFailureMode: (mode: 'NONE' | 'EVENTS' | 'SESSION' | 'BOTH') => void;
+  getPersistenceState: () => {
+    status: string;
+    hasFailedRow: boolean;
+    hasFailedRecorder: boolean;
+    latestSavedUid: string | null;
+  };
+  triggerRetrySave: () => Promise<boolean>;
   createSignedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
   createChecksummedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
 }
@@ -761,6 +775,47 @@ export function installDrishtiTestBridge(
     async getDexieSession(uid: string): Promise<import('@/db/dexie').SessionRow | undefined> {
       if (typeof indexedDB === 'undefined') return undefined;
       return await db.sessions.get(uid);
+    },
+
+    async getDexieEvents(sessionUid: string): Promise<import('@/db/dexie').StoredSimEvent[]> {
+      if (typeof indexedDB === 'undefined') return [];
+      return await db.events.where('sessionUid').equals(sessionUid).sortBy('seq');
+    },
+
+    async closeDb(): Promise<void> {
+      if (typeof indexedDB !== 'undefined') {
+        db.close();
+      }
+    },
+
+    openAar(): void {
+      useSessionStore.getState().openAar();
+    },
+
+    setCallsign(callsign: string): void {
+      useSessionStore.getState().setCallsign(callsign);
+    },
+
+    getDexieVersion(): number {
+      return db.verno;
+    },
+
+    setMockPersistenceFailureMode(mode: 'NONE' | 'EVENTS' | 'SESSION' | 'BOTH'): void {
+      setMockPersistenceFailureMode(mode);
+    },
+
+    getPersistenceState() {
+      const s = useSessionStore.getState();
+      return {
+        status: s.sessionPersistenceStatus,
+        hasFailedRow: Boolean(s.lastFailedSessionRow),
+        hasFailedRecorder: Boolean(s.lastFailedRecorder),
+        latestSavedUid: s.latestSavedSessionUid,
+      };
+    },
+
+    async triggerRetrySave(): Promise<boolean> {
+      return await useSessionStore.getState().retrySaveSession();
     },
 
     async createSignedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {

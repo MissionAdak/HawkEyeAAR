@@ -20,7 +20,7 @@ import {
 import { validate } from '@/director/validate';
 import { type OperatorFeedback, createOperatorFeedback } from '@/sim/operatorFeedback';
 import { aggregateAARMetrics } from '@/sim/metrics';
-import { saveCompletedSession, seedDemoSessionsIfEmpty } from '@/db/sessionRepo';
+import { callsignToUid, saveCompletedSession, seedDemoSessionsIfEmpty } from '@/db/sessionRepo';
 import type { SessionRow } from '@/db/dexie';
 
 // Global singleton instances of SimEngine and SimClock
@@ -76,8 +76,10 @@ export interface SessionState {
   selectedScenarioId: string;
   simSpeed: number;
   currentCallsign: string;
+  currentSessionTraineeUid: string;
   latestSavedSessionUid: string | null;
   lastFailedSessionRow: SessionRow | null;
+  lastFailedRecorder: EventRecorder | null;
   retrySaveSession: () => Promise<boolean>;
   setCallsign: (callsign: string) => void;
 
@@ -143,21 +145,38 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   currentScenarioId: DEFAULT_SCENARIO_ID,
   simSpeed: 1.0,
   currentCallsign: 'VIPER-2',
+  currentSessionTraineeUid: 'trainee-viper-2',
   latestSavedSessionUid: null,
   sessionPersistenceStatus: 'IDLE',
   lastFailedSessionRow: null,
+  lastFailedRecorder: null,
   retrySaveSession: async () => {
     const failedRow = get().lastFailedSessionRow;
     if (!failedRow) {
       return false;
     }
     set({ sessionPersistenceStatus: 'SAVING' });
+    const failedRecorder = get().lastFailedRecorder;
+
     try {
-      await saveCompletedSession(failedRow, get().currentCallsign);
+      // 1. Drain / flush unpersisted events if recorder was retained
+      if (failedRecorder) {
+        await failedRecorder.flush();
+      }
+
+      // 2. Strict immutable operator attribution: use failedRow.traineeUid, NEVER get().currentCallsign!
+      const callsign = failedRow.traineeUid.startsWith('trainee-')
+        ? failedRow.traineeUid.replace(/^trainee-/, '').toUpperCase()
+        : 'VIPER-2';
+
+      // 3. Persist session metadata
+      await saveCompletedSession(failedRow, callsign);
+
       set({
         latestSavedSessionUid: failedRow.uid,
         sessionPersistenceStatus: 'SAVED',
         lastFailedSessionRow: null,
+        lastFailedRecorder: null,
       });
       return true;
     } catch (error) {
@@ -466,6 +485,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     }
 
+    const sessionTraineeUid = callsignToUid(get().currentCallsign);
+    set({ currentSessionTraineeUid: sessionTraineeUid });
+
     const recorderForSession = new EventRecorder();
     activeRecorder = recorderForSession;
 
@@ -481,14 +503,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           isSimRunning: false,
         });
 
-        // Persist session to sessionRepo (Rules.md R4.4, Task 20)
+        // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2)
         try {
           const currentSpec = engineInstance.spec ?? spec;
           const metrics = aggregateAARMetrics(engineInstance.events, currentSpec);
           const sessionUid = recorderForSession.getSessionUid();
+          const immutableTraineeUid =
+            get().currentSessionTraineeUid || callsignToUid(get().currentCallsign);
+          const sessionCallsign = immutableTraineeUid.startsWith('trainee-')
+            ? immutableTraineeUid.replace(/^trainee-/, '').toUpperCase()
+            : get().currentCallsign;
+
           const sessionRow: SessionRow = {
             uid: sessionUid,
-            traineeUid: '',
+            traineeUid: immutableTraineeUid,
             mode: engineInstance.mode,
             startedAt: recorderForSession.getStartedAt(),
             durationMs: engineInstance.tickIndex * 50,
@@ -501,31 +529,44 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             unverified: false,
             isSynthetic: false,
           };
-          set({ sessionPersistenceStatus: 'SAVING', lastFailedSessionRow: null });
+          set({
+            sessionPersistenceStatus: 'SAVING',
+            lastFailedSessionRow: null,
+            lastFailedRecorder: null,
+          });
           void (async () => {
             try {
-              await saveCompletedSession(sessionRow, get().currentCallsign);
+              // 1. Drain and persist all buffered events first
+              await recorderForSession.stop();
+              // 2. Persist session metadata
+              await saveCompletedSession(sessionRow, sessionCallsign);
+              // 3. Mark SAVED only when BOTH event stream and metadata succeed
               set({
                 latestSavedSessionUid: sessionUid,
                 sessionPersistenceStatus: 'SAVED',
                 lastFailedSessionRow: null,
+                lastFailedRecorder: null,
               });
             } catch (error) {
-              console.error('[SessionStore] Failed to persist session to sessionRepo:', error);
+              console.error(
+                '[SessionStore] Failed to persist session to sessionRepo / recorder:',
+                error
+              );
               set({
                 sessionPersistenceStatus: 'ERROR',
                 lastFailedSessionRow: sessionRow,
+                lastFailedRecorder: recorderForSession,
               });
             }
           })();
         } catch (metricsError) {
           console.error('[SessionStore] Failed to aggregate metrics on SESSION_END:', metricsError);
-          set({ sessionPersistenceStatus: 'ERROR', lastFailedSessionRow: null });
+          set({
+            sessionPersistenceStatus: 'ERROR',
+            lastFailedSessionRow: null,
+            lastFailedRecorder: recorderForSession,
+          });
         }
-
-        void recorderForSession.stop().catch((error) => {
-          console.error('[Recorder] Failed to finish session:', error);
-        });
       }
     };
 

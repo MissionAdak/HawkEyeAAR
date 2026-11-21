@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { migrateLegacySession, type SessionRow } from '@/db/dexie';
+import {
+  migrateLegacySession,
+  validateHistoricalEventLog,
+  type SessionRow,
+  type StoredSimEvent,
+} from '@/db/dexie';
 import {
   saveCompletedSession,
   getTraineeSessions,
@@ -8,7 +13,7 @@ import {
 } from '@/db/sessionRepo';
 import type { SimEvent } from '@/sim/types';
 
-describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconciliation (Critical A & B)', () => {
+describe('TASK 20-A2 — Legacy IndexedDB Migration & Historical Metric Reconciliation (Critical A & B)', () => {
   beforeEach(() => {
     clearSessionRepoForTest();
   });
@@ -28,7 +33,6 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
         scenarioId: 'DEMO-1',
         aborted: false,
         unverified: false,
-        // isSynthetic is undefined in legacy Task 20 records
       };
 
       const migrated = migrateLegacySession(legacySyntheticEval);
@@ -89,33 +93,39 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
 
     it('excludes migrated legacy synthetic records from REAL operational scope while retaining them in DEMO scope', async () => {
       // 1. Insert legacy synthetic EVAL session
-      await saveCompletedSession({
-        uid: 'demo-viper2-1700000000000',
-        traineeUid: 'trainee-viper-2',
-        mode: 'EVAL',
-        startedAt: 1700000000000,
-        durationMs: 120000,
-        score: 86,
-        grade: 'PROFICIENT_IN_SIMULATION',
-        dStart: 0.5,
-        metrics: createMockMetrics(86, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
-        scenarioId: 'DEMO-1',
-      }, 'VIPER-2');
+      await saveCompletedSession(
+        {
+          uid: 'demo-viper2-1700000000000',
+          traineeUid: 'trainee-viper-2',
+          mode: 'EVAL',
+          startedAt: 1700000000000,
+          durationMs: 120000,
+          score: 86,
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.5,
+          metrics: createMockMetrics(86, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+          scenarioId: 'DEMO-1',
+        },
+        'VIPER-2'
+      );
 
       // 2. Insert real operational EVAL session
-      await saveCompletedSession({
-        uid: 'session-viper2-real-001',
-        traineeUid: 'trainee-viper-2',
-        mode: 'EVAL',
-        startedAt: 1700000020000,
-        durationMs: 120000,
-        score: 95,
-        grade: 'PROFICIENT_IN_SIMULATION',
-        dStart: 0.5,
-        metrics: createMockMetrics(95, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
-        scenarioId: 'DEMO-1',
-        isSynthetic: false,
-      }, 'VIPER-2');
+      await saveCompletedSession(
+        {
+          uid: 'session-viper2-real-001',
+          traineeUid: 'trainee-viper-2',
+          mode: 'EVAL',
+          startedAt: 1700000020000,
+          durationMs: 120000,
+          score: 95,
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.5,
+          metrics: createMockMetrics(95, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+          scenarioId: 'DEMO-1',
+          isSynthetic: false,
+        },
+        'VIPER-2'
+      );
 
       // 3. Query under REAL scope: should only see the real session
       const realSessions = await getTraineeSessions('VIPER-2', 'asc', 'REAL');
@@ -132,11 +142,113 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
     });
   });
 
-  describe('Critical B: Historical gScore Reconstruction and Missing Data Representation', () => {
-    it('reconstructs actual G value from stored event history using authoritative aggregateAARMetrics()', () => {
-      // Create representative stored event stream where a hostile attack drone was engaged and neutralized
+  describe('Critical B: Event Log Completeness Validation (validateHistoricalEventLog)', () => {
+    it('rejects empty or single-event logs', () => {
+      expect(validateHistoricalEventLog([]).isValid).toBe(false);
+      expect(
+        validateHistoricalEventLog([{ seq: 1, tMs: 0, type: 'SIM_START', payload: {} }]).isValid
+      ).toBe(false);
+    });
+
+    it('rejects stream that does not begin with SIM_START', () => {
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 100, type: 'TRACK_INIT', trackNo: 'T-01', payload: {} },
+        { seq: 2, tMs: 200, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+      const result = validateHistoricalEventLog(events);
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('First event must be SIM_START');
+    });
+
+    it('rejects stream that does not terminate with SESSION_END', () => {
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL' } },
+        { seq: 2, tMs: 1000, type: 'TRACK_INIT', trackNo: 'T-01', payload: {} },
+      ];
+      const result = validateHistoricalEventLog(events);
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Terminal event must be SESSION_END');
+    });
+
+    it('rejects aborted sessions as non-terminal / incomplete event history', () => {
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL' } },
+        { seq: 2, tMs: 1000, type: 'SESSION_END', payload: { aborted: true } },
+      ];
+      const result = validateHistoricalEventLog(events);
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('aborted');
+    });
+
+    it('rejects stream with discontinuous sequence numbers', () => {
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL' } },
+        { seq: 3, tMs: 1000, type: 'SESSION_END', payload: { aborted: false } }, // seq 2 missing
+      ];
+      const result = validateHistoricalEventLog(events);
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Discontinuous sequence number');
+    });
+
+    it('rejects stream with mismatched sessionUid in stored events', () => {
+      const events: StoredSimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL' }, sessionUid: 'sess-A' },
+        { seq: 2, tMs: 1000, type: 'SESSION_END', payload: { aborted: false }, sessionUid: 'sess-B' },
+      ];
+      const result = validateHistoricalEventLog(events);
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Inconsistent sessionUid');
+    });
+
+    it('rejects stream where SIM_START mode disagrees with stored session mode', () => {
+      const events: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'TRAIN', scenarioId: 'DEMO-1' } },
+        { seq: 2, tMs: 1000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+      const session: SessionRow = {
+        uid: 'sess-mode-mismatch',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 1700000000000,
+        durationMs: 1000,
+        score: 80,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.3,
+        metrics: createMockMetrics(80, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+        scenarioId: 'DEMO-1',
+      };
+      const result = validateHistoricalEventLog(events, session);
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toContain('Session mode');
+    });
+
+    it('accepts complete, contiguous, matching event log', () => {
+      const events: StoredSimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'DEMO-1' }, sessionUid: 'sess-valid' },
+        { seq: 2, tMs: 1000, type: 'TRACK_INIT', trackNo: 'T-01', payload: {}, sessionUid: 'sess-valid' },
+        { seq: 3, tMs: 2000, type: 'SESSION_END', payload: { aborted: false }, sessionUid: 'sess-valid' },
+      ];
+      const session: SessionRow = {
+        uid: 'sess-valid',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 1700000000000,
+        durationMs: 2000,
+        score: 80,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.3,
+        metrics: createMockMetrics(80, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+        scenarioId: 'DEMO-1',
+      };
+      const result = validateHistoricalEventLog(events, session);
+      expect(result.isValid).toBe(true);
+    });
+  });
+
+  describe('Critical B: Historical gScore Reconstruction Fixtures & Missing Data Handling', () => {
+    it('reconstructs exact numerical G = 100 for a neutralized hostile target', () => {
       const storedEvents: SimEvent[] = [
-        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'DEMO-1' } },
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'SINGLE-TARGET-EVAL' } },
         {
           seq: 2,
           tMs: 2000,
@@ -152,21 +264,20 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
           tMs: 5000,
           type: 'ENGAGE',
           trackNo: 'T-01',
-          payload: { effector: 'RF_SOFTKILL', rangeM: 1800, cer: 0.001 },
+          payload: { effector: 'RF_SOFTKILL', rangeM: 1100, cer: 0.001 },
         },
         {
           seq: 6,
           tMs: 6000,
           type: 'ENGAGE_RESULT',
           trackNo: 'T-01',
-          payload: { success: true, effector: 'RF_SOFTKILL' },
+          payload: { killed: true, effector: 'RF_SOFTKILL' },
         },
         { seq: 7, tMs: 7000, type: 'SESSION_END', payload: { aborted: false } },
       ];
 
-      // Legacy session whose metrics object lacked gScore
       const legacySession: SessionRow = {
-        uid: 'session-legacy-with-events',
+        uid: 'session-reconstructed-100',
         traineeUid: 'trainee-viper-2',
         mode: 'EVAL',
         startedAt: 1700000000000,
@@ -176,26 +287,109 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
         dStart: 0.3,
         metrics: {
           ...createMockMetrics(95, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
-          gScore: undefined as unknown as number, // Missing in historical record
+          gScore: undefined as unknown as number,
         },
-        scenarioId: 'DEMO-1',
+        scenarioId: 'SINGLE-TARGET-EVAL',
       };
 
-      expect(legacySession.metrics.gScore).toBeUndefined();
-
       const migrated = migrateLegacySession(legacySession, storedEvents);
-      expect(migrated.metrics.gScore).toBeDefined();
-      expect(typeof migrated.metrics.gScore).toBe('number');
-      expect(migrated.metrics.gScore).toBeGreaterThan(0);
+      expect(migrated.metrics.gScore).toBe(100);
     });
 
-    it('leaves gScore explicitly undefined when stored events are unavailable (never invents a value or defaults to zero)', () => {
-      const legacySessionNoEvents: SessionRow = {
-        uid: 'session-legacy-incomplete',
+    it('reconstructs exact numerical G = 30 for an engaged but leaked hostile target', () => {
+      const storedEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'SINGLE-TARGET-EVAL' } },
+        {
+          seq: 2,
+          tMs: 2000,
+          type: 'TRACK_INIT',
+          trackNo: 'T-01',
+          entityId: 'H-1',
+          payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 },
+        },
+        { seq: 3, tMs: 3000, type: 'DESIGNATE', trackNo: 'T-01', payload: {} },
+        { seq: 4, tMs: 4000, type: 'CLASSIFY', trackNo: 'T-01', payload: { label: 'HOSTILE_ATTACK' } },
+        {
+          seq: 5,
+          tMs: 5000,
+          type: 'ENGAGE',
+          trackNo: 'T-01',
+          payload: { effector: 'RF_SOFTKILL', rangeM: 1100, cer: 0.001 },
+        },
+        {
+          seq: 6,
+          tMs: 6000,
+          type: 'ENGAGE_RESULT',
+          trackNo: 'T-01',
+          payload: { killed: false, effector: 'RF_SOFTKILL' },
+        },
+        { seq: 7, tMs: 7000, type: 'LEAK', trackNo: 'T-01', payload: {} },
+        { seq: 8, tMs: 8000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+
+      const legacySession: SessionRow = {
+        uid: 'session-reconstructed-30',
         traineeUid: 'trainee-viper-2',
         mode: 'EVAL',
         startedAt: 1700000000000,
-        durationMs: 120000,
+        durationMs: 8000,
+        score: 65,
+        grade: 'DEVELOPING',
+        dStart: 0.3,
+        metrics: {
+          ...createMockMetrics(65, 'DEVELOPING', 'EVAL'),
+          gScore: undefined as unknown as number,
+        },
+        scenarioId: 'SINGLE-TARGET-EVAL',
+      };
+
+      const migrated = migrateLegacySession(legacySession, storedEvents);
+      expect(migrated.metrics.gScore).toBe(30);
+    });
+
+    it('reconstructs exact numerical G = 0 for an unopposed hostile leaker and preserves genuine zero', () => {
+      const storedEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'SINGLE-TARGET-EVAL' } },
+        {
+          seq: 2,
+          tMs: 2000,
+          type: 'TRACK_INIT',
+          trackNo: 'T-01',
+          entityId: 'H-1',
+          payload: { trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK', valueInr: 100000 },
+        },
+        { seq: 3, tMs: 7000, type: 'LEAK', trackNo: 'T-01', payload: {} },
+        { seq: 4, tMs: 8000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+
+      const legacySession: SessionRow = {
+        uid: 'session-reconstructed-zero',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 1700000000000,
+        durationMs: 8000,
+        score: 40,
+        grade: 'NEEDS_RETRAINING',
+        dStart: 0.3,
+        metrics: {
+          ...createMockMetrics(40, 'NEEDS_RETRAINING', 'EVAL'),
+          gScore: undefined as unknown as number,
+        },
+        scenarioId: 'SINGLE-TARGET-EVAL',
+      };
+
+      const migrated = migrateLegacySession(legacySession, storedEvents);
+      expect(migrated.metrics.gScore).toBe(0);
+      expect(migrated.metrics.gScore).not.toBeUndefined();
+    });
+
+    it('leaves gScore undefined when event log is missing or invalid (never approximates or invents)', () => {
+      const legacySession: SessionRow = {
+        uid: 'session-invalid-stream',
+        traineeUid: 'trainee-viper-2',
+        mode: 'EVAL',
+        startedAt: 1700000000000,
+        durationMs: 8000,
         score: 80,
         grade: 'PROFICIENT_IN_SIMULATION',
         dStart: 0.3,
@@ -206,13 +400,17 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
         scenarioId: 'DEMO-1',
       };
 
-      // Pass empty events array
-      const migrated = migrateLegacySession(legacySessionNoEvents, []);
+      // Discontinuous events (missing seq 2)
+      const invalidEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'DEMO-1' } },
+        { seq: 3, tMs: 8000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+
+      const migrated = migrateLegacySession(legacySession, invalidEvents);
       expect(migrated.metrics.gScore).toBeUndefined();
-      expect(migrated.metrics.gScore).not.toBe(0);
     });
 
-    it('preserves a genuine measured G value of zero without treating it as missing data', () => {
+    it('preserves an existing genuine G score of zero without re-evaluating or treating as missing', () => {
       const zeroGSession: SessionRow = {
         uid: 'session-genuine-zero-g',
         traineeUid: 'trainee-viper-2',
@@ -224,7 +422,7 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
         dStart: 0.3,
         metrics: {
           ...createMockMetrics(45, 'NEEDS_RETRAINING', 'EVAL'),
-          gScore: 0, // Genuine 0 (e.g., unopposed leaker)
+          gScore: 0, // Genuine measured zero
         },
         scenarioId: 'DEMO-1',
       };
@@ -234,7 +432,7 @@ describe('TASK 20-A1 — Legacy IndexedDB Migration & Historical Metric Reconcil
       expect(migrated.metrics.gScore).not.toBeUndefined();
     });
 
-    it('preserves a positive measured G score on newly created sessions', () => {
+    it('preserves a positive measured G score without modification', () => {
       const positiveGSession: SessionRow = {
         uid: 'session-positive-g',
         traineeUid: 'trainee-viper-2',
