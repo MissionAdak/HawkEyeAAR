@@ -684,6 +684,27 @@ Files: `src/sim/snapshotHash.ts`, `src/sim/types.ts`, `src/sim/engine.ts`, `src/
 - [x] High-Priority G (Production Lifecycle Integration): Verified full 6 ground-truth classes in `SPECTRUM-1` across threats and decoys (`HOSTILE_ATTACK`, `HOSTILE_ISR`, `SWARM_ELEMENT`, `CIVIL_UAS`, `BIRD`, `FRIENDLY`), proving ground-truth classification usage. Tested sequential persistence failure recovery (events failure alone, metadata failure alone, atomic retry, deduplication).
 - [x] Final Acceptance & Regression Gate: `tsc --noEmit` clean (0 errors), ESLint clean (0 errors, 0 warnings), 46 Vitest test files (607 unit/golden tests passing 100%), production and e2e builds clean (~1.76 MB dist bundle), and full Playwright E2E suite (53 tests passing 100% across all 10 suites). Production deployment branch `gh-pages` preserved untouched at `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`.
 
+### TASK-20-A5 — Final Longitudinal AAR Integrity, Cross-Task Regression & Release Acceptance · P0 · B/D · 1.5 h
+Files: `src/ui/HotWash.tsx`, `tests/unit/task20CrossTaskIntegration.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] Section 1 (Complete Production Session Lifecycle & Persistence Co-ordination): Verified that completed and aborted sessions produce exactly one authoritative terminal `SESSION_END` event; contiguous 1-based sequence numbering is maintained; trainee attribution is locked at session initialization and preserved across persistence retries and callsign switches; metadata and event write failures are handled independently with zero duplication; status transitions to `SAVED` strictly upon dual-promise resolution.
+- [x] Section 2 & 4 (Scenario Provenance, Snapshot Verification & Adversarial Fault-Injection Matrix): Implemented and verified all 10 adversarial fault-injection scenarios in `tests/unit/task20CrossTaskIntegration.spec.ts`:
+  1. Altered scenario snapshot data with unchanged digest $\to$ fails closed, $G$ undefined.
+  2. Changed digest with unchanged scenario data $\to$ fails closed, $G$ undefined.
+  3. Incorrect configuration hash $\to$ fails closed, $G$ undefined, identifies config mismatch.
+  4. Incorrect simulation version $\to$ fails closed, $G$ undefined.
+  5. Incorrect schema version $\to$ fails closed, $G$ undefined.
+  6. Unknown dynamic scenario without snapshot $\to$ fails closed, $G$ undefined.
+  7. Non-contiguous sequence numbers and duplicate events $\to$ rejected, $G$ undefined.
+  8. Truncated event stream lacking terminal `SESSION_END` $\to$ rejected, $G$ undefined.
+  9. Aborted session presented as completed evaluation $\to$ rejected, $G$ undefined.
+  10. Mutated catalog scenario: snapshot takes precedence over mutated catalog; if snapshot missing and catalog altered, digest mismatch fails closed.
+- [x] Section 3 (Historical G Reconstruction & Genuine Zero G Distinction): Verified bit-identical $G$ reconstruction matching authoritative `aggregateAARMetrics()` on valid event streams; verified strict distinction between missing historical $G$ (`undefined`, rendered as `—`) and genuine measured zero $G$ ($G = 0$, rendered as `0`).
+- [x] Section 5 (Longitudinal History, EVAL Compliance & Aggregator Mutual Consistency): Enforced Rules.md R4.4 across all aggregators (`TrendChart`, `SessionTable`, `UnitView`, `getCohortStats`, `getUnitTraineeSummaries`); confirmed cohort mean EVAL score and leaderboard rank exclude TRAIN, DEMO, and unverified sessions; verified honest empty states when no sessions exist; verified concurrency-safe demo seeding with single in-flight promise and zero duplicate rows.
+- [x] Section 6 (Export, Import & Replay Durability): Verified SHA-256 integrity checksum verification during AAR import; tampered export payloads reject without committing partial writes to the database; verified deterministic AAR replay scrubber state reconstruction across forward and backward timeline navigation.
+- [x] Section 7 (UI Metric Display Hardening): Updated `src/ui/HotWash.tsx` scorecard breakdown strip ($D, C, G, R$) to use nullish coalescing `metrics.gScore ?? '—'` ensuring missing historical metrics render `'—'` rather than blank or zero.
+- [x] Final Regression Verification Gate: `tsc --noEmit` clean (0 errors), ESLint clean (0 errors, 0 warnings), 47 Vitest test files (631 unit/integration tests passing 100%), production and E2E builds clean, full Playwright E2E suite (53 tests passing across all 10 suites). Protected deployment branch `gh-pages` preserved untouched at `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4`.
+
+
 
 
 

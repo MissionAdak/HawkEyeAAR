@@ -303,19 +303,19 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             <div className="grid grid-cols-4 gap-2 text-center">
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">DETECTION [D]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.dScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.dScore ?? '—'}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">CLASSIFY [C]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.cScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.cScore ?? '—'}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">ENGAGE [G]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.gScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.gScore ?? '—'}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">ROE [R]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.rScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.rScore ?? '—'}</div>
               </div>
             </div>
           </div>
