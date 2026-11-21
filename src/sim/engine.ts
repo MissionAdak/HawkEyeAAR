@@ -277,6 +277,9 @@ export class SimEngine {
       seed: spec.seed,
       mode: spec.mode,
       difficulty: spec.difficulty,
+      configHash: spec.configHash,
+      simVersion: spec.simVersion,
+      schemaVersion: spec.schemaVersion,
     });
 
     // Initial radar sweep at T=0

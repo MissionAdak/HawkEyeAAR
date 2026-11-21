@@ -6,7 +6,8 @@ import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
 import type { ApprovedSensorObservation } from '@/render3d/types';
 import { evaluateSensorObservation } from '@/sim/sensorObservation';
 import { useSessionStore } from '@/store/sessionStore';
-import { db } from '@/db/dexie';
+import { db, DrishtiDatabase } from '@/db/dexie';
+import Dexie from 'dexie';
 import { setMockPersistenceFailureMode } from '@/db/recorder';
 import { importSessionJson, stableJson, sha256 } from '@/db/aarTransfer';
 
@@ -147,6 +148,16 @@ export interface DrishtiTestBridge {
     latestSavedUid: string | null;
   };
   triggerRetrySave: () => Promise<boolean>;
+  createLegacyV1Database: (
+    databaseName: string,
+    initialData?: {
+      units?: import('@/db/dexie').UnitRow[];
+      trainees?: import('@/db/dexie').TraineeRow[];
+      sessions?: import('@/db/dexie').SessionRow[];
+      events?: import('@/db/dexie').StoredSimEvent[];
+    }
+  ) => Promise<void>;
+  openCustomDatabase: (databaseName: string) => Promise<{ verno: number; sessions: import('@/db/dexie').SessionRow[] }>;
   createSignedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
   createChecksummedAarPayload: (sessionUid: string, events: import('@/sim/types').SimEvent[]) => Promise<string>;
 }
@@ -831,6 +842,47 @@ export function installDrishtiTestBridge(
         sha256: checksum,
       };
       return JSON.stringify(payload, null, 2);
+    },
+
+    async createLegacyV1Database(
+      databaseName: string,
+      initialData?: {
+        units?: import('@/db/dexie').UnitRow[];
+        trainees?: import('@/db/dexie').TraineeRow[];
+        sessions?: import('@/db/dexie').SessionRow[];
+        events?: import('@/db/dexie').StoredSimEvent[];
+      }
+    ): Promise<void> {
+      const legacyDb = new Dexie(databaseName);
+      legacyDb.version(1).stores({
+        units: 'uid, name',
+        trainees: 'uid, unitUid, &callsign',
+        scenarios: 'uid, seed, mode, benchId, createdAt',
+        sessions: 'uid, traineeUid, mode, startedAt, [traineeUid+mode+startedAt], [mode+traineeUid+startedAt]',
+        trackResults: '++id, sessionUid, [sessionUid+trackNo], trueClass',
+        events: '++id, sessionUid, [sessionUid+tMs+seq], [sessionUid+type+tMs]',
+        chaosLog: '++id, sessionUid, type',
+        traineeProfile: '[traineeUid+metric]',
+        difficulty: 'traineeUid',
+        settings: 'key',
+      });
+      await legacyDb.open();
+      if (initialData) {
+        if (initialData.units) await legacyDb.table('units').bulkPut(initialData.units);
+        if (initialData.trainees) await legacyDb.table('trainees').bulkPut(initialData.trainees);
+        if (initialData.sessions) await legacyDb.table('sessions').bulkPut(initialData.sessions);
+        if (initialData.events) await legacyDb.table('events').bulkPut(initialData.events);
+      }
+      legacyDb.close();
+    },
+
+    async openCustomDatabase(databaseName: string): Promise<{ verno: number; sessions: import('@/db/dexie').SessionRow[] }> {
+      const customDb = new DrishtiDatabase(databaseName);
+      await customDb.open();
+      const verno = customDb.verno;
+      const sessions = await customDb.sessions.toArray();
+      customDb.close();
+      return { verno, sessions };
     },
 
     async createChecksummedAarPayload(sessionUid: string, events: import('@/sim/types').SimEvent[]): Promise<string> {

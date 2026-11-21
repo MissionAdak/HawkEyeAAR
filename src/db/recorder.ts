@@ -74,17 +74,19 @@ export class EventRecorder {
   }
 
   public async flush(): Promise<void> {
-    // Reuse an in-progress flush instead of starting a competing write.
-    if (this.flushPromise) {
-      return this.flushPromise;
-    }
+    while (this.flushPromise || this.buffer.length > 0) {
+      if (this.flushPromise) {
+        await this.flushPromise;
+        continue;
+      }
 
-    this.flushPromise = this.flushPendingEvents();
+      this.flushPromise = this.flushPendingEvents();
 
-    try {
-      await this.flushPromise;
-    } finally {
-      this.flushPromise = null;
+      try {
+        await this.flushPromise;
+      } finally {
+        this.flushPromise = null;
+      }
     }
   }
 

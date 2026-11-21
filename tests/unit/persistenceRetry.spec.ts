@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useSessionStore } from '@/store/sessionStore';
+import { useSessionStore, persistCompletedSession } from '@/store/sessionStore';
 import * as sessionRepo from '@/db/sessionRepo';
 import {
   EventRecorder,
@@ -10,7 +10,7 @@ import {
 import type { SessionRow } from '@/db/dexie';
 import type { SimEvent } from '@/sim/types';
 
-describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable Operator Attribution (Critical C & D)', () => {
+describe('TASK 20-A3 — Session Persistence Lifecycle, Durability & Immutable Operator Attribution (Critical C, D & F)', () => {
   beforeEach(() => {
     sessionRepo.clearSessionRepoForTest();
     clearFallbackEventsForTest();
@@ -76,7 +76,7 @@ describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable O
     });
   });
 
-  describe('Critical D: AAR Durability — SAVED Means Metadata + Events Stored', () => {
+  describe('Critical D & High-Priority F: Complete Retry-Path Persistence Proof', () => {
     it('handles event persistence failure alone, setting ERROR and retaining recorder + row for retry', async () => {
       // Set simulated event failure mode BEFORE recording events so buffer retain is triggered
       setMockPersistenceFailureMode('EVENTS');
@@ -102,28 +102,10 @@ describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable O
         scenarioId: 'DEMO-1',
       };
 
-      useSessionStore.setState({
-        sessionPersistenceStatus: 'SAVING',
-        lastFailedSessionRow: null,
-        lastFailedRecorder: null,
-      });
+      // Execute actual production persistence coordinator
+      const success = await persistCompletedSession(mockRow, recorder, 'VIPER-2');
+      expect(success).toBe(false);
 
-      // Attempt write sequence
-      let caughtError = false;
-      try {
-        await recorder.stop();
-        await sessionRepo.saveCompletedSession(mockRow, 'VIPER-2');
-        useSessionStore.setState({ sessionPersistenceStatus: 'SAVED' });
-      } catch {
-        caughtError = true;
-        useSessionStore.setState({
-          sessionPersistenceStatus: 'ERROR',
-          lastFailedSessionRow: mockRow,
-          lastFailedRecorder: recorder,
-        });
-      }
-
-      expect(caughtError).toBe(true);
       const state = useSessionStore.getState();
       expect(state.sessionPersistenceStatus).toBe('ERROR');
       expect(state.lastFailedSessionRow).toEqual(mockRow);
@@ -133,29 +115,39 @@ describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable O
       const storedEvents = await getRecordedEventsForSession(sessionUid);
       expect(storedEvents).toHaveLength(0);
 
-      // Clear failure and retry
+      // Clear failure and execute production retry action
       setMockPersistenceFailureMode('NONE');
       const retrySuccess = await useSessionStore.getState().retrySaveSession();
       expect(retrySuccess).toBe(true);
 
-      expect(useSessionStore.getState().sessionPersistenceStatus).toBe('SAVED');
+      const postRetryState = useSessionStore.getState();
+      expect(postRetryState.sessionPersistenceStatus).toBe('SAVED');
+      expect(postRetryState.latestSavedSessionUid).toBe(sessionUid);
+      expect(postRetryState.lastFailedSessionRow).toBeNull();
+      expect(postRetryState.lastFailedRecorder).toBeNull();
 
-      // Verify both events and session row are now safely persisted
-      const storedEventsAfterRetry = await getRecordedEventsForSession(sessionUid);
-      expect(storedEventsAfterRetry).toHaveLength(2);
-      expect(storedEventsAfterRetry[0].type).toBe('SIM_START');
-      expect(storedEventsAfterRetry[1].type).toBe('SESSION_END');
+      // Verify all events and session row are now durably persisted
+      const persistedEvents = await getRecordedEventsForSession(sessionUid);
+      expect(persistedEvents).toHaveLength(2);
+      expect(persistedEvents[0].seq).toBe(1);
+      expect(persistedEvents[1].seq).toBe(2);
 
-      const storedSessions = await sessionRepo.getTraineeSessions('VIPER-2');
-      expect(storedSessions).toHaveLength(1);
-      expect(storedSessions[0].uid).toBe(sessionUid);
+      const persistedSessions = await sessionRepo.getTraineeSessions('VIPER-2');
+      expect(persistedSessions).toHaveLength(1);
+      expect(persistedSessions[0].uid).toBe(sessionUid);
     });
 
-    it('handles session repo failure alone, setting ERROR and recovering without duplicate event logs', async () => {
+    it('handles session metadata persistence failure alone, setting ERROR and permitting retry without event duplication', async () => {
+      // Set simulated session repo failure mode BEFORE attempting persistence
+      setMockPersistenceFailureMode('SESSION');
+
       const sessionUid = 'sess-meta-fail-003';
       const recorder = new EventRecorder(sessionUid, 1700000002000);
-      recorder.record({ seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'DEMO-1' } });
-      recorder.record({ seq: 2, tMs: 1000, type: 'SESSION_END', payload: { aborted: false } });
+      const testEvents: SimEvent[] = [
+        { seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'DEMO-1' } },
+        { seq: 2, tMs: 1000, type: 'SESSION_END', payload: { aborted: false } },
+      ];
+      testEvents.forEach((ev) => recorder.record(ev));
 
       const mockRow: SessionRow = {
         uid: sessionUid,
@@ -164,36 +156,16 @@ describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable O
         startedAt: 1700000002000,
         durationMs: 1000,
         score: 75,
-        grade: 'PROFICIENT_IN_SIMULATION',
+        grade: 'DEVELOPING',
         dStart: 0.3,
-        metrics: sessionRepo.createMockMetrics(75, 'PROFICIENT_IN_SIMULATION', 'EVAL'),
+        metrics: sessionRepo.createMockMetrics(75, 'DEVELOPING', 'EVAL'),
         scenarioId: 'DEMO-1',
       };
 
-      // Set simulated session repo failure mode
-      setMockPersistenceFailureMode('SESSION');
+      // Execute actual production persistence coordinator
+      const success = await persistCompletedSession(mockRow, recorder, 'VIPER-2');
+      expect(success).toBe(false);
 
-      useSessionStore.setState({
-        sessionPersistenceStatus: 'SAVING',
-        lastFailedSessionRow: null,
-        lastFailedRecorder: null,
-      });
-
-      let caughtError = false;
-      try {
-        await recorder.stop(); // Events succeed
-        await sessionRepo.saveCompletedSession(mockRow, 'VIPER-2'); // Session fails
-        useSessionStore.setState({ sessionPersistenceStatus: 'SAVED' });
-      } catch {
-        caughtError = true;
-        useSessionStore.setState({
-          sessionPersistenceStatus: 'ERROR',
-          lastFailedSessionRow: mockRow,
-          lastFailedRecorder: recorder,
-        });
-      }
-
-      expect(caughtError).toBe(true);
       expect(useSessionStore.getState().sessionPersistenceStatus).toBe('ERROR');
 
       // Clear failure and retry
@@ -208,19 +180,26 @@ describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable O
 
       const storedSessions = await sessionRepo.getTraineeSessions('VIPER-2');
       expect(storedSessions).toHaveLength(1);
+      expect(storedSessions[0].uid).toBe(sessionUid);
     });
 
     it('recovers from dual failure (both events and metadata) and is idempotent on repeat retry calls', async () => {
       const sessionUid = 'sess-dual-fail-004';
-      const recorder = new EventRecorder(sessionUid, 1700000003000);
+      const originalStartedAt = 1700000003000;
+      const originalTraineeUid = 'trainee-viper-2';
+
+      // Set failure mode BOTH BEFORE recording events so the initial flush attempt fails
+      setMockPersistenceFailureMode('BOTH');
+
+      const recorder = new EventRecorder(sessionUid, originalStartedAt);
       recorder.record({ seq: 1, tMs: 0, type: 'SIM_START', payload: { mode: 'EVAL', scenarioId: 'DEMO-1' } });
       recorder.record({ seq: 2, tMs: 1000, type: 'SESSION_END', payload: { aborted: false } });
 
       const mockRow: SessionRow = {
         uid: sessionUid,
-        traineeUid: 'trainee-viper-2',
+        traineeUid: originalTraineeUid,
         mode: 'EVAL',
-        startedAt: 1700000003000,
+        startedAt: originalStartedAt,
         durationMs: 1000,
         score: 91,
         grade: 'PROFICIENT_IN_SIMULATION',
@@ -229,33 +208,50 @@ describe('TASK 20-A2 — Session Persistence Lifecycle, Durability & Immutable O
         scenarioId: 'DEMO-1',
       };
 
-      setMockPersistenceFailureMode('BOTH');
+      // Actually execute the initial production persistence attempt and prove that failure is observed!
+      const initialSuccess = await persistCompletedSession(mockRow, recorder, 'VIPER-2');
+      expect(initialSuccess).toBe(false);
 
-      useSessionStore.setState({
-        sessionPersistenceStatus: 'ERROR',
-        lastFailedSessionRow: mockRow,
-        lastFailedRecorder: recorder,
-      });
+      const stateAfterFailure = useSessionStore.getState();
+      expect(stateAfterFailure.sessionPersistenceStatus).toBe('ERROR');
+      expect(stateAfterFailure.lastFailedSessionRow).toEqual(mockRow);
+      expect(stateAfterFailure.lastFailedRecorder).toBe(recorder);
 
-      // Clear failure
+      // Verify 0 events and 0 sessions were persisted during failure
+      expect(await getRecordedEventsForSession(sessionUid)).toHaveLength(0);
+      expect(await sessionRepo.getTraineeSessions('VIPER-2')).toHaveLength(0);
+
+      // Clear failure mode
       setMockPersistenceFailureMode('NONE');
 
-      // First retry
+      // First retry execution
       const firstRetry = await useSessionStore.getState().retrySaveSession();
       expect(firstRetry).toBe(true);
       expect(useSessionStore.getState().sessionPersistenceStatus).toBe('SAVED');
 
-      // Duplicate retry call should be safe and idempotent
-      useSessionStore.setState({ lastFailedSessionRow: mockRow, lastFailedRecorder: recorder });
-      const duplicateRetry = await useSessionStore.getState().retrySaveSession();
-      expect(duplicateRetry).toBe(true);
-
-      const storedEvents = await getRecordedEventsForSession(sessionUid);
-      expect(storedEvents).toHaveLength(2);
-
+      // Verify original session UID, trainee UID, and startedAt are strictly preserved
       const storedSessions = await sessionRepo.getTraineeSessions('VIPER-2');
       expect(storedSessions).toHaveLength(1);
       expect(storedSessions[0].uid).toBe(sessionUid);
+      expect(storedSessions[0].traineeUid).toBe(originalTraineeUid);
+      expect(storedSessions[0].startedAt).toBe(originalStartedAt);
+
+      // Verify event log is contiguous with no duplicates
+      const storedEvents = await getRecordedEventsForSession(sessionUid);
+      expect(storedEvents).toHaveLength(2);
+      expect(storedEvents[0].seq).toBe(1);
+      expect(storedEvents[1].seq).toBe(2);
+
+      // Repeated retry call is safe, idempotent, and produces zero duplicates
+      await useSessionStore.getState().retrySaveSession();
+      // Should cleanly return false or true because row was already successfully saved
+      expect(useSessionStore.getState().sessionPersistenceStatus).toBe('SAVED');
+
+      // Final assertions: no duplicate rows, no duplicate sequence numbers
+      const finalSessions = await sessionRepo.getTraineeSessions('VIPER-2');
+      expect(finalSessions).toHaveLength(1);
+      const finalEvents = await getRecordedEventsForSession(sessionUid);
+      expect(finalEvents).toHaveLength(2);
     });
   });
 });

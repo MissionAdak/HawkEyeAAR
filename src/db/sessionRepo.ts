@@ -87,7 +87,7 @@ export async function saveCompletedSession(
     return;
   }
 
-  await db.transaction('rw', [db.units, db.trainees, db.sessions], async () => {
+  await db.transaction('rw', [db.units, db.trainees, db.sessions, db.scenarios], async () => {
     const existingUnit = await db.units.get(unitUid);
     if (!existingUnit) {
       await db.units.put({ uid: unitUid, name: unitName });
@@ -99,6 +99,20 @@ export async function saveCompletedSession(
     }
 
     await db.sessions.put(sessionToSave);
+
+    if (sessionToSave.scenarioSpecSnapshot) {
+      const existingScenario = await db.scenarios.get(sessionToSave.uid);
+      if (!existingScenario) {
+        await db.scenarios.put({
+          uid: sessionToSave.uid,
+          seed: sessionToSave.scenarioSeed ?? sessionToSave.scenarioSpecSnapshot.seed,
+          mode: sessionToSave.mode,
+          benchId: sessionToSave.scenarioSpecSnapshot.benchId,
+          createdAt: sessionToSave.startedAt,
+          specJson: JSON.stringify(sessionToSave.scenarioSpecSnapshot),
+        });
+      }
+    }
   });
 }
 

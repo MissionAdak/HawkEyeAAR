@@ -37,6 +37,48 @@ export function getIsFinalizingSession(): boolean {
   return isFinalizingSession;
 }
 
+/**
+ * Coordinated atomic persistence pipeline for completed sessions (TASK 20-A2, TASK 20-A3).
+ * Transitions status to 'SAVED' strictly when both event queue drain and session metadata succeed.
+ */
+export async function persistCompletedSession(
+  sessionRow: SessionRow,
+  recorder: EventRecorder,
+  sessionCallsign: string
+): Promise<boolean> {
+  useSessionStore.setState({
+    sessionPersistenceStatus: 'SAVING',
+    lastFailedSessionRow: null,
+    lastFailedRecorder: null,
+  });
+
+  try {
+    // 1. Drain and persist all buffered events first
+    await recorder.stop();
+    // 2. Persist session metadata
+    await saveCompletedSession(sessionRow, sessionCallsign);
+    // 3. Mark SAVED only when BOTH event stream and metadata succeed
+    useSessionStore.setState({
+      latestSavedSessionUid: sessionRow.uid,
+      sessionPersistenceStatus: 'SAVED',
+      lastFailedSessionRow: null,
+      lastFailedRecorder: null,
+    });
+    return true;
+  } catch (error) {
+    console.error(
+      '[SessionStore] Failed to persist session to sessionRepo / recorder:',
+      error
+    );
+    useSessionStore.setState({
+      sessionPersistenceStatus: 'ERROR',
+      lastFailedSessionRow: sessionRow,
+      lastFailedRecorder: recorder,
+    });
+    return false;
+  }
+}
+
 export type SessionStatus = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'ABORTED';
 
 const initialSnapshot: UiSnapshot = {
@@ -503,7 +545,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           isSimRunning: false,
         });
 
-        // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2)
+        // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2, Task 20-A3)
         try {
           const currentSpec = engineInstance.spec ?? spec;
           const metrics = aggregateAARMetrics(engineInstance.events, currentSpec);
@@ -513,6 +555,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const sessionCallsign = immutableTraineeUid.startsWith('trainee-')
             ? immutableTraineeUid.replace(/^trainee-/, '').toUpperCase()
             : get().currentCallsign;
+
+          const snapshot: ScenarioSpec = JSON.parse(JSON.stringify(currentSpec));
 
           const sessionRow: SessionRow = {
             uid: sessionUid,
@@ -528,37 +572,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             aborted: isAborted,
             unverified: false,
             isSynthetic: false,
+            scenarioSpecSnapshot: snapshot,
+            scenarioSeed: currentSpec.seed,
+            scenarioDifficulty: currentSpec.difficulty,
+            scenarioConfigHash: currentSpec.configHash,
+            scenarioSimVersion: currentSpec.simVersion,
           };
-          set({
-            sessionPersistenceStatus: 'SAVING',
-            lastFailedSessionRow: null,
-            lastFailedRecorder: null,
-          });
-          void (async () => {
-            try {
-              // 1. Drain and persist all buffered events first
-              await recorderForSession.stop();
-              // 2. Persist session metadata
-              await saveCompletedSession(sessionRow, sessionCallsign);
-              // 3. Mark SAVED only when BOTH event stream and metadata succeed
-              set({
-                latestSavedSessionUid: sessionUid,
-                sessionPersistenceStatus: 'SAVED',
-                lastFailedSessionRow: null,
-                lastFailedRecorder: null,
-              });
-            } catch (error) {
-              console.error(
-                '[SessionStore] Failed to persist session to sessionRepo / recorder:',
-                error
-              );
-              set({
-                sessionPersistenceStatus: 'ERROR',
-                lastFailedSessionRow: sessionRow,
-                lastFailedRecorder: recorderForSession,
-              });
-            }
-          })();
+
+          void persistCompletedSession(sessionRow, recorderForSession, sessionCallsign);
         } catch (metricsError) {
           console.error('[SessionStore] Failed to aggregate metrics on SESSION_END:', metricsError);
           set({
