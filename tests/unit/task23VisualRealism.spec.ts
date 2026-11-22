@@ -491,11 +491,12 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
         const groundMesh = terrain.groundMesh;
         expect(groundMesh.position.y).toBe(-1);
 
-        // Update world matrix before raycasting
+        // Update world matrices for both group and mesh before raycasting
+        terrain.group.updateMatrixWorld(true);
         groundMesh.updateMatrixWorld(true);
 
         const raycaster = new THREE.Raycaster();
-        const rayDir = new THREE.Vector3(0, -1, 0);
+        const rayDir = new THREE.Vector3(0, -1, 0).normalize();
 
         function sampleMeshGroundY(simX: number, simY: number): number {
           // 1. Convert simulation coordinates to Three.js world coordinates:
@@ -506,9 +507,15 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
           raycaster.set(new THREE.Vector3(worldX, 1500, worldZ), rayDir);
           // 3. Intersect actual generated Three.js ground mesh
           const hits = raycaster.intersectObject(groundMesh, false);
-          // 6. Fail the test if no ground intersection is found
+          // 4. Fail the test if no ground intersection is found (fail-closed, requirement 6)
+          if (hits.length === 0 || !hits[0]) {
+            throw new Error(
+              `[TestTerrainSampling] Ground mesh intersection failed for preset '${preset}' at simulation coordinates (${simX.toFixed(2)}, ${simY.toFixed(2)}). ` +
+              `Supplied ground mesh did not produce any vertical ray intersections from Y=1500 downward.`
+            );
+          }
           expect(hits.length).toBeGreaterThan(0);
-          // 4. Obtain hit world-space Y coordinate (includes mesh position.y = -1)
+          // 5. Obtain hit world-space Y coordinate (includes mesh position.y = -1 and world transform)
           return hits[0].point.y;
         }
 
