@@ -99,8 +99,9 @@ export function isValidProducerSimTime(simMs: unknown): simMs is number {
 export function mapDroneTypeToAirframeSignature(droneType: DroneType): ObservedAirframeSignature {
   switch (droneType) {
     case 'FPV_ATTACK':
-    case 'SWARM_ELEMENT':
       return 'MULTIROTOR_COMPACT';
+    case 'SWARM_ELEMENT':
+      return 'MULTIROTOR_MICRO';
     case 'RECON_QUAD':
       return 'MULTIROTOR_WITH_CAMERA_POD';
     case 'CIVIL_UAS':

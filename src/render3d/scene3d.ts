@@ -389,20 +389,20 @@ export class Scene3D {
     }
 
     const canvas = document.createElement('canvas');
-    canvas.width = 128;
+    canvas.width = 160;
     canvas.height = 32;
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.fillStyle = 'rgba(13, 17, 23, 0.75)';
-      ctx.fillRect(0, 0, 128, 32);
+      ctx.fillRect(0, 0, 160, 32);
       ctx.strokeStyle = colorHex;
       ctx.lineWidth = 2;
-      ctx.strokeRect(1, 1, 126, 30);
-      ctx.font = 'bold 16px monospace';
+      ctx.strokeRect(1, 1, 158, 30);
+      ctx.font = 'bold 14px monospace';
       ctx.fillStyle = colorHex;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, 64, 16);
+      ctx.fillText(text, 80, 16);
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -413,7 +413,7 @@ export class Scene3D {
       depthTest: false,
     });
     const sprite = new THREE.Sprite(spriteMat);
-    sprite.scale.set(100, 25, 1);
+    sprite.scale.set(125, 25, 1);
     return sprite;
   }
 
@@ -527,7 +527,8 @@ export class Scene3D {
       colorHex = '#FF3333';
     }
 
-    const text = `${track.trackNo} [${labelTag}]`;
+    const altM = Math.round(track.pos.z);
+    const text = `${track.trackNo} [${labelTag}] ${altM}m`;
     if (record.currentLabelText === text) {
       return;
     }
@@ -535,20 +536,20 @@ export class Scene3D {
 
     if (typeof document !== 'undefined') {
       const canvas = document.createElement('canvas');
-      canvas.width = 128;
+      canvas.width = 160;
       canvas.height = 32;
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.fillStyle = 'rgba(13, 17, 23, 0.85)';
-        ctx.fillRect(0, 0, 128, 32);
+        ctx.fillRect(0, 0, 160, 32);
         ctx.strokeStyle = colorHex;
         ctx.lineWidth = 2;
-        ctx.strokeRect(1, 1, 126, 30);
-        ctx.font = 'bold 15px monospace';
+        ctx.strokeRect(1, 1, 158, 30);
+        ctx.font = 'bold 14px monospace';
         ctx.fillStyle = colorHex;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(text, 64, 16);
+        ctx.fillText(text, 80, 16);
       }
       const newTexture = new THREE.CanvasTexture(canvas);
       newTexture.minFilter = THREE.LinearFilter;
@@ -557,6 +558,7 @@ export class Scene3D {
       }
       record.labelSprite.material.map = newTexture;
       record.labelSprite.material.needsUpdate = true;
+      record.labelSprite.scale.set(125, 25, 1);
     }
   }
 

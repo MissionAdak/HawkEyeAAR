@@ -90,7 +90,7 @@ export class TargetModelFactory {
       case 'OBSERVED_MULTIROTOR': {
         const body = this.getMaterial('body_observed_multi', () => new THREE.MeshLambertMaterial({ color: 0x22272e }));
         const accent = this.getMaterial('accent_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
-        const rotors = this.getMaterial('rotors_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.3 }));
+        const rotors = this.getMaterial('rotors_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'RADAR_SYMBOL': {
@@ -151,6 +151,8 @@ export class TargetModelFactory {
       case 'OBSERVED_MULTIROTOR':
         if (signature === 'MULTIROTOR_COMPACT') {
           model = buildFpvAttackModel(palette);
+        } else if (signature === 'MULTIROTOR_MICRO' || signature === 'SWARM_ELEMENT') {
+          model = buildSwarmElementModel(palette);
         } else if (signature === 'MULTIROTOR_STANDARD') {
           model = buildCivilUasModel(palette);
         } else {

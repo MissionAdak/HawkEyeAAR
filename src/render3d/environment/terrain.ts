@@ -14,6 +14,24 @@ export interface TerrainBuildResult {
 }
 
 /**
+ * Queries authoritative procedural ground surface elevation in metres at the given simulation coordinates (simX, simY).
+ * Sim X -> Three.js X; Sim Y -> Three.js -Z.
+ * Ensures building foundations and ground assets align with the actual terrain geometry (Task 23.1 Section 6 & 7).
+ */
+export function getTerrainElevation(simX: number, simY: number, preset: string): number {
+  if (preset === 'MOUNTAIN_RIDGE') {
+    const threeX = simX;
+    const threeZ = -simY;
+    const distFromCenter = Math.hypot(threeX, threeZ);
+    if (distFromCenter > 1200) {
+      const ridgeFactor = Math.sin(threeX * 0.0012) * Math.cos(threeZ * 0.0009);
+      return Math.max(0, ridgeFactor * 180 + (distFromCenter - 1200) * 0.035);
+    }
+  }
+  return 0;
+}
+
+/**
  * Builds procedural 3D terrain surface, roads, and landscape features.
  * Adheres strictly to native Three.js geometry with zero external texture dependencies.
  */

@@ -62,10 +62,13 @@ function computeCursorCoords(
   canvas: HTMLCanvasElement
 ): { brg: number; rngKm: number } {
   const rect = canvas.getBoundingClientRect();
-  const dx = clientX - rect.left - 260;
-  const dy = 260 - (clientY - rect.top);
+  const cx = rect.width / 2;
+  const cy = rect.height / 2;
+  const radius = Math.min(cx, cy) - 15;
+  const scale = radius / 5000;
+  const dx = clientX - rect.left - cx;
+  const dy = cy - (clientY - rect.top);
 
-  const scale = 245 / 5000;
   const rangeM = Math.hypot(dx, dy) / scale;
   const bearingRad = Math.atan2(dx, dy);
   let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
@@ -481,6 +484,36 @@ export const Console: React.FC = () => {
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
+  const radarFrameRef = useRef<HTMLDivElement>(null);
+  const [radarSize, setRadarSize] = useState<number>(520);
+
+  // Responsive radar viewport dimension synchronization (Task 23.1 Section 4)
+  useEffect(() => {
+    const el = radarFrameRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = Math.round(entry.contentRect.width);
+        if (width >= 300 && width !== radarSize) {
+          setRadarSize(width);
+          if (canvasRef.current) {
+            canvasRef.current.width = width;
+            canvasRef.current.height = width;
+          }
+          if (canvas3dRef.current) {
+            canvas3dRef.current.width = width;
+            canvas3dRef.current.height = width;
+          }
+          renderer3dRef.current?.resize(width, width);
+        }
+      }
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [radarSize]);
+
   useEffect(() => {
     renderer3dRef.current?.setLowFidelity(lowFi);
   }, [lowFi]);
@@ -490,8 +523,9 @@ export const Console: React.FC = () => {
     if (!canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    canvas.width = 520;
-    canvas.height = 520;
+    const currentDim = radarSize || 520;
+    canvas.width = currentDim;
+    canvas.height = currentDim;
 
     const renderer = new ConsoleRenderer(canvas);
     rendererRef.current = renderer;
@@ -558,8 +592,9 @@ export const Console: React.FC = () => {
       return null;
     }
 
-    canvas3dRef.current.width = 520;
-    canvas3dRef.current.height = 520;
+    const currentDim = radarSize || 520;
+    canvas3dRef.current.width = currentDim;
+    canvas3dRef.current.height = currentDim;
 
     const r3d = new Renderer3D(canvas3dRef.current, {
       maxRangeM: CONFIG.thresholds.radarMaxRangeM,
@@ -789,10 +824,14 @@ export const Console: React.FC = () => {
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left - 260;
-    const clickY = 260 - (e.clientY - rect.top);
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const radius = Math.min(cx, cy) - 15;
+    const scale = radius / 5000;
+    const clickX = e.clientX - rect.left - cx;
+    const clickY = cy - (e.clientY - rect.top);
 
-    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.getOperatorTracks());
+    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.getOperatorTracks(), scale);
     if (nearestTrackNo) {
       designate(nearestTrackNo, 'CLICK');
     }
@@ -832,8 +871,8 @@ export const Console: React.FC = () => {
       {/* 3. Center Radar Scope Viewport */}
       <div className="console-center bg-carbon-950">
         <div className="flex items-center justify-center w-full h-full relative">
-          {/* Left Gutter: Range Rings Legend */}
-          <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-4 select-none">
+          {/* Left Gutter: Range Rings Legend (visible on ultra-wide tactical displays) */}
+          <div className="hidden 2xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-4 select-none">
             <div className="border-l border-phosphorDim pl-2">
               <span className="text-phosphor block font-bold">5.0 km</span>
               <span>MAX RADAR</span>
@@ -848,9 +887,10 @@ export const Console: React.FC = () => {
             </div>
           </div>
 
-          {/* 520px x 520px Canvas Frame bounded by var(--radar) */}
+          {/* Responsive Canvas Frame bounded by var(--radar) */}
           <div
-            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden"
+            ref={radarFrameRef}
+            className="radar-frame shrink-0 border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden"
             style={{
               width: 'var(--radar)',
               height: 'var(--radar)',
@@ -859,8 +899,8 @@ export const Console: React.FC = () => {
             {/* Native HTML5 2D Radar Canvas */}
             <canvas
               ref={canvasRef}
-              width={520}
-              height={520}
+              width={radarSize}
+              height={radarSize}
               onMouseMove={handleMouseMove}
               onMouseLeave={() => setMousePos(null)}
               onClick={handleCanvasClick}
@@ -870,8 +910,8 @@ export const Console: React.FC = () => {
             {/* Three.js 3D Viewport Canvas */}
             <canvas
               ref={canvas3dRef}
-              width={520}
-              height={520}
+              width={radarSize}
+              height={radarSize}
               style={{ touchAction: 'none' }}
               className={`cursor-grab active:cursor-grabbing ${viewMode === '3D' ? 'block' : 'hidden'}`}
             />
@@ -986,8 +1026,8 @@ export const Console: React.FC = () => {
             )}
           </div>
 
-          {/* Right Gutter: Active Mode Telemetry */}
-          <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-4 select-none">
+          {/* Right Gutter: Active Mode Telemetry (visible on ultra-wide tactical displays) */}
+          <div className="hidden 2xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-4 select-none">
             <div className="border-r border-line pr-2 text-right">
               <span className="text-text-main block font-bold">30 RPM</span>
               <span>SWEEP RATE</span>

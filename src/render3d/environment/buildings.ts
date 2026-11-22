@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './types';
 import { toThree } from '../coords';
+import { getTerrainElevation } from './terrain';
 
 // Tactical colors
 const COLOR_LINE = 0x262b33;
@@ -196,6 +197,20 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
     return false;
   }
 
+  function pointInPolygon(x: number, y: number, polygon: [number, number][]): boolean {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i][0];
+      const yi = polygon[i][1];
+      const xj = polygon[j][0];
+      const yj = polygon[j][1];
+
+      const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
   for (const zone of zones) {
     if (zone.type === 'URBAN') {
       const minX = Math.min(...zone.polygon.map((p) => p[0]));
@@ -205,64 +220,167 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
 
       const width = maxX - minX;
       const depth = maxY - minY;
-      const targetBldCount = Math.min(10, Math.max(4, Math.floor(Math.sqrt(width * depth) / 120)));
+      // Target building count scales with area, supporting varied clusters in larger zones
+      const targetBldCount = Math.min(22, Math.max(6, Math.floor(Math.sqrt(width * depth) / 75)));
+
+      // Generate 2 to 4 irregular sub-district cluster nodes with varied street angles
+      const clusterCount = Math.min(4, Math.max(2, Math.floor(targetBldCount / 5)));
+      interface DistrictCluster {
+        cx: number;
+        cy: number;
+        spreadX: number;
+        spreadY: number;
+        angle: number;
+      }
+      const clusters: DistrictCluster[] = [];
+      for (let c = 0; c < clusterCount; c++) {
+        const cx = minX + 45 + nextRng() * Math.max(20, width - 90);
+        const cy = minY + 45 + nextRng() * Math.max(20, depth - 90);
+        clusters.push({
+          cx,
+          cy,
+          spreadX: Math.max(50, width * 0.25),
+          spreadY: Math.max(50, depth * 0.25),
+          angle: (nextRng() - 0.5) * 0.8,
+        });
+      }
 
       let placedInZone = 0;
       let attempts = 0;
-      const maxAttempts = targetBldCount * 12;
+      const maxAttempts = targetBldCount * 25;
 
       while (placedInZone < targetBldCount && attempts < maxAttempts) {
         attempts++;
-        const candidateX = minX + 35 + nextRng() * Math.max(20, width - 70);
-        const candidateY = minY + 35 + nextRng() * Math.max(20, depth - 70);
+        const cluster = clusters[placedInZone % clusterCount];
+        // Non-uniform spacing along irregular street vectors
+        const u = (nextRng() - 0.5) * 2 * cluster.spreadX;
+        const v = (nextRng() - 0.5) * 2 * cluster.spreadY;
+        const candidateX = cluster.cx + u * Math.cos(cluster.angle) - v * Math.sin(cluster.angle);
+        const candidateY = cluster.cy + u * Math.sin(cluster.angle) + v * Math.cos(cluster.angle);
 
-        const bldSizeX = 35 + nextRng() * 45; // 35m to 80m
-        const bldSizeZ = 35 + nextRng() * 45; // 35m to 80m
-        const footRadius = Math.hypot(bldSizeX, bldSizeZ) / 2 + 10; // 10m margin
+        // Enforce strict containment inside the authorized zone polygon
+        if (!pointInPolygon(candidateX, candidateY, zone.polygon)) {
+          continue;
+        }
 
+        // Select building archetype deterministically
+        // (Commercial Tower, Mid-Rise Apartment, Low-Rise Townhouse, Industrial Logistics Warehouse, Comms Tower)
+        const archetypeRoll = nextRng();
+        let bldType = 'COMMERCIAL';
+        let bldSizeX = 40;
+        let bldSizeZ = 40;
+        let bldHeight = 25;
+        let bldMat = bldMatConcrete;
+        let bldName = `Urban Commercial Complex ${zone.id}-${placedInZone + 1}`;
+        let rooftopEquipment: 'HVAC' | 'WATERTANK' | 'MAST' | 'NONE' = 'NONE';
+
+        if (archetypeRoll < 0.35) {
+          bldType = 'COMMERCIAL';
+          bldSizeX = 35 + nextRng() * 40;
+          bldSizeZ = 35 + nextRng() * 40;
+          bldHeight = Math.max(18, Math.min(zone.heightM, zone.heightM * 0.70 + nextRng() * (zone.heightM * 0.30)));
+          bldMat = placedInZone % 2 === 0 ? bldMatConcrete : bldMatDark;
+          bldName = `Commercial Complex ${zone.id}-${placedInZone + 1}`;
+          rooftopEquipment = bldHeight > 22 ? 'HVAC' : 'NONE';
+        } else if (archetypeRoll < 0.65) {
+          bldType = 'RESIDENTIAL_MID';
+          bldSizeX = 42 + nextRng() * 28;
+          bldSizeZ = 22 + nextRng() * 16;
+          bldHeight = Math.max(14, Math.min(zone.heightM * 0.85, zone.heightM * 0.50 + nextRng() * (zone.heightM * 0.32)));
+          bldMat = bldMatDark;
+          bldName = `Residential Apartment Block ${zone.id}-${placedInZone + 1}`;
+          rooftopEquipment = bldHeight > 16 ? 'WATERTANK' : 'NONE';
+        } else if (archetypeRoll < 0.82) {
+          bldType = 'RESIDENTIAL_LOW';
+          bldSizeX = 18 + nextRng() * 16;
+          bldSizeZ = 18 + nextRng() * 16;
+          bldHeight = Math.max(8, Math.min(zone.heightM * 0.45, 8 + nextRng() * 8));
+          bldMat = bldMatConcrete;
+          bldName = `Townhouse Cluster ${zone.id}-${placedInZone + 1}`;
+          rooftopEquipment = 'NONE';
+        } else if (archetypeRoll < 0.94) {
+          bldType = 'INDUSTRIAL';
+          bldSizeX = 48 + nextRng() * 32;
+          bldSizeZ = 30 + nextRng() * 20;
+          bldHeight = Math.max(10, Math.min(zone.heightM * 0.40, 10 + nextRng() * 6));
+          bldMat = bldMatHangar;
+          bldName = `Logistics Warehouse ${zone.id}-${placedInZone + 1}`;
+          rooftopEquipment = 'NONE';
+        } else {
+          bldType = 'TOWER';
+          bldSizeX = 12;
+          bldSizeZ = 12;
+          bldHeight = Math.max(22, Math.min(zone.heightM, zone.heightM * 0.85 + nextRng() * (zone.heightM * 0.15)));
+          bldMat = radarMat;
+          bldName = `Urban Communications Mast ${zone.id}-${placedInZone + 1}`;
+          rooftopEquipment = 'MAST';
+        }
+
+        const footRadius = Math.hypot(bldSizeX, bldSizeZ) / 2 + 8; // 8m non-overlap clearance margin
         if (isOverlapping(candidateX, candidateY, footRadius)) {
           continue;
         }
 
-        const bldHeight = Math.max(
-          18,
-          Math.min(zone.heightM, zone.heightM * 0.65 + nextRng() * (zone.heightM * 0.35))
-        );
-
-        const bldGeom = new THREE.BoxGeometry(bldSizeX, bldHeight, bldSizeZ);
-        geometries.push(bldGeom);
-
-        const bldMat = placedInZone % 2 === 0 ? bldMatConcrete : bldMatDark;
-        const bldMesh = new THREE.Mesh(bldGeom, bldMat);
-
+        // Account for actual procedural terrain ground elevation (zero floating, zero subterranean)
+        const groundY = getTerrainElevation(candidateX, candidateY, preset);
         const bldThree = toThree(candidateX, candidateY, 0);
-        bldMesh.position.set(bldThree.x, bldHeight / 2, bldThree.z);
 
-        // Variable orientation (yaw rotation)
-        const yawAngle = (nextRng() - 0.5) * 0.5;
+        let bldMesh: THREE.Mesh;
+        if (bldType === 'TOWER') {
+          const spireGeom = new THREE.CylinderGeometry(1.2, 4.5, bldHeight, 6);
+          geometries.push(spireGeom);
+          bldMesh = new THREE.Mesh(spireGeom, bldMat);
+          bldMesh.position.set(bldThree.x, groundY + bldHeight / 2, bldThree.z);
+        } else {
+          const bldGeom = new THREE.BoxGeometry(bldSizeX, bldHeight, bldSizeZ);
+          geometries.push(bldGeom);
+          bldMesh = new THREE.Mesh(bldGeom, bldMat);
+          bldMesh.position.set(bldThree.x, groundY + bldHeight / 2, bldThree.z);
+        }
+
+        // Street-aligned orientation with subtle natural jitter
+        const yawAngle = cluster.angle + (nextRng() - 0.5) * 0.2;
         bldMesh.rotation.y = yawAngle;
         group.add(bldMesh);
 
         // Add wireframe rooftop outline for tactical visual definition
-        const wireGeom = new THREE.EdgesGeometry(bldGeom);
-        geometries.push(wireGeom);
-        const wire = new THREE.LineSegments(wireGeom, towerWireMat);
-        wire.position.copy(bldMesh.position);
-        wire.rotation.copy(bldMesh.rotation);
-        group.add(wire);
+        if (bldType !== 'TOWER') {
+          const wireGeom = new THREE.EdgesGeometry(bldMesh.geometry);
+          geometries.push(wireGeom);
+          const wire = new THREE.LineSegments(wireGeom, towerWireMat);
+          wire.position.copy(bldMesh.position);
+          wire.rotation.copy(bldMesh.rotation);
+          group.add(wire);
+        }
 
-        // Rooftop HVAC unit
-        if (bldHeight > 25 && nextRng() > 0.3) {
-          const hvacGeom = new THREE.BoxGeometry(bldSizeX * 0.3, 3, bldSizeZ * 0.3);
+        // Rooftop equipment additions
+        if (rooftopEquipment === 'HVAC') {
+          const hvacGeom = new THREE.BoxGeometry(bldSizeX * 0.28, 2.8, bldSizeZ * 0.28);
           geometries.push(hvacGeom);
           const hvacMesh = new THREE.Mesh(hvacGeom, radarMat);
           hvacMesh.position.set(
             bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.3,
-            bldHeight + 1.5,
+            groundY + bldHeight + 1.4,
             bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.3
           );
           hvacMesh.rotation.copy(bldMesh.rotation);
           group.add(hvacMesh);
+        } else if (rooftopEquipment === 'WATERTANK') {
+          const tankGeom = new THREE.CylinderGeometry(2.5, 2.5, 4, 8);
+          geometries.push(tankGeom);
+          const tankMesh = new THREE.Mesh(tankGeom, radarMat);
+          tankMesh.position.set(
+            bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.25,
+            groundY + bldHeight + 2,
+            bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.25
+          );
+          group.add(tankMesh);
+        } else if (rooftopEquipment === 'MAST') {
+          const beaconGeom = new THREE.SphereGeometry(1.2, 6, 6);
+          geometries.push(beaconGeom);
+          const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
+          beaconMesh.position.set(bldThree.x, groundY + bldHeight + 0.8, bldThree.z);
+          group.add(beaconMesh);
         }
 
         placedFootprints.push({ x: candidateX, y: candidateY, radius: footRadius });
@@ -271,13 +389,13 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
         const bldId = `BLD-${zone.id}-${placedInZone}`;
         registerBuilding(bldMesh, {
           id: bldId,
-          name: `Urban Commercial Complex ${zone.id}-${placedInZone}`,
-          category: 'BUILDING',
+          name: bldName,
+          category: bldType === 'TOWER' ? 'TOWER' : 'BUILDING',
           preset,
           zoneId: zone.id,
-          position: { x: candidateX, y: candidateY, z: 0 },
+          position: { x: candidateX, y: candidateY, z: groundY },
           heightM: bldHeight,
-          elevationM: bldHeight,
+          elevationM: groundY + bldHeight,
           maskingProperties: {
             heightM: zone.heightM,
             shadowM: zone.shadowM,
@@ -285,7 +403,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
             zoneType: zone.type,
           },
           isObstructionEnvelope: false,
-          description: `Reinforced concrete commercial structure in ${zone.id}. Casts authoritative ${zone.shadowM}m radar shadow.`,
+          description: `Authoritative ${bldType.toLowerCase()} structure in ${zone.id}. Height ${Math.round(bldHeight)}m (zone envelope ${zone.heightM}m).`,
         });
       }
     }
