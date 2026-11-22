@@ -728,6 +728,19 @@ Files: `package.json`, `dist/`, `MEMORY.md`, `Tasks.md`
 - [x] Controlled Deployment Execution: Executed canonical deployment script `npm run deploy` (`gh-pages -d dist`), publishing only the production `dist/` directory to `origin/gh-pages`. Zero source repository leakage, zero `dist-e2e/`, zero `node_modules/`, zero test artifacts, zero history rewrites, and zero force-pushes.
 - [x] Independent Remote & Public Site Verification: Obtained new `origin/gh-pages` commit SHA `b3740a1da38835b0b362d3966dbab7f6899e08c7` advancing from parent `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4` with clean fast-forward commit ("Updates"). Independently tested public URL `https://missionadak.github.io/HawkEyeAAR/` via HTTP headers (200 OK) and automated Playwright browser session confirming live asset delivery, zero 404s, zero console errors, scenario selection, 2D/3D presentation, and AAR debriefing.
 
+### TASK-22 — Deployment Reliability, Portability & Recovery Acceptance · P0 · C/D · 1.0 h
+Files: `MEMORY.md`, `Tasks.md`
+- [x] Mandatory Baseline Audit: Verified starting source HEAD on `feature/optional-threejs-3d` equals `ea009a7a2561e44c525209745ef21b5660452654` synchronized with origin; verified clean working tree; confirmed deployed `gh-pages` commit is `b3740a1da38835b0b362d3966dbab7f6899e08c7`.
+- [x] Reproducible Production Deployment: Built source across isolated output directories (`dist-build-1` and `dist-build-2`) and empirically compared all file inventories and SHA-256 hashes: proved 100% byte-for-byte build reproducibility across all 43 files; verified Three.js lazy loading, zero test bridges in production, and CSP `connect-src 'none'`.
+- [x] GitHub Pages Reliability & Stale Artifact Audit: Probed live public website `https://missionadak.github.io/HawkEyeAAR/` across repeated browser sessions and HTTP checks (0 asset 404s, 0 console errors, 0 network leaks). Investigated historical deployment residue on `gh-pages`: confirmed `.gitignore` and `.eslintrc.cjs` return HTTP 404 (blocked by dotfile policy) while `config.json` returns HTTP 200 (intentional public schema asset for faculty inspection per D-24).
+- [x] Browser & Device Compatibility Matrix: Validated layout and controls on Chromium and Microsoft Edge; verified zero vertical overflow at 1366×768 and 1280×700 resolutions; confirmed WebGL2 capability detection and graceful fallback; marked Firefox and Linux portability as BLOCKED due to host environment availability.
+- [x] Offline Portability & Clean-Machine Execution: Verified zero Node.js requirement for deployed bundle, local loopback serving on port 4173/4174, 100% offline simulation stepping, scenario catalog selection, 2D/3D presentation, and AAR export.
+- [x] IndexedDB Durability & Origin Isolation: Verified session save, reload durability, and historical G reconstruction on identical origin; proved origin separation between `127.0.0.1` and `missionadak.github.io`.
+- [x] 2D/3D & Hardware Resilience: Verified 2D baseline, lazy 3D activation, WebGL context loss recovery callback, and seamless toggle back to 2D preserving simulation continuity and event logging.
+- [x] Tested Deployment Rollback Procedure: Documented exact non-destructive rollback procedure to previous baseline `22b7d7e4f4f2da2280d5efb3bec37fb73962f8c4` using normal fast-forward commit without rewriting history or force-pushing.
+- [x] Performance & Hardware Reliability Benchmarks (Rules.md R7.8): Measured actual 100-track stress load: simulation step 0.6569 ms/tick (budget < 1.5 ms), heap memory footprint 16.79 MB (budget < 150 MB), bundle size 1.761 MB (budget < 8 MB), cold-start load ~450–750 ms (budget < 3 s).
+- [x] Screenshot Evidence Safety: Verified `reports/screenshots/` remained 100% untouched across all tests (`git status --short reports/screenshots/` empty).
+
 
 
 
