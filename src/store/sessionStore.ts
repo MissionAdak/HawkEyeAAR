@@ -877,7 +877,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ui: {
         ...snapshot,
         difficulty:
-          engineInstance.spec && typeof snapshot.difficulty === 'number'
+          engineInstance.spec &&
+          typeof snapshot.difficulty === 'number' &&
+          Number.isFinite(snapshot.difficulty)
             ? snapshot.difficulty
             : state.ui.difficulty,
       },
