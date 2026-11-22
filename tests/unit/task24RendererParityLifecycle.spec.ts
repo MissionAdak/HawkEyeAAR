@@ -23,12 +23,6 @@ if (typeof globalThis.requestAnimationFrame === 'undefined') {
   globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
     const id = nextRafId++;
     scheduledRafCallbacks.set(id, cb);
-    setTimeout(() => {
-      if (scheduledRafCallbacks.has(id)) {
-        scheduledRafCallbacks.delete(id);
-        cb(Date.now());
-      }
-    }, 16);
     return id;
   };
 }
@@ -169,20 +163,8 @@ function createMockRenderer(): THREE.WebGLRenderer {
  */
 export function serializeAuthoritativeSimState(engine: SimEngine): string {
   const state = {
-    // 1. Scenario configuration metadata
-    spec: engine.spec
-      ? {
-          id: engine.spec.id,
-          seed: engine.spec.seed,
-          difficulty: engine.spec.difficulty,
-          mode: engine.spec.mode,
-          durationMs: engine.spec.durationMs,
-          threatsCount: engine.spec.threats?.length ?? 0,
-          decoysCount: engine.spec.decoys?.length ?? 0,
-          zonesCount: engine.spec.zones?.length ?? 0,
-          chaosCount: engine.spec.chaos?.length ?? 0,
-        }
-      : null,
+    // 1. Complete canonical scenario specification
+    spec: engine.spec ? JSON.parse(JSON.stringify(engine.spec)) : null,
 
     // 2. Simulation clock & sequence state
     tick: engine.tickIndex,
@@ -296,11 +278,19 @@ export function computeAuthoritativeStateHash(engine: SimEngine): string {
 describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle', () => {
   beforeEach(() => {
     clearWebGL2CapabilityCacheForTesting();
+    scheduledRafCallbacks.clear();
+    for (const k of Object.keys(windowListenersMap)) {
+      windowListenersMap[k] = [];
+    }
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
     clearWebGL2CapabilityCacheForTesting();
+    scheduledRafCallbacks.clear();
+    for (const k of Object.keys(windowListenersMap)) {
+      windowListenersMap[k] = [];
+    }
     vi.restoreAllMocks();
   });
 
@@ -371,7 +361,7 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
         { tRawMs: 2000, applyTick: 40, action: { type: 'CLASSIFY', trackNo: 'T-01', label: 'HOSTILE_ATTACK' as TrackClass } },
         { tRawMs: 3000, applyTick: 60, action: { type: 'SELECT_EFFECTOR', effectorId: 'RF_SOFTKILL' as EffectorId } },
         { tRawMs: 3000, applyTick: 60, action: { type: 'FIRE', trackNo: 'T-01' } },
-        { tRawMs: 3500, applyTick: 70, action: { type: 'ASSESS', trackNo: 'T-01', result: 'KILL' } },
+        { tRawMs: 3500, applyTick: 70, action: { type: 'ASSESS', trackNo: 'T-01', result: 'NO_KILL' } },
       ];
 
       for (const input of inputs) {
@@ -413,10 +403,8 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
       // Private engine.killRng cannot be serialized directly. Here, queue follow-on actions at tick 201,
       // advance both engines to draw from killRng, and verify identical event payloads and post-draw hashes.
       const followOnActions: UserAction[] = [
-        { tRawMs: 10050, applyTick: 201, action: { type: 'DESIGNATE', trackNo: 'T-02', via: 'CLICK' } },
-        { tRawMs: 10100, applyTick: 202, action: { type: 'CLASSIFY', trackNo: 'T-02', label: 'HOSTILE_ATTACK' as TrackClass } },
-        { tRawMs: 10150, applyTick: 203, action: { type: 'SELECT_EFFECTOR', effectorId: 'RF_SOFTKILL' as EffectorId } },
-        { tRawMs: 10150, applyTick: 203, action: { type: 'FIRE', trackNo: 'T-02' } },
+        { tRawMs: 10050, applyTick: 201, action: { type: 'SELECT_EFFECTOR', effectorId: 'INTERCEPTOR' as EffectorId } },
+        { tRawMs: 10050, applyTick: 201, action: { type: 'FIRE', trackNo: 'T-01' } },
       ];
       for (const act of followOnActions) {
         engine2D.inputQueue.push(act);
@@ -435,6 +423,29 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
       for (let i = 0; i < engine2D.events.length; i++) {
         expect(engine2D.events[i]).toEqual(engine3D.events[i]);
       }
+
+      // Assert explicit follow-on RNG alignment on ENGAGE and ENGAGE_RESULT events
+      const engageEvents2D = engine2D.events.filter((e) => e.type === 'ENGAGE');
+      const engageEvents3D = engine3D.events.filter((e) => e.type === 'ENGAGE');
+      expect(engageEvents2D.length).toBeGreaterThan(0);
+      expect(engageEvents2D).toEqual(engageEvents3D);
+
+      const engageResults2D = engine2D.events.filter((e) => e.type === 'ENGAGE_RESULT');
+      const engageResults3D = engine3D.events.filter((e) => e.type === 'ENGAGE_RESULT');
+      expect(engageResults2D.length).toBeGreaterThan(0);
+      expect(engageResults2D.length).toBe(engageResults3D.length);
+      for (let i = 0; i < engageResults2D.length; i++) {
+        const res2D = engageResults2D[i];
+        const res3D = engageResults3D[i];
+        expect(res2D.payload).toEqual(res3D.payload);
+        const p2D = res2D.payload as { killed?: boolean; u?: number; pk?: number };
+        const p3D = res3D.payload as { killed?: boolean; u?: number; pk?: number };
+        expect(p2D.u).toBeDefined();
+        expect(p2D.u).toBe(p3D.u);
+        expect(p2D.pk).toBe(p3D.pk);
+        expect(p2D.killed).toBe(p3D.killed);
+      }
+
       expect(computeAuthoritativeStateHash(engine2D)).toBe(computeAuthoritativeStateHash(engine3D));
 
       // Teardown
@@ -912,11 +923,13 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
         r3d.start();
         expect(scheduledRafCallbacks.size).toBe(0);
 
-        // 4. Assert all canvas listeners registered by renderer have been detached
+        // 4. Assert all canvas listeners and renderer-owned window listeners have been detached
         const canvasListeners = (canvas as unknown as { __listeners: Record<string, unknown[]> }).__listeners;
         for (const [evtName, arr] of Object.entries(canvasListeners)) {
           expect(arr, `Canvas event '${evtName}' should have 0 active listeners after disposal`).toHaveLength(0);
         }
+        const keydownListeners = windowListenersMap['keydown'] ?? [];
+        expect(keydownListeners, 'Window keydown listener registered by Renderer3D must be detached after disposal').toHaveLength(0);
 
         // 5. Assert real geometries, materials, and textures allocated by Scene3D were disposed
         expect(disposedGeometriesCount).toBeGreaterThan(initialDisposedGeoms);

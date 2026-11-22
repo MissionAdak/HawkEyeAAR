@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { execSync } from 'node:child_process';
 
 /**
  * TASK 25-B: Production Bundle & Lazy-Loading Acceptance
@@ -15,6 +16,14 @@ import zlib from 'node:zlib';
 describe('TASK 25-B: Production Bundle & Lazy-Loading Acceptance', () => {
   const distDir = path.resolve(process.cwd(), 'dist');
   const assetsDir = path.join(distDir, 'assets');
+
+  beforeAll(() => {
+    const indexPath = path.join(distDir, 'index.html');
+    if (!fs.existsSync(distDir) || !fs.existsSync(indexPath)) {
+      console.log('[TASK 25-B] Production dist artifacts missing. Executing build before acceptance assertion...');
+      execSync('npm run build', { stdio: 'inherit' });
+    }
+  }, 60000);
 
   it('validates production dist directory and index.html entry structure', () => {
     expect(fs.existsSync(distDir), 'Production dist directory must exist. Run npm run build first.').toBe(true);

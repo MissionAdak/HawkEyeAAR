@@ -185,13 +185,17 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
     const response = await page.goto('/');
     expect(response?.ok()).toBe(true);
 
-    // Verify Content-Security-Policy header
+    // Verify Content-Security-Policy: HTTP header and HTML <meta> must strictly enforce CSP
     const headers = response?.headers() ?? {};
-    const csp = headers['content-security-policy'] || '';
-    if (csp) {
-      expect(csp).toContain("connect-src 'none'");
-      expect(csp).toContain("default-src 'self'");
-    }
+    const headerCsp = headers['content-security-policy'];
+    expect(headerCsp, 'HTTP response header Content-Security-Policy must be present').toBeDefined();
+    expect(headerCsp).toContain("default-src 'self'");
+    expect(headerCsp).toContain("connect-src 'none'");
+
+    const metaCsp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+    expect(metaCsp, 'HTML <meta http-equiv="Content-Security-Policy"> must be present').not.toBeNull();
+    expect(metaCsp).toContain("default-src 'self'");
+    expect(metaCsp).toContain("connect-src 'none'");
 
     // Start session
     const startBtn = page.getByTestId('start-session-btn');
@@ -231,20 +235,30 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
 
     expect(chunkRequests.length).toBe(chunkRequestCountAfter3D);
 
-    // 5. Simulate complete network disconnection
+    // 5. Offline optional 3D verification (TASK 26-B Requirement C):
+    // Simulate complete network disconnection and verify switching between 2D and 3D
     await context.setOffline(true);
+    try {
+      // Step A: Switch from 3D to 2D while offline
+      await to2DBtn.click();
+      await expect(page.locator('.radar-frame canvas.cursor-crosshair')).toBeVisible();
 
-    // Advance simulation offline
-    await page.waitForTimeout(1000);
-    const offlineTick = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? 0);
-    expect(offlineTick).toBeGreaterThan(0);
+      // Step B: Re-enter already-loaded 3D view while offline
+      await to3DBtn.click();
+      await expect(canvas3D).toBeVisible();
 
-    // Switch between 2D and 3D while offline
-    await to2DBtn.click();
-    await expect(page.locator('.radar-frame canvas.cursor-crosshair')).toBeVisible();
+      // Step C: Verify optional view works without external requests or new chunk retrieval
+      expect(chunkRequests.length).toBe(chunkRequestCountAfter3D);
 
-    // Restore network
-    await context.setOffline(false);
+      // Step D: Verify authoritative simulation continues advancing offline
+      const offlineTick1 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? 0);
+      await page.waitForTimeout(500);
+      const offlineTick2 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? 0);
+      expect(offlineTick2).toBeGreaterThan(offlineTick1);
+    } finally {
+      // Step E: Cleanly restore network state during test teardown
+      await context.setOffline(false);
+    }
 
     // 6. Audit all captured requests: verify ZERO external requests
     const externalRequests = allRequests.filter((r) => {
