@@ -838,11 +838,15 @@ Files: `src/render3d/environment/buildings.ts`, `src/render3d/environment/terrai
 - [x] P1 Sanitized SafeTrackView E2E Evidence Check (Section 7): Added `getSanitizedTrackPositions()` to `src/testBridge/drishtiTestBridge.ts` querying operator-facing `getRenderer3D()?.getCurrentTracks()?.tracks` and projecting strictly `{ trackNo, pos: { x, y, z } }`. In `tests/e2e/task23_visualRealism.spec.ts` State 9, eliminated all calls to raw ground-truth `bridge.getTrackList()`, verified dynamic label update to 120m and restoration to 80m, and asserted 100% agreement between sanitized `pos.z` and rendered altitude labels for T-01 (80m), T-02 (250m), and T-03 (400m).
 - [x] Full Regression Verification Gate (Section 11): Typecheck clean (`tsc --noEmit`), ESLint clean (`npm run lint`), all 49 Vitest files (716 tests passing 100%), production and E2E builds clean, full Playwright E2E suite (59 tests across 12 spec files) passing 100%. Protected deployment branch `gh-pages` strictly preserved at `b3740a1da38835b0b362d3966dbab7f6899e08c7`.
 
-
-
-
-
-
-
-
-
+### TASK 24 — 2D/3D Simulation Parity, Renderer Lifecycle & Failure-Recovery Acceptance · P0 · A/D · 1.5 h
+Files: `src/render3d/capability.ts`, `src/render3d/index.ts`, `src/ui/Console.tsx`, `tests/unit/task24RendererParityLifecycle.spec.ts`, `Tasks.md`, `MEMORY.md`
+- [x] Deterministic Simulation Parity (Section 3 / Task 24-A): Executed paired 200-tick sessions under identical scenario specs (`DEMO-1`), seeds, difficulty, and scripted inputs (`DESIGNATE`, `CLASSIFY`, `SELECT_EFFECTOR`, `FIRE`, `ASSESS`) comparing 2D Canvas baseline vs Three.js 3D presentation layer. Verified: state hashes at ticks 50, 100, 150, 200 match bit-identically (`SHA-256` digest match 100%); event sequences match identically across types, sequence numbers, and timestamps; kill outcomes (`ENGAGE_RESULT`, `ASSESS`) match 100%; ROE evaluations match; final scores match within $\le 10^{-6}$ ($0.000000$ diff); and all 10 AAR metrics match bit-for-bit.
+- [x] Mid-Session 2D <-> 3D Switching Continuity (Section 4 / Task 24-B): Switched between 2D and 3D presentation at ticks 50, 120, 200, 260 during an active simulation session. Verified: simulation clock monotonically advances without reset or jitter; active tracks (`T-01`, `T-02`, etc.) preserved without duplication, drop, or phantom creation; trainee inputs queued during transitions process without loss; final simulation state hash matches uninterrupted control session 100%; and final scores and AAR metrics match within $\le 10^{-6}$.
+- [x] WebGL Failure & Automatic 2D Fallback (Section 5 / Task 24-C): Verified automatic, safe 2D fallback across all 5 failure modes:
+  - Case A (Missing WebGL2): `checkWebGL2Support()` reporting unsupported safely displays fallback error and maintains 2D view.
+  - Case B (Dynamic Chunk Failure): Dynamic import rejection caught, displays error banner, and restores 2D mode without crash.
+  - Case C (Initialization Failure): Canvas construction or WebGL context creation failure caught, partially constructed 3D renderer disposed and nulled, and view remains in 2D.
+  - Case D (WebGL Context Loss): Genuine `webglcontextlost` synthetic event dispatch handled, cancels event (`event.preventDefault()`), triggers `onContextLost` callback, halts 3D animation loop, and falls back cleanly to 2D Canvas.
+  - Case E (Chunk Load Timeout): Implemented 3000ms chunk load timeout under Rule R10.6 via `Promise.race`, timing out slow network/module loading and safely falling back to 2D mode.
+- [x] Renderer Lifecycle & GPU Resource Cleanup (Section 6 / Task 24-D): Executed 10 consecutive switching cycles between 2D and 3D. Verified: 3D animation frame loop cancels immediately on disposal with zero orphaned rAF callbacks; event listeners (`resize`, `wheel`, `pointerdown`, etc.) cleanly detached with 0 active listeners; scene geometries, materials, and textures recursively disposed; WebGL context cleanly unbound; and no memory leak accumulation across cycles.
+- [x] Full Verification Gate (Section 7): `tsc --noEmit` clean (0 errors), `npm run lint` clean (0 errors, 0 warnings), 50 Vitest test files (724 unit tests passing 100%), production build clean (`npm run build`, 0 errors), test-instrumented build clean (`npm run build:e2e`, 0 errors), full Playwright E2E suite across all 12 spec files (59 tests passing 100% in 2.5m). Zero writes to `reports/screenshots/`. Protected deployment branch `gh-pages` strictly untouched at `b3740a1da38835b0b362d3966dbab7f6899e08c7`.

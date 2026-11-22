@@ -5,6 +5,7 @@ export {
   checkWebGL2Support,
   isWebGL2Available,
   attachContextLossHandler,
+  clearWebGL2CapabilityCacheForTesting,
 } from './capability';
 export type { WebGL2CapabilityResult } from './capability';
 export { toThree, toThreeCoords, toSimCoords } from './coords';

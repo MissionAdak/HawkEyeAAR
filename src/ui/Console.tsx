@@ -577,6 +577,24 @@ export const Console: React.FC = () => {
       return null;
     }
 
+    // Rule R10.6: Enforce 3-second chunk load timeout for lazy 3D bundle
+    let chunkTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      chunkTimeoutId = setTimeout(
+        () => reject(new Error('3D chunk loading timed out (> 3000ms, Rule R10.6)')),
+        3000
+      );
+    });
+
+    let render3dModule;
+    try {
+      render3dModule = await Promise.race([import('@/render3d'), timeoutPromise]);
+    } finally {
+      if (chunkTimeoutId) {
+        clearTimeout(chunkTimeoutId);
+      }
+    }
+
     const {
       Renderer3D,
       checkWebGL2Support,
@@ -584,7 +602,7 @@ export const Console: React.FC = () => {
       calculateEoirCoverage,
       calculateRfCoverage,
       getScenarioEnvironmentDescriptor,
-    } = await import('@/render3d');
+    } = render3dModule;
 
     const cap = checkWebGL2Support();
     if (!cap.supported) {
@@ -710,8 +728,21 @@ export const Console: React.FC = () => {
       setViewMode('3D');
       setWebGlError(null);
     } catch (err) {
+      if (renderer3dRef.current) {
+        try {
+          renderer3dRef.current.dispose();
+        } catch {
+          // ignore cleanup error
+        }
+        renderer3dRef.current = null;
+      }
       console.error('[Console] Failed to load 3D view:', err);
-      setWebGlError('Failed to load 3D renderer. Restoring 2D mode.');
+      const isTimeout = err instanceof Error && err.message.includes('timed out');
+      setWebGlError(
+        isTimeout
+          ? '3D chunk loading timed out (> 3000ms). Restoring 2D mode.'
+          : 'Failed to load 3D renderer. Restoring 2D mode.'
+      );
       setViewMode('2D');
     }
   };

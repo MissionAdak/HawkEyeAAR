@@ -13,6 +13,10 @@ export interface WebGL2CapabilityResult {
 
 let cachedCapability: WebGL2CapabilityResult | null = null;
 
+export function clearWebGL2CapabilityCacheForTesting(): void {
+  cachedCapability = null;
+}
+
 export function checkWebGL2Support(): WebGL2CapabilityResult {
   if (cachedCapability) {
     return cachedCapability;
