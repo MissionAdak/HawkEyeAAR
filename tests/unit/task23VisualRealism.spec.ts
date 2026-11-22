@@ -486,9 +486,9 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
         const terrain = buildProceduralTerrain(desc);
         const buildings = buildProceduralBuildings(desc, terrain.groundMesh);
 
-        // Verify groundMesh exists in terrain with position.y = -1
-        const groundMesh = terrain.groundMesh ?? (terrain.group.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh);
-        expect(groundMesh).toBeDefined();
+        // Verify groundMesh exists in terrain with position.y = -1 (fail-closed, Section 6)
+        expect(terrain.groundMesh).toBeDefined();
+        const groundMesh = terrain.groundMesh;
         expect(groundMesh.position.y).toBe(-1);
 
         // Update world matrix before raycasting
@@ -617,6 +617,56 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
           expect(item.burialDepth).toBeLessThanOrEqual(item.localTerrainRelief + 0.05);
         }
       }
+    });
+
+    it('fails closed when supplied ground mesh produces zero ray intersections and preserves analytical fallback when omitted (TASK 23.1-R2R-FINAL Section 3 & 5)', () => {
+      const desc = testDescriptor(7777, 'URBAN_DENSE');
+
+      // 1. Construct a deliberately small Three.js ground mesh positioned far from the zone coordinates
+      // The urban zone is located at [1000, 1000] to [2400, 2400].
+      // We position a tiny 10m x 10m mesh at [-3000, -1, -3000].
+      const tinyGeom = new THREE.PlaneGeometry(10, 10);
+      tinyGeom.rotateX(-Math.PI / 2);
+      const tinyMat = new THREE.MeshBasicMaterial();
+      const tinyMesh = new THREE.Mesh(tinyGeom, tinyMat);
+      tinyMesh.position.set(-3000, -1, -3000);
+      tinyMesh.updateMatrixWorld(true);
+
+      // 2. Assert that calling buildProceduralBuildings with this non-intersecting mesh throws an explicit error
+      let caughtError: Error | null = null;
+      try {
+        buildProceduralBuildings(desc, tinyMesh);
+      } catch (err: unknown) {
+        caughtError = err as Error;
+      }
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError?.message).toMatch(/\[TerrainSampling\] Ground mesh intersection failed for preset 'URBAN_DENSE'/);
+      expect(caughtError?.message).toMatch(/at simulation coordinates \(\d+\.\d+, \d+\.\d+\)/);
+      expect(caughtError?.message).toMatch(/did not produce any vertical ray intersections/);
+
+      // Clean up test-only mesh
+      tinyGeom.dispose();
+      tinyMat.dispose();
+
+      // 3. Assert that calling buildProceduralBuildings without a mesh succeeds and uses documented analytical fallback
+      const fallbackResult = buildProceduralBuildings(desc);
+      expect(fallbackResult).toBeDefined();
+      const zoneMeshes = fallbackResult.selectableMeshes.filter((m) =>
+        m.userData?.envObjectId?.startsWith('BLD-U1')
+      );
+      expect(zoneMeshes.length).toBeGreaterThanOrEqual(6);
+
+      // Verify analytical base height is consistent
+      for (const mesh of zoneMeshes) {
+        const bbox = new THREE.Box3().setFromObject(mesh);
+        // On flat URBAN_DENSE, analytical fallback gives minGroundElev - 1 = -1
+        expect(bbox.min.y).toBeCloseTo(-1, 2);
+      }
+
+      // Clean up fallback result
+      fallbackResult.disposables.geometries.forEach((g) => g.dispose());
+      fallbackResult.disposables.materials.forEach((m) => m.dispose());
     });
 
     it('formats track label text pure helper with exact altitude and label tags (Section 4)', () => {

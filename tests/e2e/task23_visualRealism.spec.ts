@@ -554,12 +554,24 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         return match ? parseInt(match[1], 10) : null;
       };
 
-      // Test dynamic label update when test bridge changes estimated position (Section 6)
+      // 1. Dynamic label update test: change T-01 estimated position to 120m altitude
       await page.evaluate(() => {
         const bridge = window.__DRISHTI_TEST__;
         bridge?.positionTrack?.('T-01', { x: 800, y: 800, z: 120 });
       });
       await page.waitForTimeout(200);
+
+      // Verify sanitized operator-facing SafeTrackView projection updates to 120m and updates rendered label
+      const interSanitized = await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        if (!bridge || typeof bridge.getSanitizedTrackPositions !== 'function') {
+          return { error: 'getSanitizedTrackPositions method missing on test bridge', tracks: [] };
+        }
+        return { tracks: bridge.getSanitizedTrackPositions() };
+      });
+      expect(interSanitized.error).toBeUndefined();
+      const tr01Inter = interSanitized.tracks.find((t) => t.trackNo === 'T-01');
+      expect(tr01Inter?.pos.z).toBe(120);
 
       const intermediateModels = await page.evaluate(() => {
         return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
@@ -567,7 +579,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const t01Inter = intermediateModels.find((m) => m.trackNo === 'T-01');
       expect(parseAltitudeToken(t01Inter?.labelText)).toBe(120);
 
-      // Re-position tracks at exact test altitudes (80m, 250m, 400m)
+      // 2. Restore T-01 to 80m and set test altitudes: T-01: 80m, T-02: 250m, T-03: 400m
       await page.evaluate(() => {
         const bridge = window.__DRISHTI_TEST__;
         bridge?.positionTrack?.('T-01', { x: 800, y: 800, z: 80 });
@@ -576,7 +588,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       });
       await page.waitForTimeout(200);
 
-      // Assert exact rendered label strings on the 3 distinct tracks (Section 6):
+      // Assert exact rendered label strings on the 3 distinct tracks:
       const altitudeModels = await page.evaluate(() => {
         return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
       });
@@ -593,38 +605,47 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const alt02 = parseAltitudeToken(t02?.labelText);
       const alt03 = parseAltitudeToken(t03?.labelText);
 
-      // 1. Exact numeric altitude matching
+      // Verify exact numeric altitude matching
       expect(alt01).toBe(80);
       expect(alt02).toBe(250);
       expect(alt03).toBe(400);
 
-      // 2. Exact label regex matching (format: "${trackNo} [${labelTag}] ${altM}m")
+      // Verify exact label regex matching (format: "${trackNo} [${labelTag}] ${altM}m")
       expect(t01?.labelText).toMatch(/^T-01\s+\[[A-Z-]+\]\s+80m$/);
       expect(t02?.labelText).toMatch(/^T-02\s+\[[A-Z-]+\]\s+250m$/);
       expect(t03?.labelText).toMatch(/^T-03\s+\[[A-Z-]+\]\s+400m$/);
 
-      // 3. All 3 values are distinct
+      // All 3 values are distinct
       const distinctAltitudes = new Set([alt01, alt02, alt03]);
       expect(distinctAltitudes.size).toBe(3);
 
-      // 4. Verify labels are generated from SafeTrackView (not leaked truth)
-      const safeTrackCheck = await page.evaluate(() => {
+      // 3. Verify against sanitized operator-facing SafeTrackView positions (TASK 23.1-R2R-FINAL Section 7)
+      const sanitizedCheck = await page.evaluate(() => {
         const bridge = window.__DRISHTI_TEST__;
-        const tracks = bridge?.getTrackList?.() || [];
+        if (!bridge || typeof bridge.getSanitizedTrackPositions !== 'function') {
+          return { error: 'getSanitizedTrackPositions method missing on test bridge', hasSafeTracks: false, tr1Alt: 0, tr2Alt: 0, tr3Alt: 0 };
+        }
+        const tracks = bridge.getSanitizedTrackPositions();
         const tr1 = tracks.find((t) => t.trackNo === 'T-01');
         const tr2 = tracks.find((t) => t.trackNo === 'T-02');
         const tr3 = tracks.find((t) => t.trackNo === 'T-03');
         return {
           hasSafeTracks: !!(tr1 && tr2 && tr3),
-          t1Alt: tr1?.pos?.z,
-          t2Alt: tr2?.pos?.z,
-          t3Alt: tr3?.pos?.z,
+          tr1Alt: tr1?.pos.z,
+          tr2Alt: tr2?.pos.z,
+          tr3Alt: tr3?.pos.z,
         };
       });
-      expect(safeTrackCheck.hasSafeTracks).toBe(true);
-      expect(safeTrackCheck.t1Alt).toBe(80);
-      expect(safeTrackCheck.t2Alt).toBe(250);
-      expect(safeTrackCheck.t3Alt).toBe(400);
+      expect(sanitizedCheck.error).toBeUndefined();
+      expect(sanitizedCheck.hasSafeTracks).toBe(true);
+      expect(sanitizedCheck.tr1Alt).toBe(80);
+      expect(sanitizedCheck.tr2Alt).toBe(250);
+      expect(sanitizedCheck.tr3Alt).toBe(400);
+
+      // Each generated label matches its corresponding sanitized position
+      expect(alt01).toBe(sanitizedCheck.tr1Alt);
+      expect(alt02).toBe(sanitizedCheck.tr2Alt);
+      expect(alt03).toBe(sanitizedCheck.tr3Alt);
 
       await saveShot(page, '09_aircraft_altitudes.png');
 

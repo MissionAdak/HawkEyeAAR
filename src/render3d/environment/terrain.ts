@@ -9,7 +9,7 @@ const COLOR_AMBER = 0xFF9900;
 
 export interface TerrainBuildResult {
   group: THREE.Group;
-  groundMesh?: THREE.Mesh;
+  groundMesh: THREE.Mesh;
   objects: EnvironmentObjectInfo[];
   disposables: { geometries: THREE.BufferGeometry[]; materials: THREE.Material[] };
 }
@@ -300,6 +300,13 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
     isObstructionEnvelope: false,
     description: '500m radius Point of No Return. Unauthorized aerial crossing constitutes a terminal breach.',
   });
+
+  if (!primaryGroundMesh) {
+    throw new Error(
+      `[TerrainBuild] Failed to construct primary ground mesh for environment preset '${preset}'. ` +
+      `Every supported terrain preset must generate and return an authoritative ground mesh.`
+    );
+  }
 
   return { group, groundMesh: primaryGroundMesh, objects, disposables: { geometries, materials } };
 }

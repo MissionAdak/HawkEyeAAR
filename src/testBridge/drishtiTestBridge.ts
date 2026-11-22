@@ -98,6 +98,7 @@ export function isValidTrackEstimateOverride(override: unknown): override is Tra
 export interface DrishtiTestBridge {
   isReady: () => boolean;
   getTrackList: () => Array<{ trackNo: string; pos: { x: number; y: number; z: number }; masked?: boolean }>;
+  getSanitizedTrackPositions?: () => Array<{ trackNo: string; pos: { x: number; y: number; z: number } }>;
   positionTrack: (trackNo: string, pos: { x: number; y: number; z: number }) => boolean;
   setSensorCondition: (condition: { sensor: SensorMode; health: SensorHealthStatus }) => boolean;
   setSimChaos: (chaosList: ChaosSpec[]) => boolean;
@@ -299,6 +300,16 @@ export function installDrishtiTestBridge(
           pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
           masked: e.masked,
         }));
+    },
+
+    getSanitizedTrackPositions(): Array<{ trackNo: string; pos: { x: number; y: number; z: number } }> {
+      const r3d = getRenderer3D();
+      const current = r3d?.getCurrentTracks();
+      if (!current || !Array.isArray(current.tracks)) return [];
+      return current.tracks.map((t) => ({
+        trackNo: t.trackNo,
+        pos: { x: t.pos.x, y: t.pos.y, z: t.pos.z },
+      }));
     },
 
     positionTrack(trackNo: string, pos: { x: number; y: number; z: number }): boolean {

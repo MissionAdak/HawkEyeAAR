@@ -36,6 +36,11 @@ export class EnvironmentManager {
     this.disposables.push(terrainRes.disposables);
 
     // 3. Build Buildings, Towers & Installations
+    if (!terrainRes.groundMesh) {
+      throw new Error(
+        `[EnvironmentManager] Expected valid groundMesh from buildProceduralTerrain for preset '${descriptor.preset}', but none was returned.`
+      );
+    }
     const bldRes = buildProceduralBuildings(descriptor, terrainRes.groundMesh);
     this.group.add(bldRes.group);
     bldRes.objects.forEach((obj) => this.objectsMap.set(obj.id, obj));

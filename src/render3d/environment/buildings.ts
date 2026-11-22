@@ -183,16 +183,26 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
     groundMesh.updateMatrixWorld(true);
   }
   const groundRaycaster = groundMesh ? new THREE.Raycaster() : null;
-  const downDir = new THREE.Vector3(0, -1, 0);
+  const downDir = new THREE.Vector3(0, -1, 0).normalize();
 
   function sampleGround(simX: number, simY: number): number {
-    if (groundMesh && groundRaycaster) {
+    if (groundMesh) {
+      if (!groundRaycaster) {
+        throw new Error(
+          `[TerrainSampling] Ground mesh supplied for preset '${preset}', but raycaster is not initialized.`
+        );
+      }
       groundRaycaster.set(new THREE.Vector3(simX, 1500, -simY), downDir);
       const hits = groundRaycaster.intersectObject(groundMesh, false);
       if (hits.length > 0) {
         return hits[0].point.y;
       }
+      throw new Error(
+        `[TerrainSampling] Ground mesh intersection failed for preset '${preset}' at simulation coordinates (${simX.toFixed(2)}, ${simY.toFixed(2)}). ` +
+        `Supplied ground mesh did not produce any vertical ray intersections from Y=1500 downward.`
+      );
     }
+    // Case A: No ground mesh supplied -> preserve analytical fallback for direct-call compatibility
     return getTerrainElevation(simX, simY, preset) - 1;
   }
 
