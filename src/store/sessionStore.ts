@@ -32,7 +32,7 @@ import {
   getTraineeSessions,
 } from '@/db/sessionRepo';
 import { generateScenario } from '@/director/generator';
-import { sampleAdaptiveLevers, DEFAULT_METRIC_EMA } from '@/director/adaptive';
+import { sampleAdaptiveLevers, DEFAULT_METRIC_EMA, WEAKNESS_LEVER_MAP, type WeaknessDimension } from '@/director/adaptive';
 import type { WeaknessVector } from '@/sim/types';
 import type { SessionRow } from '@/db/dexie';
 
@@ -187,6 +187,7 @@ export interface SessionState {
     seed?: number;
     difficultyOverride?: number;
     targetLever?: string;
+    scenarioId?: string;
   }) => Promise<boolean>;
   setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
@@ -722,6 +723,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     seed?: number;
     difficultyOverride?: number;
     targetLever?: string;
+    scenarioId?: string;
   }): Promise<boolean> => {
     void seedDemoSessionsIfEmpty();
 
@@ -752,9 +754,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sat: DEFAULT_METRIC_EMA,
     };
 
-    const seed = typeof options?.seed === 'number' ? options.seed : generateLocalSeed();
-
+    let seed = typeof options?.seed === 'number' ? options.seed : undefined;
     let targetLever = options?.targetLever;
+
+    // Recommendation consistency (TASK 21-PT-R2 Section 2):
+    // Parse target lever and recommendation seed from scenarioId if provided and not explicitly set
+    if (options?.scenarioId && options.scenarioId.startsWith('ADAPTIVE-')) {
+      const parts = options.scenarioId.split('-');
+      if (!targetLever && parts[1]) {
+        targetLever = parts[1];
+      }
+      if (typeof seed !== 'number' && parts[2]) {
+        const parsedSeed = parseInt(parts[2], 10);
+        if (Number.isFinite(parsedSeed)) {
+          seed = parsedSeed;
+        }
+      }
+    }
+
+    if (typeof seed !== 'number') {
+      seed = generateLocalSeed();
+    }
+
     if (!targetLever) {
       const sampled = sampleAdaptiveLevers(effectiveProfile, seed, 1);
       targetLever = sampled[0].leverId;
@@ -783,6 +804,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     spec.mode = 'TRAIN';
     spec.seed = seed;
     spec.difficulty = targetDifficulty;
+    spec.levers = [
+      {
+        id: targetLever,
+        reason:
+          WEAKNESS_LEVER_MAP[
+            (Object.keys(WEAKNESS_LEVER_MAP) as WeaknessDimension[]).find(
+              (k) => WEAKNESS_LEVER_MAP[k].leverId === targetLever
+            ) ?? 'd'
+          ]?.reason ?? 'Adapted to trainee weakness profile',
+      },
+    ];
 
     if (!validate(spec)) {
       console.error(`[SessionStore] Adapted scenario failed validation: ${spec.id}`);

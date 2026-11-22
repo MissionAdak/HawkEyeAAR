@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   computeNextDifficulty,
   updateEMA,
@@ -14,6 +14,7 @@ import {
 import { generateScenario } from '@/director/generator';
 import { isNovel } from '@/director/novelty';
 import { validate } from '@/director/validate';
+import * as validateModule from '@/director/validate';
 import { loadCatalogScenario } from '@/director/catalog';
 import {
   saveCompletedSession,
@@ -25,9 +26,11 @@ import {
   getTraineeSessions,
   getProgressionLogEntry,
   createMockMetrics,
+  setMockProgressionTxFailure,
+  getStoredSession,
 } from '@/db/sessionRepo';
 import { setMockPersistenceFailureMode } from '@/db/recorder';
-import { useSessionStore } from '@/store/sessionStore';
+import { useSessionStore, getActiveSessionScenarioSnapshot } from '@/store/sessionStore';
 import type { SessionRow } from '@/db/dexie';
 import type { WeaknessVector, ScenarioSpec } from '@/sim/types';
 
@@ -1172,6 +1175,15 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
     it('statistically favors weaker metrics while maintaining non-zero exploration on stronger metrics', () => {
       // D is heavily vulnerable (20/100, weakness = 0.8), others are strong (90/100, weakness = 0.1)
       const skewedProfile: WeaknessVector = { d: 20, c: 90, econ: 90, r: 90, sal: 90, sat: 90 };
+
+      // Reconcile theoretical softmax probability vs empirical seeded sampling (TASK 21-PT-R2 Section 6)
+      // w_d = 0.8 -> exp(4 * 0.8) = exp(3.2) = 24.532530
+      // w_other = 0.1 -> exp(4 * 0.1) = exp(0.4) = 1.4918247 (5 other dimensions: 5 * 1.4918247 = 7.4591235)
+      // Total S = 24.532530 + 7.4591235 = 31.9916535
+      // Theoretical P(D) = 24.532530 / 31.9916535 = 0.7668417 (~76.684%)
+      const weights = computeWeaknessWeights(skewedProfile);
+      expect(weights.d).toBeCloseTo(0.76684, 4);
+
       const counts: Record<string, number> = {
         LOW_RCS_MASKED: 0,
         DECOY_FLOOD: 0,
@@ -1187,10 +1199,12 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
         counts[sampled.leverId] = (counts[sampled.leverId] || 0) + 1;
       }
 
-      // Detection lever must be chosen in majority of trials due to softmax beta = 4.0
-      expect(counts.LOW_RCS_MASKED).toBeGreaterThan(TRIALS * 0.50);
+      // Exact seeded test result: across seeds 1000–1999, exactly 787 / 1000 trials (78.7%) select LOW_RCS_MASKED
+      // (Closely matching theoretical softmax expectation of ~76.684%)
+      expect(counts.LOW_RCS_MASKED).toBe(787);
+      expect(counts.LOW_RCS_MASKED / TRIALS).toBe(0.787);
 
-      // Non-weak dimensions must still be sampled with non-zero probability (exploration)
+      // Non-weak dimensions must still be sampled with non-zero probability (exploration: 213 / 1000 = 21.3%)
       const explorationSum =
         counts.DECOY_FLOOD +
         counts.PROPORTIONALITY_DRILL +
@@ -1198,8 +1212,9 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
         counts.SENSOR_CHAOS_CHALLENGE +
         counts.SWARM_SATURATION;
 
-      expect(explorationSum).toBeGreaterThan(0);
-      expect(explorationSum).toBeLessThan(TRIALS * 0.50);
+      expect(explorationSum).toBe(213);
+      expect(counts.DECOY_FLOOD).toBeGreaterThan(0);
+      expect(counts.SWARM_SATURATION).toBeGreaterThan(0);
     });
   });
 
@@ -1309,6 +1324,146 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
       // Resulting difficulty must be exactly 0.375, never compounded to 0.45 or 0.525
       expect(await getTraineeDifficulty(traineeUid)).toBeCloseTo(0.375, 4);
     });
+
+    it('executes in-transaction fault injection and proves atomic rollback of difficulty, all 6 EMAs, progressionLog and progressionApplied (TASK 21-PT-R2 Section 3)', async () => {
+      const traineeUid = 'trainee-tx-rollback-proof';
+      const callsign = 'TX-ROLLBACK';
+
+      const session: SessionRow = {
+        uid: 'session-tx-fault-test',
+        traineeUid,
+        mode: 'TRAIN',
+        startedAt: 1000,
+        durationMs: 60000,
+        score: 90, // score 90 would increase d from 0.30 to 0.40
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.30,
+        aborted: false,
+        unverified: false,
+        metrics: createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+          dScore: 95,
+          cScore: 90,
+          econScore: 85,
+          rScore: 90,
+          salScore: 90,
+          swarmSat: 0.9,
+        }),
+      };
+
+      // Arm in-transaction failure mode (throws inside Dexie transaction AFTER difficulty.put and traineeProfile.put)
+      setMockProgressionTxFailure('PROGRESSION_TX_FAIL');
+
+      // Attempt to save session - must throw due to in-transaction write failure
+      await expect(saveCompletedSession(session, callsign)).rejects.toThrow(
+        /Simulated in-transaction progression write failure/
+      );
+
+      // VERIFY ATOMIC ROLLBACK:
+      // 1. Difficulty must NOT have been updated (rolled back to default 0.30)
+      const rolledBackDiff = await getTraineeDifficulty(traineeUid);
+      expect(rolledBackDiff).toBe(0.30);
+
+      // 2. Trainee profile must NOT have been updated (all 6 EMAs rolled back to null)
+      const rolledBackProfile = await getTraineeProfile(traineeUid);
+      expect(rolledBackProfile).toBeNull();
+
+      // 3. Progression log entry must NOT exist
+      const rolledBackProg = await getProgressionLogEntry('session-tx-fault-test');
+      expect(rolledBackProg).toBeNull();
+
+      // 4. Session marker progressionApplied must NOT be set
+      expect(session.progressionApplied).toBeFalsy();
+      const storedSessionBeforeRetry = await getStoredSession('session-tx-fault-test');
+      expect(storedSessionBeforeRetry?.progressionApplied).toBeFalsy();
+
+      // Disarm fault injection and retry
+      setMockProgressionTxFailure('NONE');
+      await saveCompletedSession(session, callsign);
+
+      // Verify that exactly ONE progression update occurs upon retry
+      const committedDiff = await getTraineeDifficulty(traineeUid);
+      expect(committedDiff).toBeCloseTo(0.40, 4);
+
+      const committedProfile = await getTraineeProfile(traineeUid);
+      expect(committedProfile).not.toBeNull();
+      expect(committedProfile!.d).toBe(95);
+      expect(committedProfile!.econ).toBe(85);
+
+      const committedProg = await getProgressionLogEntry('session-tx-fault-test');
+      expect(committedProg).not.toBeNull();
+      expect(committedProg!.dAfter).toBeCloseTo(0.40, 4);
+
+      expect(session.progressionApplied).toBe(true);
+      const storedSessionAfterRetry = await getStoredSession('session-tx-fault-test');
+      expect(storedSessionAfterRetry?.progressionApplied).toBe(true);
+    });
+
+    it('preserves durable progressionApplied across reloaded database instances and prevents duplicate progression or marker clearing (TASK 21-PT-R2 Section 4)', async () => {
+      const traineeUid = 'trainee-reload-idempotency';
+      const callsign = 'RELOAD-IDEMP';
+      const sessionUid = 'session-reload-idemp-01';
+
+      const session: SessionRow = {
+        uid: sessionUid,
+        traineeUid,
+        mode: 'TRAIN',
+        startedAt: 2000,
+        durationMs: 60000,
+        score: 85, // delta = +0.075 -> d = 0.375
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.30,
+        aborted: false,
+        unverified: false,
+        metrics: createMockMetrics(85, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+      };
+
+      // 1. Persist a completed TRAIN session
+      await saveCompletedSession(session, callsign);
+
+      // 2. Confirm progression log exists
+      const prog1 = await getProgressionLogEntry(sessionUid);
+      expect(prog1).not.toBeNull();
+      expect(prog1!.dAfter).toBeCloseTo(0.375, 4);
+
+      // 3. Record difficulty and EMA
+      const initialDiff = await getTraineeDifficulty(traineeUid);
+      expect(initialDiff).toBeCloseTo(0.375, 4);
+      const initialProfile = await getTraineeProfile(traineeUid);
+      expect(initialProfile).not.toBeNull();
+
+      // 4. Simulate application reload / recreation by creating a fresh object representation without progressionApplied
+      const resubmittedSession: SessionRow = {
+        uid: sessionUid,
+        traineeUid,
+        mode: 'TRAIN',
+        startedAt: 2000,
+        durationMs: 60000,
+        score: 85,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.30,
+        aborted: false,
+        unverified: false,
+        metrics: createMockMetrics(85, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+        progressionApplied: undefined, // intentionally un-set on fresh client payload
+      };
+
+      // 5. Resubmit the same session UID
+      await saveCompletedSession(resubmittedSession, callsign);
+
+      // 6. Verify no second progression update occurs
+      const diffAfterResubmit = await getTraineeDifficulty(traineeUid);
+      expect(diffAfterResubmit).toBeCloseTo(0.375, 4); // not 0.45!
+
+      // 7. Verify the durable progression marker remains consistent and was NOT cleared
+      const storedRow = await getStoredSession(sessionUid);
+      expect(storedRow?.progressionApplied).toBe(true);
+      expect(resubmittedSession.progressionApplied).toBe(true);
+
+      // Confirm progression log entry exists and records first progression
+      const log = await getProgressionLogEntry(sessionUid);
+      expect(log).not.toBeNull();
+      expect(log!.dAfter).toBeCloseTo(0.375, 4);
+    });
   });
 
   describe('10. Zero Double Adjustment & Connected Scenario Execution (Fix 5 & Fix 6)', () => {
@@ -1344,13 +1499,88 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
       expect(activeSpec).toContain('ADAPTIVE-LOW_RCS_MASKED');
       expect(useSessionStore.getState().sessionStatus).toBe('RUNNING');
     });
+
+    it('guarantees RedTeamPlan recommendation === Selected adaptive lever === Generated ScenarioSpec lever (TASK 21-PT-R2 Section 2)', async () => {
+      const traineeId = 'trainee-rec-consistency';
+      const profile: WeaknessVector = { d: 35, c: 80, econ: 75, r: 85, sal: 90, sat: 70 };
+      const currentDiff = 0.35;
+      const lastScore = 80;
+
+      // 1. Generate plan recommendation
+      const plan = getAdaptivePlan(traineeId, profile, currentDiff, lastScore, {
+        seed: 88888,
+      });
+      const recommendedLever = plan.targetLever;
+      const recommendedSeed = plan.seed;
+      const recommendedDifficulty = plan.nextDifficulty;
+      const recommendedScenarioId = plan.recommendedScenarioId;
+
+      // 2. Invoke startAdaptedTrainingSession passing recommendation
+      const store = useSessionStore.getState();
+      store.setCallsign('REC-CONSISTENT');
+      const started = await store.startAdaptedTrainingSession({
+        scenarioId: recommendedScenarioId,
+        difficultyOverride: recommendedDifficulty,
+        targetLever: recommendedLever,
+        seed: recommendedSeed,
+      });
+      expect(started).toBe(true);
+
+      // 3. Inspect loaded active ScenarioSpec
+      const activeScenarioId = useSessionStore.getState().currentScenarioId;
+      expect(activeScenarioId).toBe(`ADAPTIVE-${recommendedLever}-${recommendedSeed}`);
+
+      // Inspect active session snapshot to verify lever and difficulty match recommendation exactly
+      const activeSnapshot = getActiveSessionScenarioSnapshot();
+      expect(activeSnapshot?.levers[0]?.id).toBe(recommendedLever);
+      expect(activeSnapshot?.difficulty).toBeCloseTo(recommendedDifficulty, 4);
+      expect(activeSnapshot?.seed).toBe(recommendedSeed);
+    });
   });
 
-  describe('11. Fail-Closed Fallback Scenario Validation (Fix 7)', () => {
+  describe('11. Fail-Closed Fallback Scenario Validation (TASK 21-PT-R2 Section 5)', () => {
     it('validates procedural fallback scenario before returning', () => {
       // Normal generateScenario returns valid candidate
       const spec = generateScenario('trainee-fallback-check', 1, 0.4, [], 1234);
       expect(validate(spec)).toBe(true);
+    });
+
+    it('executes exhausted candidate-generation branch, verifies constructed fallback passes validation, and controlled error on invalid fallback (TASK 21-PT-R2 Section 5)', async () => {
+      const validateSpy = vi.spyOn(validateModule, 'validate');
+
+      try {
+        // Case A: Force all procedural attempts to fail validation (SCEN-), but fallback passes
+        validateSpy.mockImplementation((spec) => {
+          if (spec.id.startsWith('SCEN-')) return false;
+          return true; // Fallback scenario passes
+        });
+
+        const fallbackSpec = generateScenario('trainee-exhausted-attempts', 1, 0.45, [], 999);
+        expect(fallbackSpec.id).toMatch(/^FALLBACK-/);
+        expect(fallbackSpec.difficulty).toBe(0.45);
+        expect(fallbackSpec.levers).toEqual([
+          { id: 'BUNDLED_FALLBACK', reason: 'Procedural generation fallback' },
+        ]);
+        expect(validate(fallbackSpec)).toBe(true);
+
+        // Case B: Fallback scenario ALSO fails validation -> controlled error thrown
+        validateSpy.mockImplementation(() => false);
+
+        expect(() => {
+          generateScenario('trainee-exhausted-attempts', 1, 0.45, [], 999);
+        }).toThrow(/Procedural fallback scenario "FALLBACK-.*" failed authoritative fairness validation/);
+
+        // Case C: Confirm loadScenario refuses to load an invalid scenario and fails closed
+        const invalidSpec = structuredClone(fallbackSpec);
+        invalidSpec.durationMs = 99999 as unknown as 120000; // invalid duration
+        const store = useSessionStore.getState();
+        const prevSessionId = store.currentScenarioId;
+        await store.loadScenario(invalidSpec);
+        // Failed closed: did not load invalid scenario!
+        expect(store.currentScenarioId).toBe(prevSessionId);
+      } finally {
+        validateSpy.mockRestore();
+      }
     });
 
     it('bundled fallback scenario satisfies authoritative fairness validation', () => {

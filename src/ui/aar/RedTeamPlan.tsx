@@ -13,7 +13,12 @@ export interface RedTeamPlanProps {
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   profile: WeaknessVector | null;
   lastScore?: number;
-  onSelectRecommendedScenario?: (scenarioId: string, targetDifficulty: number) => void;
+  recommendationSeed?: number;
+  onSelectRecommendedScenario?: (
+    scenarioId: string,
+    targetDifficulty: number,
+    options?: { targetLever?: string; seed?: number }
+  ) => void;
 }
 
 export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
@@ -24,10 +29,12 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
   mode,
   profile,
   lastScore,
+  recommendationSeed,
   onSelectRecommendedScenario,
 }) => {
   const plan = getAdaptivePlan(traineeId, profile, currentDifficulty, lastScore, {
     sessionStartDifficulty,
+    seed: recommendationSeed,
   });
   const isEval = mode === 'EVAL';
 
@@ -235,7 +242,12 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
             <button
               type="button"
               data-testid="load-recommended-drill-btn"
-              onClick={() => onSelectRecommendedScenario(plan.recommendedScenarioId, plan.nextDifficulty)}
+              onClick={() =>
+                onSelectRecommendedScenario(plan.recommendedScenarioId, plan.nextDifficulty, {
+                  targetLever: plan.targetLever,
+                  seed: plan.seed,
+                })
+              }
               className="px-3 py-1 font-display font-bold text-xs bg-phosphor text-carbon-950 hover:bg-phosphorDim transition-colors"
             >
               LOAD ADAPTED DRILL [d = {plan.nextDifficulty.toFixed(2)}]

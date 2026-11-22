@@ -51,6 +51,17 @@ const inMemoryDifficulties: Map<string, { d: number; lastScore: number }> = new 
 const inMemoryProfiles: Map<string, WeaknessVector> = new Map();
 const inMemoryProgressionLog: Map<string, ProgressionLogRow> = new Map();
 
+export type MockTransactionFailurePoint = 'NONE' | 'PROGRESSION_TX_FAIL' | null;
+let mockTxFailure: MockTransactionFailurePoint = 'NONE';
+
+export function setMockProgressionTxFailure(mode: MockTransactionFailurePoint): void {
+  mockTxFailure = mode;
+}
+
+export function getMockProgressionTxFailure(): MockTransactionFailurePoint {
+  return mockTxFailure;
+}
+
 export async function getTraineeDifficulty(traineeUidOrCallsign?: string): Promise<number> {
   const traineeUid = traineeUidOrCallsign
     ? traineeUidOrCallsign.startsWith('trainee-')
@@ -128,7 +139,11 @@ export async function updateTraineeProgression(
 
   if (typeof indexedDB === 'undefined') {
     // In-memory fallback: check persistent in-memory progression log
-    if (inMemoryProgressionLog.has(sessionUid)) {
+    if (inMemoryProgressionLog.has(sessionUid) || session.progressionApplied) {
+      session.progressionApplied = true;
+      const existingSession = inMemorySessions.find((s) => s.uid === sessionUid);
+      if (existingSession) existingSession.progressionApplied = true;
+
       const currentD = inMemoryDifficulties.get(traineeUid)?.d ?? DEFAULT_TRAIN_DIFFICULTY;
       const currentProfile = inMemoryProfiles.get(traineeUid) ?? {
         d: DEFAULT_METRIC_EMA,
@@ -150,9 +165,23 @@ export async function updateTraineeProgression(
       session.metrics ?? { score: session.score }
     );
 
+    // Save previous state for in-memory rollback simulation (TASK 21-PT-R2 Section 3)
+    const prevD = inMemoryDifficulties.get(traineeUid);
+    const prevProfile = inMemoryProfiles.get(traineeUid);
+
     // Commit atomically in-memory
     inMemoryDifficulties.set(traineeUid, { d: nextD, lastScore: session.score });
     inMemoryProfiles.set(traineeUid, updatedProfile);
+
+    // In-transaction fault injection test hook (TASK 21-PT-R2 Section 3)
+    if (getMockProgressionTxFailure() === 'PROGRESSION_TX_FAIL') {
+      if (prevD) inMemoryDifficulties.set(traineeUid, prevD);
+      else inMemoryDifficulties.delete(traineeUid);
+      if (prevProfile) inMemoryProfiles.set(traineeUid, prevProfile);
+      else inMemoryProfiles.delete(traineeUid);
+      throw new Error('Simulated in-transaction progression write failure');
+    }
+
     inMemoryProgressionLog.set(sessionUid, {
       sessionUid,
       traineeUid,
@@ -162,6 +191,8 @@ export async function updateTraineeProgression(
       score: session.score,
     });
     session.progressionApplied = true;
+    const existingSession = inMemorySessions.find((s) => s.uid === sessionUid);
+    if (existingSession) existingSession.progressionApplied = true;
 
     return { d: nextD, profile: updatedProfile };
   }
@@ -172,10 +203,16 @@ export async function updateTraineeProgression(
     [db.difficulty, db.traineeProfile, db.progressionLog, db.sessions],
     async () => {
       // 1. Atomically check whether progression has already been applied for this session
+      const storedSession = await db.sessions.get(sessionUid);
       const existingProg = await db.progressionLog.get(sessionUid);
       if (existingProg) {
         const diffRow = await db.difficulty.get(traineeUid);
         const profile = await getTraineeProfile(traineeUid);
+        session.progressionApplied = true;
+        if (storedSession && !storedSession.progressionApplied) {
+          storedSession.progressionApplied = true;
+          await db.sessions.put(storedSession);
+        }
         return {
           d: diffRow?.d ?? DEFAULT_TRAIN_DIFFICULTY,
           profile: profile ?? {
@@ -190,10 +227,10 @@ export async function updateTraineeProgression(
       }
 
       // Check stored session record if already present
-      const storedSession = await db.sessions.get(sessionUid);
       if (storedSession?.progressionApplied) {
         const diffRow = await db.difficulty.get(traineeUid);
         const profile = await getTraineeProfile(traineeUid);
+        session.progressionApplied = true;
         return {
           d: diffRow?.d ?? DEFAULT_TRAIN_DIFFICULTY,
           profile: profile ?? {
@@ -229,6 +266,13 @@ export async function updateTraineeProgression(
           n: currentProfile ? 2 : 1,
           updatedAt: now,
         });
+      }
+
+      // In-transaction fault injection test hook (TASK 21-PT-R2 Section 3)
+      // Throws AFTER difficulty and traineeProfile have been written in-transaction,
+      // proving Dexie's atomic rollback of difficulty and all six EMA records.
+      if (getMockProgressionTxFailure() === 'PROGRESSION_TX_FAIL') {
+        throw new Error('Simulated in-transaction progression write failure');
       }
 
       await db.progressionLog.put({
@@ -312,11 +356,17 @@ export async function saveCompletedSession(
     }
     const existingIndex = inMemorySessions.findIndex((s) => s.uid === sessionToSave.uid);
     if (existingIndex >= 0) {
+      if (inMemorySessions[existingIndex].progressionApplied) {
+        sessionToSave.progressionApplied = true;
+      }
       inMemorySessions[existingIndex] = sessionToSave;
     } else {
       inMemorySessions.push(sessionToSave);
     }
     await updateTraineeProgression(sessionToSave);
+    if (sessionToSave.progressionApplied) {
+      session.progressionApplied = true;
+    }
     return;
   }
 
@@ -329,6 +379,12 @@ export async function saveCompletedSession(
     const existingTrainee = await db.trainees.get(traineeUid);
     if (!existingTrainee) {
       await db.trainees.put({ uid: traineeUid, unitUid, callsign: resolvedCallsign });
+    }
+
+    // Preserve durable progressionApplied marker on duplicate saves across reloads (TASK 21-PT-R2 Section 4)
+    const existingSession = await db.sessions.get(sessionToSave.uid);
+    if (existingSession?.progressionApplied) {
+      sessionToSave.progressionApplied = true;
     }
 
     await db.sessions.put(sessionToSave);
@@ -349,6 +405,16 @@ export async function saveCompletedSession(
   });
 
   await updateTraineeProgression(sessionToSave);
+  if (sessionToSave.progressionApplied) {
+    session.progressionApplied = true;
+  }
+}
+
+export async function getStoredSession(uid: string): Promise<SessionRow | undefined> {
+  if (typeof indexedDB === 'undefined') {
+    return inMemorySessions.find((s) => s.uid === uid);
+  }
+  return await db.sessions.get(uid);
 }
 
 export async function getAllTrainees(): Promise<TraineeRow[]> {

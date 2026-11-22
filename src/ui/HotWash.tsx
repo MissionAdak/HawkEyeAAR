@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSessionStore, engineInstance, getActiveRecorder } from '@/store/sessionStore';
 import { exportSessionJson, exportSessionCsv } from '@/db/io';
 import { aggregateAARMetrics } from '@/sim/metrics';
@@ -93,6 +93,14 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
     engineInstance.events,
     engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)
   );
+
+  // Exact deterministic recommendation seed for current session AAR (TASK 21-PT-R2 Section 2)
+  const recommendationSeed = useMemo(() => {
+    if (typeof engineInstance.spec?.seed === 'number') {
+      return ((engineInstance.spec.seed * 1664525 + 1013904223) >>> 0) || 12345;
+    }
+    return 424242;
+  }, [engineInstance.spec?.seed]);
 
   const getGradeBadge = (grade: string) => {
     switch (grade) {
@@ -592,10 +600,14 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             mode={engineInstance.mode}
             profile={traineeProfile}
             lastScore={metrics.score}
-            onSelectRecommendedScenario={(_scenId, targetDiff) => {
+            recommendationSeed={recommendationSeed}
+            onSelectRecommendedScenario={(scenId, targetDiff, options) => {
               onClose();
               void startAdaptedTrainingSession({
+                scenarioId: scenId,
                 difficultyOverride: targetDiff,
+                targetLever: options?.targetLever,
+                seed: options?.seed ?? recommendationSeed,
               });
             }}
           />
@@ -622,10 +634,14 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             mode={engineInstance.mode}
             profile={traineeProfile}
             lastScore={metrics.score}
-            onSelectRecommendedScenario={(_scenId, targetDiff) => {
+            recommendationSeed={recommendationSeed}
+            onSelectRecommendedScenario={(scenId, targetDiff, options) => {
               onClose();
               void startAdaptedTrainingSession({
+                scenarioId: scenId,
                 difficultyOverride: targetDiff,
+                targetLever: options?.targetLever,
+                seed: options?.seed ?? recommendationSeed,
               });
             }}
           />

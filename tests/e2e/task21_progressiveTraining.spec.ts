@@ -162,6 +162,17 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     const expectedDiffPattern = new RegExp(`d=${nextDVal.toFixed(2)}`, 'i');
     await expect(page.locator('header').getByText(expectedDiffPattern).first()).toBeVisible({ timeout: 10000 });
 
+    // Inspect actual active scenario spec levers and difficulty via test bridge (TASK 21-PT-R2 Section 2)
+    const activeSpec = await page.evaluate(() => {
+      const win = window as any;
+      return win.__DRISHTI_TEST__?.getActiveScenarioSpec?.();
+    });
+    expect(activeSpec).not.toBeNull();
+    expect(activeSpec?.levers?.length).toBeGreaterThan(0);
+    expect(activeSpec?.levers[0]?.id).toBeDefined();
+    expect(activeSpec?.id).toContain(activeSpec?.levers[0]?.id);
+    expect(activeSpec?.difficulty).toBeCloseTo(nextDVal, 2);
+
     // Step 7: Advance second session to completion
     await page.evaluate(() => {
       const win = window as any;

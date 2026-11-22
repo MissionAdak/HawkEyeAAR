@@ -1,5 +1,5 @@
 import type { WeaknessVector, AARMetrics } from '@/sim/types';
-import { mulberry32 } from '@/sim/rng';
+import { mulberry32, hash32 } from '@/sim/rng';
 
 export const DEFAULT_TRAIN_DIFFICULTY = 0.3;
 export const DEFAULT_METRIC_EMA = 50.0;
@@ -250,6 +250,7 @@ export interface AdaptivePlan {
   recommendedScenarioId: string;
   profile: WeaknessVector;
   weights: Record<string, number>;
+  seed: number;
 }
 
 export function getAdaptivePlan(
@@ -286,7 +287,15 @@ export function getAdaptivePlan(
   const weakest = getWeakestDimension(effectiveProfile);
   const weights = computeWeaknessWeights(effectiveProfile);
 
-  // If seed provided, use softmax sampling; otherwise select primary weakness lever
+  // Exact recommendation seed derivation (TASK 21-PT-R2 Section 2)
+  // If explicit seed provided in options, use it; otherwise derive deterministic seed from trainee and profile.
+  const recSeed = typeof options?.seed === 'number'
+    ? options.seed
+    : hash32(
+        `${traineeId}|${startingD.toFixed(3)}|${weakest.dimension}|${effectiveProfile.d.toFixed(1)}|${effectiveProfile.c.toFixed(1)}|${effectiveProfile.econ.toFixed(1)}|${effectiveProfile.r.toFixed(1)}|${effectiveProfile.sal.toFixed(1)}|${effectiveProfile.sat.toFixed(1)}`
+      );
+
+  // If explicit seed provided, use softmax sampling; otherwise select primary weakness lever
   const sampledLevers = typeof options?.seed === 'number'
     ? sampleAdaptiveLevers(effectiveProfile, options.seed, 1)
     : [weakest.lever];
@@ -302,9 +311,10 @@ export function getAdaptivePlan(
     targetLever: targetLeverInfo.leverId,
     leverName: targetLeverInfo.name,
     rationale: targetLeverInfo.reason,
-    recommendedScenarioId: `ADAPTIVE-${targetLeverInfo.leverId}`,
+    recommendedScenarioId: `ADAPTIVE-${targetLeverInfo.leverId}-${recSeed}`,
     profile: effectiveProfile,
     weights,
+    seed: recSeed,
   };
 }
 

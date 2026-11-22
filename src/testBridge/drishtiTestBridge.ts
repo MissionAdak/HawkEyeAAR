@@ -14,7 +14,7 @@ import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
 import { CONFIG_HASH } from '@/config';
 import { loadCatalogScenario } from '@/director/catalog';
 import { aggregateAARMetrics } from '@/sim/metrics';
-import { getTraineeDifficulty, getTraineeProfile } from '@/db/sessionRepo';
+import { getTraineeDifficulty, getTraineeProfile, setMockProgressionTxFailure } from '@/db/sessionRepo';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -174,6 +174,8 @@ export interface DrishtiTestBridge {
   getActiveEffectsCount?: () => number;
   getSceneTrackModels?: () => Array<{ trackNo: string; category?: string; signature?: string; modelName?: string }>;
   fireTrack?: (trackNo: string) => void;
+  getActiveScenarioSpec?: () => import('@/sim/types').ScenarioSpec | null;
+  setMockProgressionTxFailure?: (mode: import('@/db/sessionRepo').MockTransactionFailurePoint) => void;
 }
 
 declare global {
@@ -981,6 +983,14 @@ export function installDrishtiTestBridge(
 
     fireTrack(trackNo: string): void {
       useSessionStore.getState().fire(trackNo);
+    },
+
+    getActiveScenarioSpec(): import('@/sim/types').ScenarioSpec | null {
+      return engine.spec ? (JSON.parse(JSON.stringify(engine.spec)) as import('@/sim/types').ScenarioSpec) : null;
+    },
+
+    setMockProgressionTxFailure(mode: import('@/db/sessionRepo').MockTransactionFailurePoint): void {
+      setMockProgressionTxFailure(mode);
     },
   };
 
