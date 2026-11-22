@@ -121,6 +121,64 @@ function drawVerticalTicks(
   }
 }
 
+function drawMetricLine(
+  ctx: CanvasRenderingContext2D,
+  metric: MetricConfig,
+  n: number,
+  chronologicalSessions: SessionRow[],
+  getX: (index: number) => number,
+  getY: (val: number) => number
+): void {
+  ctx.beginPath();
+  ctx.strokeStyle = metric.color;
+  ctx.lineWidth = metric.key === 'score' ? 2.5 : 1.5;
+  ctx.setLineDash(metric.dash || []);
+
+  let hasStarted = false;
+  for (let i = 0; i < n; i++) {
+    const val = getMetricValue(chronologicalSessions[i], metric.key);
+    if (val === null) {
+      hasStarted = false;
+      continue;
+    }
+    const x = getX(i);
+    const y = getY(val);
+
+    if (!hasStarted) {
+      ctx.moveTo(x, y);
+      hasStarted = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+}
+
+function drawMetricMarkers(
+  ctx: CanvasRenderingContext2D,
+  metric: MetricConfig,
+  n: number,
+  chronologicalSessions: SessionRow[],
+  getX: (index: number) => number,
+  getY: (val: number) => number
+): void {
+  ctx.setLineDash([]);
+  for (let i = 0; i < n; i++) {
+    const val = getMetricValue(chronologicalSessions[i], metric.key);
+    if (val === null) continue;
+    const x = getX(i);
+    const y = getY(val);
+
+    ctx.beginPath();
+    ctx.fillStyle = metric.color;
+    ctx.arc(x, y, metric.key === 'score' ? 4 : 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0D1117';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
 function drawMetricSeries(
   ctx: CanvasRenderingContext2D,
   n: number,
@@ -132,60 +190,28 @@ function drawMetricSeries(
 ): void {
   for (const metric of METRICS) {
     if (!visibleMetrics[metric.key]) continue;
-
-    ctx.beginPath();
-    ctx.strokeStyle = metric.color;
-    ctx.lineWidth = metric.key === 'score' ? 2.5 : 1.5;
-    ctx.setLineDash(metric.dash || []);
-
-    let hasStarted = false;
-    for (let i = 0; i < n; i++) {
-      const val = getMetricValue(chronologicalSessions[i], metric.key);
-      if (val === null) {
-        hasStarted = false;
-        continue;
-      }
-      const x = getX(i);
-      const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
-
-      if (!hasStarted) {
-        ctx.moveTo(x, y);
-        hasStarted = true;
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    ctx.stroke();
-
-    // Draw point markers
-    ctx.setLineDash([]);
-    for (let i = 0; i < n; i++) {
-      const val = getMetricValue(chronologicalSessions[i], metric.key);
-      if (val === null) continue;
-      const x = getX(i);
-      const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
-
-      ctx.beginPath();
-      ctx.fillStyle = metric.color;
-      ctx.arc(x, y, metric.key === 'score' ? 4 : 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#0D1117';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
+    const getY = metric.isRightAxis ? getYRight : getYLeft;
+    drawMetricLine(ctx, metric, n, chronologicalSessions, getX, getY);
+    drawMetricMarkers(ctx, metric, n, chronologicalSessions, getX, getY);
   }
+}
+
+interface ActiveHighlightConfig {
+  activeSession: SessionRow;
+  activeX: number;
+  visibleMetrics: Record<string, boolean>;
+  padTop: number;
+  plotHeight: number;
+  getYLeft: (val: number) => number;
+  getYRight: (val: number) => number;
 }
 
 function drawActiveHighlight(
   ctx: CanvasRenderingContext2D,
-  activeSession: SessionRow,
-  activeX: number,
-  visibleMetrics: Record<string, boolean>,
-  padTop: number,
-  plotHeight: number,
-  getYLeft: (val: number) => number,
-  getYRight: (val: number) => number
+  config: ActiveHighlightConfig
 ): void {
+  const { activeSession, activeX, visibleMetrics, padTop, plotHeight, getYLeft, getYRight } = config;
+
   // Hairline crosshair
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
@@ -309,7 +335,15 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     if (activeIdx >= 0 && activeIdx < n) {
       const activeX = getX(activeIdx);
       const activeSession = chronologicalSessions[activeIdx];
-      drawActiveHighlight(ctx, activeSession, activeX, visibleMetrics, padTop, plotHeight, getYLeft, getYRight);
+      drawActiveHighlight(ctx, {
+        activeSession,
+        activeX,
+        visibleMetrics,
+        padTop,
+        plotHeight,
+        getYLeft,
+        getYRight,
+      });
     }
 
     // Outer border of plot
