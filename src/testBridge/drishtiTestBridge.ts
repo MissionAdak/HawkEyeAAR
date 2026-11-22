@@ -14,7 +14,13 @@ import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
 import { CONFIG_HASH } from '@/config';
 import { loadCatalogScenario } from '@/director/catalog';
 import { aggregateAARMetrics } from '@/sim/metrics';
-import { getTraineeDifficulty, getTraineeProfile, setMockProgressionTxFailure } from '@/db/sessionRepo';
+import {
+  getTraineeDifficulty,
+  getTraineeProfile,
+  setMockProgressionTxFailure,
+  saveCompletedSession,
+  getProgressionLogEntry,
+} from '@/db/sessionRepo';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -176,6 +182,13 @@ export interface DrishtiTestBridge {
   fireTrack?: (trackNo: string) => void;
   getActiveScenarioSpec?: () => import('@/sim/types').ScenarioSpec | null;
   setMockProgressionTxFailure?: (mode: import('@/db/sessionRepo').MockTransactionFailurePoint) => void;
+  resubmitSessionForIdempotencyTest?: (sessionUid: string) => Promise<{
+    storedSession: import('@/db/dexie').SessionRow | undefined;
+    difficulty: number;
+    profile: import('@/sim/types').WeaknessVector | null;
+    progressionLog: import('@/db/dexie').ProgressionLogRow | null;
+    progressionLogCount: number;
+  } | null>;
 }
 
 declare global {
@@ -991,6 +1004,32 @@ export function installDrishtiTestBridge(
 
     setMockProgressionTxFailure(mode: import('@/db/sessionRepo').MockTransactionFailurePoint): void {
       setMockProgressionTxFailure(mode);
+    },
+
+    async resubmitSessionForIdempotencyTest(sessionUid: string) {
+      const stored = await db.sessions.get(sessionUid);
+      if (!stored) return null;
+
+      const freshCopy: import('@/db/dexie').SessionRow = {
+        ...stored,
+        progressionApplied: undefined,
+      };
+
+      await saveCompletedSession(freshCopy);
+
+      const afterSession = await db.sessions.get(sessionUid);
+      const difficulty = await getTraineeDifficulty(stored.traineeUid);
+      const profile = await getTraineeProfile(stored.traineeUid);
+      const progressionLog = await getProgressionLogEntry(sessionUid);
+      const logRows = await db.progressionLog.where('sessionUid').equals(sessionUid).toArray();
+
+      return {
+        storedSession: afterSession,
+        difficulty,
+        profile,
+        progressionLog,
+        progressionLogCount: logRows.length,
+      };
     },
   };
 

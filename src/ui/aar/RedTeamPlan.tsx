@@ -224,7 +224,7 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
             NEXT RECOMMENDED TRAINING DRILL: {plan.leverName.toUpperCase()}
           </span>
           <span className="text-text-dim">
-            TARGET SCENARIO: <span className="text-phosphor font-bold">{plan.recommendedScenarioId}</span>
+            TARGET SCENARIO: <span className="text-phosphor font-bold" data-testid="recommended-scenario-id">{plan.recommendedScenarioId}</span>
           </span>
         </div>
 

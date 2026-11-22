@@ -456,7 +456,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sessionStatus: 'ABORTED',
       isSimRunning: false,
       isAarOpen: true,
-      ui: engineInstance.buildUiSnapshot(),
+      ui: {
+        ...engineInstance.buildUiSnapshot(),
+        difficulty: get().ui.difficulty,
+      },
     });
   },
 
@@ -521,7 +524,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       isBriefingOpen: true,
       isAarOpen: false,
       isScenarioModalOpen: false,
-      ui: engineInstance.buildUiSnapshot(),
+      ui: {
+        ...engineInstance.buildUiSnapshot(),
+        difficulty: get().ui.difficulty,
+      },
     });
   },
 
@@ -867,6 +873,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {
-    set({ ui: snapshot });
+    set((state) => ({
+      ui: {
+        ...snapshot,
+        difficulty:
+          engineInstance.spec && typeof snapshot.difficulty === 'number'
+            ? snapshot.difficulty
+            : state.ui.difficulty,
+      },
+    }));
   },
 }));

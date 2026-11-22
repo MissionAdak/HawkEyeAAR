@@ -129,7 +129,13 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     const persistedBadge = page.getByTestId('persistence-status-saved');
     await expect(persistedBadge).toBeVisible({ timeout: 10000 });
 
-    // Step 4: Verify RedTeamPlan difficulty strip (d_start = 0.30 -> d_next) and EMA cards
+    const firstSessionUid = await page.evaluate(() => {
+      const win = window as any;
+      return win.__DRISHTI_TEST__?.getPersistenceState?.()?.latestSavedUid;
+    });
+    expect(firstSessionUid).toBeDefined();
+
+    // Step 4: Verify RedTeamPlan difficulty strip (d_start = 0.30 -> d_next), recommendation and EMA cards
     const diffStrip = page.locator('[data-testid="difficulty-adaptation-strip"]');
     await expect(diffStrip).toBeVisible();
     await expect(page.locator('[data-testid="current-diff-display"]')).toHaveText(/0\.30/);
@@ -140,6 +146,16 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     const match = nextDiffText.match(/([0-9.]+)/);
     const nextDVal = match ? parseFloat(match[1]) : 0.3;
     expect(Number.isFinite(nextDVal)).toBe(true);
+
+    const targetLeverElem = page.locator('[data-testid="target-lever-display"]');
+    await expect(targetLeverElem).toBeVisible();
+    const displayedTargetLever = (await targetLeverElem.innerText()).trim();
+    expect(displayedTargetLever.length).toBeGreaterThan(0);
+
+    const recScenarioElem = page.locator('[data-testid="recommended-scenario-id"]');
+    await expect(recScenarioElem).toBeVisible();
+    const displayedRecScenarioId = (await recScenarioElem.innerText()).trim();
+    expect(displayedRecScenarioId).toContain(displayedTargetLever);
 
     const emaGrid = page.locator('[data-testid="ema-metrics-grid"]');
     await expect(emaGrid).toBeVisible();
@@ -155,23 +171,33 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Step 6: Verify adapted scenario starts: TopBar displays ADAPTIVE-... scenario ID and new difficulty
     const topbarScenario = page.getByTestId('topbar-scenario-id');
-    await expect(topbarScenario).toBeVisible({ timeout: 10000 });
-    await expect(topbarScenario).toHaveText(/ADAPTIVE-/);
+    await expect(topbarScenario).toHaveText(displayedRecScenarioId, { timeout: 10000 });
+    const topbarScenarioText = (await topbarScenario.innerText()).trim();
+    expect(topbarScenarioText).toBe(displayedRecScenarioId);
 
     // Verify TopBar displays the adapted difficulty
     const expectedDiffPattern = new RegExp(`d=${nextDVal.toFixed(2)}`, 'i');
     await expect(page.locator('header').getByText(expectedDiffPattern).first()).toBeVisible({ timeout: 10000 });
 
-    // Inspect actual active scenario spec levers and difficulty via test bridge (TASK 21-PT-R2 Section 2)
+    // Inspect actual active scenario spec levers and difficulty via test bridge (TASK 21-PT-R2-FINAL Section 4)
     const activeSpec = await page.evaluate(() => {
       const win = window as any;
       return win.__DRISHTI_TEST__?.getActiveScenarioSpec?.();
     });
     expect(activeSpec).not.toBeNull();
     expect(activeSpec?.levers?.length).toBeGreaterThan(0);
-    expect(activeSpec?.levers[0]?.id).toBeDefined();
-    expect(activeSpec?.id).toContain(activeSpec?.levers[0]?.id);
+
+    // INVARIANT ASSERTION: Visible Recommended Lever === Selected Lever === Generated ScenarioSpec Lever
+    expect(activeSpec?.levers[0]?.id).toBe(displayedTargetLever);
     expect(activeSpec?.difficulty).toBeCloseTo(nextDVal, 2);
+    expect(activeSpec?.id).toBe(displayedRecScenarioId);
+    expect(topbarScenarioText).toBe(activeSpec?.id);
+
+    // Verify seed matching
+    const seedMatch = displayedRecScenarioId.match(/ADAPTIVE-[A-Z_]+-(\d+)/);
+    if (seedMatch) {
+      expect(activeSpec?.seed).toBe(parseInt(seedMatch[1], 10));
+    }
 
     // Step 7: Advance second session to completion
     await page.evaluate(() => {
@@ -179,16 +205,39 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
       win.__DRISHTI_TEST__?.advanceToSessionEnd();
     });
 
-    // Wait for second session save to complete
-    await page.waitForTimeout(1000);
+    // Explicit persistence state confirmation: wait for Dexie write of second session
+    await page.waitForFunction((prevUid) => {
+      const win = window as any;
+      const s = win.__DRISHTI_TEST__?.getPersistenceState?.();
+      return s?.status === 'SAVED' && s?.latestSavedUid && s.latestSavedUid !== prevUid;
+    }, firstSessionUid, { timeout: 10000 });
 
-    // Record persisted difficulty before reload
-    const persistedDAfterS2 = await page.evaluate(async () => {
+    // Capture persisted second session state and UID before reload
+    const secondSessionUid = await page.evaluate(() => {
+      const win = window as any;
+      return win.__DRISHTI_TEST__?.getPersistenceState?.()?.latestSavedUid;
+    });
+    expect(secondSessionUid).toBeDefined();
+
+    const secondSessionBeforeReload = await page.evaluate(async (uid: string) => {
+      const win = window as any;
+      return await win.__DRISHTI_TEST__?.getDexieSession?.(uid);
+    }, secondSessionUid);
+    expect(secondSessionBeforeReload).toBeDefined();
+    expect(secondSessionBeforeReload?.mode).toBe('TRAIN');
+    expect(secondSessionBeforeReload?.progressionApplied).toBe(true);
+
+    const diffBeforeReload = await page.evaluate(async () => {
       const win = window as any;
       return await win.__DRISHTI_TEST__?.getDexieDifficulty?.() ?? 0.3;
     });
+    const profileBeforeReload = await page.evaluate(async () => {
+      const win = window as any;
+      return await win.__DRISHTI_TEST__?.getDexieProfile?.();
+    });
+    expect(profileBeforeReload).not.toBeNull();
 
-    // Step 8: Reload page (page.reload())
+    // Step 8: Reload page (page.reload()) to simulate fresh browser session
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
 
@@ -199,8 +248,34 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     }, undefined, { timeout: 10000 });
 
     // Step 9: Confirm TopBar displays persisted difficulty across reload
-    const persistedPattern = new RegExp(`d=${persistedDAfterS2.toFixed(2)}`, 'i');
+    const persistedPattern = new RegExp(`d=${diffBeforeReload.toFixed(2)}`, 'i');
     await expect(page.locator('header').getByText(persistedPattern).first()).toBeVisible({ timeout: 10000 });
+
+    // Verify the same session UID is still persisted in Dexie
+    const storedAfterReload = await page.evaluate(async (uid: string) => {
+      const win = window as any;
+      return await win.__DRISHTI_TEST__?.getDexieSession?.(uid);
+    }, secondSessionUid);
+    expect(storedAfterReload).toBeDefined();
+    expect(storedAfterReload?.progressionApplied).toBe(true);
+
+    // Resubmit identical session UID with progressionApplied intentionally unset (TASK 21-PT-R2-FINAL Section 5)
+    const resubmitResult = await page.evaluate(async (uid: string) => {
+      const win = window as any;
+      return await win.__DRISHTI_TEST__?.resubmitSessionForIdempotencyTest?.(uid);
+    }, secondSessionUid);
+    expect(resubmitResult).not.toBeNull();
+
+    // Idempotency assertions:
+    // 1. Difficulty remains unchanged
+    expect(resubmitResult!.difficulty).toBeCloseTo(diffBeforeReload, 4);
+    // 2. Every EMA dimension remains identical
+    expect(resubmitResult!.profile).toEqual(profileBeforeReload);
+    // 3. Durable session marker progressionApplied remains true
+    expect(resubmitResult!.storedSession?.progressionApplied).toBe(true);
+    // 4. Progression log contains exactly one entry for that session UID
+    expect(resubmitResult!.progressionLogCount).toBe(1);
+    expect(resubmitResult!.progressionLog?.dAfter).toBeCloseTo(diffBeforeReload, 4);
 
     // Step 10: Open scenario catalog / briefing modal, select fixed EVAL scenario (e.g. DEMO-1 in EVAL mode), start drill
     // In MissionBriefing modal, click briefing-mode-eval-btn

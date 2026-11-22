@@ -1167,7 +1167,10 @@ export class SimEngine {
       isPaused: clockInstance.getPaused(),
       recentEvents: this.getOperatorEvents(),
       mode: this.spec?.mode || 'TRAIN',
-      difficulty: this.spec?.difficulty || 0.3,
+      difficulty:
+        typeof this.spec?.difficulty === 'number' && Number.isFinite(this.spec.difficulty)
+          ? this.spec.difficulty
+          : 0.3,
       activeEffector: this.activeEffector,
     };
   }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   computeNextDifficulty,
   updateEMA,
@@ -30,13 +30,20 @@ import {
   getStoredSession,
 } from '@/db/sessionRepo';
 import { setMockPersistenceFailureMode } from '@/db/recorder';
-import { useSessionStore, getActiveSessionScenarioSnapshot } from '@/store/sessionStore';
+import { useSessionStore, getActiveSessionScenarioSnapshot, engineInstance, clockInstance } from '@/store/sessionStore';
 import type { SessionRow } from '@/db/dexie';
 import type { WeaknessVector, ScenarioSpec } from '@/sim/types';
 
 describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem', () => {
   beforeEach(() => {
     resetTraineeProgressionForTest();
+  });
+
+  afterEach(() => {
+    clockInstance.pause();
+    clockInstance.reset();
+    engineInstance.abort('TEST_CLEANUP');
+    useSessionStore.getState().returnToBriefing();
   });
 
   describe('1. Difficulty Adaptation Formula & Boundary Conditions (Section 4 & Rules.md R4.2)', () => {
@@ -1350,52 +1357,59 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
         }),
       };
 
-      // Arm in-transaction failure mode (throws inside Dexie transaction AFTER difficulty.put and traineeProfile.put)
-      setMockProgressionTxFailure('PROGRESSION_TX_FAIL');
+      try {
+        // Arm in-transaction failure mode (throws inside Dexie transaction AFTER difficulty.put and traineeProfile.put)
+        setMockProgressionTxFailure('PROGRESSION_TX_FAIL');
 
-      // Attempt to save session - must throw due to in-transaction write failure
-      await expect(saveCompletedSession(session, callsign)).rejects.toThrow(
-        /Simulated in-transaction progression write failure/
-      );
+        // Attempt to save session - must throw due to in-transaction write failure
+        await expect(saveCompletedSession(session, callsign)).rejects.toThrow(
+          /Simulated in-transaction progression write failure/
+        );
 
-      // VERIFY ATOMIC ROLLBACK:
-      // 1. Difficulty must NOT have been updated (rolled back to default 0.30)
-      const rolledBackDiff = await getTraineeDifficulty(traineeUid);
-      expect(rolledBackDiff).toBe(0.30);
+        // VERIFY ATOMIC ROLLBACK:
+        // 1. Difficulty must NOT have been updated (rolled back to default 0.30)
+        const rolledBackDiff = await getTraineeDifficulty(traineeUid);
+        expect(rolledBackDiff).toBe(0.30);
 
-      // 2. Trainee profile must NOT have been updated (all 6 EMAs rolled back to null)
-      const rolledBackProfile = await getTraineeProfile(traineeUid);
-      expect(rolledBackProfile).toBeNull();
+        // 2. Trainee profile must NOT have been updated (all 6 EMAs rolled back to null)
+        const rolledBackProfile = await getTraineeProfile(traineeUid);
+        expect(rolledBackProfile).toBeNull();
+        for (const dim of ['d', 'c', 'econ', 'r', 'sal', 'sat'] as const) {
+          expect(rolledBackProfile?.[dim]).toBeUndefined();
+        }
 
-      // 3. Progression log entry must NOT exist
-      const rolledBackProg = await getProgressionLogEntry('session-tx-fault-test');
-      expect(rolledBackProg).toBeNull();
+        // 3. Progression log entry must NOT exist
+        const rolledBackProg = await getProgressionLogEntry('session-tx-fault-test');
+        expect(rolledBackProg).toBeNull();
 
-      // 4. Session marker progressionApplied must NOT be set
-      expect(session.progressionApplied).toBeFalsy();
-      const storedSessionBeforeRetry = await getStoredSession('session-tx-fault-test');
-      expect(storedSessionBeforeRetry?.progressionApplied).toBeFalsy();
+        // 4. Session marker progressionApplied must NOT be set
+        expect(session.progressionApplied).toBeFalsy();
+        const storedSessionBeforeRetry = await getStoredSession('session-tx-fault-test');
+        expect(storedSessionBeforeRetry?.progressionApplied).toBeFalsy();
 
-      // Disarm fault injection and retry
-      setMockProgressionTxFailure('NONE');
-      await saveCompletedSession(session, callsign);
+        // Disarm fault injection and retry
+        setMockProgressionTxFailure('NONE');
+        await saveCompletedSession(session, callsign);
 
-      // Verify that exactly ONE progression update occurs upon retry
-      const committedDiff = await getTraineeDifficulty(traineeUid);
-      expect(committedDiff).toBeCloseTo(0.40, 4);
+        // Verify that exactly ONE progression update occurs upon retry
+        const committedDiff = await getTraineeDifficulty(traineeUid);
+        expect(committedDiff).toBeCloseTo(0.40, 4);
 
-      const committedProfile = await getTraineeProfile(traineeUid);
-      expect(committedProfile).not.toBeNull();
-      expect(committedProfile!.d).toBe(95);
-      expect(committedProfile!.econ).toBe(85);
+        const committedProfile = await getTraineeProfile(traineeUid);
+        expect(committedProfile).not.toBeNull();
+        expect(committedProfile!.d).toBe(95);
+        expect(committedProfile!.econ).toBe(85);
 
-      const committedProg = await getProgressionLogEntry('session-tx-fault-test');
-      expect(committedProg).not.toBeNull();
-      expect(committedProg!.dAfter).toBeCloseTo(0.40, 4);
+        const committedProg = await getProgressionLogEntry('session-tx-fault-test');
+        expect(committedProg).not.toBeNull();
+        expect(committedProg!.dAfter).toBeCloseTo(0.40, 4);
 
-      expect(session.progressionApplied).toBe(true);
-      const storedSessionAfterRetry = await getStoredSession('session-tx-fault-test');
-      expect(storedSessionAfterRetry?.progressionApplied).toBe(true);
+        expect(session.progressionApplied).toBe(true);
+        const storedSessionAfterRetry = await getStoredSession('session-tx-fault-test');
+        expect(storedSessionAfterRetry?.progressionApplied).toBe(true);
+      } finally {
+        setMockProgressionTxFailure('NONE');
+      }
     });
 
     it('preserves durable progressionApplied across reloaded database instances and prevents duplicate progression or marker clearing (TASK 21-PT-R2 Section 4)', async () => {
@@ -1538,49 +1552,109 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
     });
   });
 
-  describe('11. Fail-Closed Fallback Scenario Validation (TASK 21-PT-R2 Section 5)', () => {
+  describe('11. Fail-Closed Fallback Scenario Validation (TASK 21-PT-R2 Section 5 & TASK 21-PT-R2-FINAL Section 3)', () => {
     it('validates procedural fallback scenario before returning', () => {
       // Normal generateScenario returns valid candidate
       const spec = generateScenario('trainee-fallback-check', 1, 0.4, [], 1234);
       expect(validate(spec)).toBe(true);
     });
 
-    it('executes exhausted candidate-generation branch, verifies constructed fallback passes validation, and controlled error on invalid fallback (TASK 21-PT-R2 Section 5)', async () => {
-      const validateSpy = vi.spyOn(validateModule, 'validate');
+    it('Test A: exhausts configured candidate attempts (20) and returns verified fallback accepted by real fairness validator', () => {
+      const realValidate = validateModule.validate;
+      let proceduralAttempts = 0;
+      let fallbackValidated = false;
+
+      const validateSpy = vi.spyOn(validateModule, 'validate').mockImplementation((spec) => {
+        if (spec.id.startsWith('SCEN-')) {
+          proceduralAttempts++;
+          return false; // Force procedural candidate to fail
+        }
+        if (spec.id.startsWith('FALLBACK-')) {
+          fallbackValidated = true;
+          // Delegate to the real authoritative validator
+          return realValidate(spec);
+        }
+        return realValidate(spec);
+      });
 
       try {
-        // Case A: Force all procedural attempts to fail validation (SCEN-), but fallback passes
-        validateSpy.mockImplementation((spec) => {
-          if (spec.id.startsWith('SCEN-')) return false;
-          return true; // Fallback scenario passes
-        });
-
         const fallbackSpec = generateScenario('trainee-exhausted-attempts', 1, 0.45, [], 999);
+        expect(proceduralAttempts).toBe(20);
+        expect(fallbackValidated).toBe(true);
         expect(fallbackSpec.id).toMatch(/^FALLBACK-/);
         expect(fallbackSpec.difficulty).toBe(0.45);
+        expect(fallbackSpec.seed).toBeDefined();
         expect(fallbackSpec.levers).toEqual([
           { id: 'BUNDLED_FALLBACK', reason: 'Procedural generation fallback' },
         ]);
-        expect(validate(fallbackSpec)).toBe(true);
-
-        // Case B: Fallback scenario ALSO fails validation -> controlled error thrown
-        validateSpy.mockImplementation(() => false);
-
-        expect(() => {
-          generateScenario('trainee-exhausted-attempts', 1, 0.45, [], 999);
-        }).toThrow(/Procedural fallback scenario "FALLBACK-.*" failed authoritative fairness validation/);
-
-        // Case C: Confirm loadScenario refuses to load an invalid scenario and fails closed
-        const invalidSpec = structuredClone(fallbackSpec);
-        invalidSpec.durationMs = 99999 as unknown as 120000; // invalid duration
-        const store = useSessionStore.getState();
-        const prevSessionId = store.currentScenarioId;
-        await store.loadScenario(invalidSpec);
-        // Failed closed: did not load invalid scenario!
-        expect(store.currentScenarioId).toBe(prevSessionId);
+        // Confirm real fairness validator actually accepted this fallback
+        expect(realValidate(fallbackSpec)).toBe(true);
       } finally {
         validateSpy.mockRestore();
       }
+    });
+
+    it('Test B: rejects malformed fallback scenario via real fairness validator and throws controlled generator error', () => {
+      const realValidate = validateModule.validate;
+      let proceduralAttempts = 0;
+      let fallbackIntercepted = false;
+
+      const validateSpy = vi.spyOn(validateModule, 'validate').mockImplementation((spec) => {
+        if (spec.id.startsWith('SCEN-')) {
+          proceduralAttempts++;
+          return false; // Force procedural attempts to fail
+        }
+        if (spec.id.startsWith('FALLBACK-')) {
+          fallbackIntercepted = true;
+          // Deliberately corrupt a real fairness constraint on the fallback:
+          // Setting waypoints to empty array causes validateHostileThreat to fail
+          if (spec.threats && spec.threats.length > 0) {
+            spec.threats[0].waypoints = [];
+          }
+          const realResult = realValidate(spec);
+          expect(realResult).toBe(false); // Verified real validator rejected malformed fallback!
+          return realResult;
+        }
+        return realValidate(spec);
+      });
+
+      try {
+        expect(() => {
+          generateScenario('trainee-invalid-fallback', 1, 0.45, [], 999);
+        }).toThrow(/\[Generator\] Procedural fallback scenario "FALLBACK-.*" failed authoritative fairness validation/);
+        expect(proceduralAttempts).toBe(20);
+        expect(fallbackIntercepted).toBe(true);
+      } finally {
+        validateSpy.mockRestore();
+      }
+    });
+
+    it('Test C: fails closed in loadScenario when presented with genuinely invalid scenario, preserving existing state', async () => {
+      useSessionStore.getState().returnToBriefing();
+      engineInstance.abort('TEST_CLEANUP');
+
+      // Load a known valid baseline scenario first
+      const demo1 = loadCatalogScenario('DEMO-1', 2026, 0.3);
+      await useSessionStore.getState().loadScenario(demo1.spec);
+      const prevScenarioId = useSessionStore.getState().currentScenarioId;
+      const prevSnapshot = getActiveSessionScenarioSnapshot();
+      expect(prevScenarioId).toBe('DEMO-1');
+      expect(prevSnapshot).not.toBeNull();
+
+      // Construct a genuinely invalid scenario by violating real validation schema:
+      // removing waypoints causes validateHostileThreat to reject
+      const invalidSpec = structuredClone(demo1.spec);
+      invalidSpec.id = 'SCEN-GENUINELY-INVALID';
+      invalidSpec.threats[0].waypoints = [];
+      // Real validator confirms this is invalid
+      expect(validate(invalidSpec)).toBe(false);
+
+      // Attempt to load invalid scenario
+      await useSessionStore.getState().loadScenario(invalidSpec);
+
+      // Verify loadScenario failed closed: did not mutate session state!
+      expect(useSessionStore.getState().currentScenarioId).toBe(prevScenarioId);
+      expect(getActiveSessionScenarioSnapshot()).toEqual(prevSnapshot);
     });
 
     it('bundled fallback scenario satisfies authoritative fairness validation', () => {
