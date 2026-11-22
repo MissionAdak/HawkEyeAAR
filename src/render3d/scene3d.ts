@@ -53,6 +53,39 @@ export interface TrackMeshRecord {
   currentLabelText?: string;
 }
 
+export function formatTrackLabelText(track: SafeTrackView): {
+  text: string;
+  labelTag: string;
+  colorHex: string;
+  altM: number;
+} {
+  const label = track.traineeLabel;
+  let labelTag = 'NON';
+  let colorHex = '#FFCC00';
+
+  if (label === 'FRIENDLY') {
+    labelTag = 'FRIEND';
+    colorHex = '#00CCFF';
+  } else if (label === 'CIVIL_UAS') {
+    labelTag = 'CIVIL';
+    colorHex = '#00FF66';
+  } else if (label === 'BIRD') {
+    labelTag = 'BIRD';
+    colorHex = '#8A99A8';
+  } else if (
+    label === 'HOSTILE_ATTACK' ||
+    label === 'HOSTILE_ISR' ||
+    label === 'SWARM_ELEMENT'
+  ) {
+    labelTag = label === 'HOSTILE_ATTACK' ? 'H-ATK' : label === 'HOSTILE_ISR' ? 'H-ISR' : 'SWARM';
+    colorHex = '#FF3333';
+  }
+
+  const altM = Math.round(track.pos.z);
+  const text = `${track.trackNo} [${labelTag}] ${altM}m`;
+  return { text, labelTag, colorHex, altM };
+}
+
 export class Scene3D {
   public readonly scene: THREE.Scene;
   private readonly staticGroup: THREE.Group;
@@ -505,30 +538,7 @@ export class Scene3D {
   }
 
   private updateLabelSprite(record: TrackMeshRecord, track: SafeTrackView): void {
-    const label = track.traineeLabel;
-    let labelTag = 'NON';
-    let colorHex = '#FFCC00';
-
-    if (label === 'FRIENDLY') {
-      labelTag = 'FRIEND';
-      colorHex = '#00CCFF';
-    } else if (label === 'CIVIL_UAS') {
-      labelTag = 'CIVIL';
-      colorHex = '#00FF66';
-    } else if (label === 'BIRD') {
-      labelTag = 'BIRD';
-      colorHex = '#8A99A8';
-    } else if (
-      label === 'HOSTILE_ATTACK' ||
-      label === 'HOSTILE_ISR' ||
-      label === 'SWARM_ELEMENT'
-    ) {
-      labelTag = label === 'HOSTILE_ATTACK' ? 'H-ATK' : label === 'HOSTILE_ISR' ? 'H-ISR' : 'SWARM';
-      colorHex = '#FF3333';
-    }
-
-    const altM = Math.round(track.pos.z);
-    const text = `${track.trackNo} [${labelTag}] ${altM}m`;
+    const { text, colorHex } = formatTrackLabelText(track);
     if (record.currentLabelText === text) {
       return;
     }

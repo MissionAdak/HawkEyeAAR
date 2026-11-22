@@ -192,12 +192,14 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
   // Helper to register an inspectable building
   function registerBuilding(
     mesh: THREE.Object3D,
-    info: EnvironmentObjectInfo
+    info: EnvironmentObjectInfo,
+    extraUserData?: Record<string, unknown>
   ): void {
     mesh.userData = {
       isEnvironmentObject: true,
       envObjectId: info.id,
       envObjectInfo: info,
+      ...(extraUserData || {}),
     };
     objects.push(info);
     selectableMeshes.push(mesh);
@@ -472,11 +474,17 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
 
         // Exact terrain alignment:
         // Account for procedural terrain surface elevation and Three.js ground mesh offset (groundMesh.position.y = -1).
-        // Evaluate ground elevation across footprint corners and center to eliminate any floating foundation gap on slopes.
+        // Evaluate ground elevation across footprint corners, center, and 4 edge midpoints to eliminate any floating foundation gap on slopes.
         const corners = getRotatedFootprintCorners(candidateX, candidateY, bldSizeX, bldSizeZ, yawAngle);
         const centerElev = getTerrainElevation(candidateX, candidateY, preset);
         const cornerElevs = corners.map((c) => getTerrainElevation(c[0], c[1], preset));
-        const minGroundElev = Math.min(centerElev, ...cornerElevs);
+        const midElevs = [
+          getTerrainElevation((corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2, preset),
+          getTerrainElevation((corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2, preset),
+          getTerrainElevation((corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2, preset),
+          getTerrainElevation((corners[3][0] + corners[0][0]) / 2, (corners[3][0] + corners[0][1]) / 2, preset),
+        ];
+        const minGroundElev = Math.min(centerElev, ...cornerElevs, ...midElevs);
 
         // Ground mesh surface in Three.js world coordinates is at (getTerrainElevation - 1).
         // Foundation base extends down to (minGroundElev - 1) to coincide with or embed into terrain mesh surface.
@@ -564,6 +572,11 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
           },
           isObstructionEnvelope: false,
           description: `Authoritative ${bldType.toLowerCase()} structure in ${zone.id}. Height ${Math.round(bldHeight)}m (zone envelope ${zone.heightM}m).`,
+        }, {
+          footprintSizeX: bldSizeX,
+          footprintSizeZ: bldSizeZ,
+          yawAngle,
+          minGroundElev,
         });
       }
     }

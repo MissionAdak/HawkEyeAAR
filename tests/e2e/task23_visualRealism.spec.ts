@@ -57,7 +57,6 @@ function assertValidTacticalScreenshot(
 
 test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion & Environmental Realism', () => {
   const outDir = path.resolve(process.cwd(), 'test-results/screenshots/task23_1');
-  const artifactDir = 'C:\\Users\\Missi\\.gemini\\antigravity\\brain\\dcbbc993-bf1f-433e-850f-d7e049737f29';
 
   test.beforeAll(() => {
     if (!fs.existsSync(outDir)) {
@@ -69,10 +68,6 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
     const filePath = path.join(outDir, filename);
     const shotBuffer = await page.screenshot({ path: filePath });
     assertValidTacticalScreenshot(shotBuffer, 1774, 850);
-
-    if (fs.existsSync(artifactDir)) {
-      fs.copyFileSync(filePath, path.join(artifactDir, filename));
-    }
     return shotBuffer;
   };
 
@@ -401,42 +396,67 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       // STATE 6: Multiple different target models simultaneously rendered
       // Switch to TOP camera to view tactical air picture with varied tracks
       // ==========================================
-      // Configure distinct signatures on multiple tracks
+      // Advance simulation so that all 3 threats in DEMO-1 spawn and become active tracks (T-01, T-02, T-03)
       await page.evaluate(() => {
         const bridge = window.__DRISHTI_TEST__;
-        const tracks = bridge?.getTrackList() || [];
-        if (tracks[0]) {
-          bridge?.injectObservationOverride(tracks[0].trackNo, {
-            signature: 'MULTIROTOR_COMPACT',
-            observedSignature: 'MULTIROTOR_COMPACT',
-            sensorSource: 'EOIR',
-            activeSensor: 'EOIR',
-            confidence: 0.95,
-            resolutionLevel: 'FULL',
-            resolution: 'FULL',
-            visibilityState: 'CLEAR',
-            sensorAvailability: true,
-            sensorHealth: 'OK',
-            sensorHealthOk: true,
-            estimatedRangeM: 800,
-          });
-        }
-        if (tracks[1]) {
-          bridge?.injectObservationOverride(tracks[1].trackNo, {
-            signature: 'FIXED_WING_DELTA',
-            observedSignature: 'FIXED_WING_DELTA',
-            sensorSource: 'EOIR',
-            activeSensor: 'EOIR',
-            confidence: 0.95,
-            resolutionLevel: 'FULL',
-            resolution: 'FULL',
-            visibilityState: 'CLEAR',
-            sensorAvailability: true,
-            sensorHealth: 'OK',
-            sensorHealthOk: true,
-            estimatedRangeM: 800,
-          });
-        }
+        bridge?.advanceSimTicks?.(200);
+      });
+
+      // Configure distinct signatures, models, and positions on all 3 tracks
+      await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        if (!bridge) return;
+
+        // T-01: FPV Attack drone (MULTIROTOR_COMPACT -> Target_FPV_Attack) at 80m altitude
+        bridge.positionTrack?.('T-01', { x: 800, y: 800, z: 80 });
+        bridge.injectObservationOverride('T-01', {
+          signature: 'MULTIROTOR_COMPACT',
+          observedSignature: 'MULTIROTOR_COMPACT',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
+
+        // T-02: Loitering munition (FIXED_WING_DELTA -> Target_Loitering_Munition) at 250m altitude
+        bridge.positionTrack?.('T-02', { x: 1400, y: 800, z: 250 });
+        bridge.injectObservationOverride('T-02', {
+          signature: 'FIXED_WING_DELTA',
+          observedSignature: 'FIXED_WING_DELTA',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
+
+        // T-03: Bird contact (BIRD_LIKE -> Target_Bird) at 400m altitude
+        bridge.positionTrack?.('T-03', { x: 1000, y: 1500, z: 400 });
+        bridge.injectObservationOverride('T-03', {
+          signature: 'BIRD_LIKE',
+          observedSignature: 'BIRD_LIKE',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
       });
 
       const topBtn = page.getByRole('button', { name: /\[T\] TOP/i });
@@ -446,7 +466,23 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const sceneModels = await page.evaluate(() => {
         return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
       });
-      expect(sceneModels.length).toBeGreaterThanOrEqual(1);
+
+      // Mandatory assertions (Section 3):
+      expect(sceneModels.length).toBeGreaterThanOrEqual(3);
+      const distinctTracks = new Set(sceneModels.map((m) => m.trackNo));
+      expect(distinctTracks.size).toBeGreaterThanOrEqual(3);
+      const distinctModelNames = new Set(sceneModels.map((m) => m.modelName));
+      expect(distinctModelNames.size).toBeGreaterThanOrEqual(3);
+
+      expect(sceneModels.some((m) => m.modelName === 'Target_FPV_Attack')).toBe(true);
+      expect(sceneModels.some((m) => m.modelName === 'Target_Loitering_Munition')).toBe(true);
+      expect(sceneModels.some((m) => m.modelName === 'Target_Bird')).toBe(true);
+
+      // Verify ground-truth isolation
+      const leakCheck = await page.evaluate(() => {
+        return window.__DRISHTI_TEST__?.inspectOperatorFacingData?.() || { hasLeaks: false };
+      });
+      expect(leakCheck.hasLeaks).toBe(false);
 
       await saveShot(page, '06_multiple_target_models.png');
 
@@ -488,6 +524,32 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         await page.mouse.wheel(0, 400); // Zoom out
         await page.waitForTimeout(600);
       }
+
+      // Re-position tracks at exact test altitudes (80m, 250m, 400m)
+      await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        bridge?.positionTrack?.('T-01', { x: 800, y: 800, z: 80 });
+        bridge?.positionTrack?.('T-02', { x: 1400, y: 800, z: 250 });
+        bridge?.positionTrack?.('T-03', { x: 1000, y: 1500, z: 400 });
+      });
+      await page.waitForTimeout(200);
+
+      // Assert exact rendered label strings on the 3 distinct tracks (Section 4):
+      const altitudeModels = await page.evaluate(() => {
+        return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
+      });
+      expect(altitudeModels.length).toBeGreaterThanOrEqual(3);
+      const t01 = altitudeModels.find((m) => m.trackNo === 'T-01');
+      const t02 = altitudeModels.find((m) => m.trackNo === 'T-02');
+      const t03 = altitudeModels.find((m) => m.trackNo === 'T-03');
+
+      expect(t01?.labelText).toContain('80m');
+      expect(t02?.labelText).toContain('250m');
+      expect(t03?.labelText).toContain('400m');
+
+      const distinctAltitudes = new Set([t01?.labelText, t02?.labelText, t03?.labelText]);
+      expect(distinctAltitudes.size).toBe(3);
+
       await saveShot(page, '09_aircraft_altitudes.png');
 
       // ==========================================

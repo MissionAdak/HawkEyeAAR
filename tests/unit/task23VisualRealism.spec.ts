@@ -13,7 +13,8 @@ import {
   segmentsIntersect,
   pointInPolygon,
 } from '@/render3d/environment/buildings';
-import { getTerrainElevation } from '@/render3d/environment/terrain';
+import { getTerrainElevation, buildProceduralTerrain } from '@/render3d/environment/terrain';
+import { formatTrackLabelText } from '@/render3d/scene3d';
 import { findNearestTrackNo } from '@/ui/Console';
 import type { SafeTrackView } from '@/render3d/types';
 import type { EnvironmentDescriptor } from '@/render3d/environment/types';
@@ -403,6 +404,159 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
         // Roof must reach at or above ground level
         expect(bbox.max.y).toBeGreaterThan(centerElev - 1);
       }
+    });
+
+    it('rigorously validates building foundations across 9 footprint points on sloped (MOUNTAIN_RIDGE) and flat (URBAN_DENSE) terrain against Three.js ground mesh', () => {
+      for (const preset of ['URBAN_DENSE', 'MOUNTAIN_RIDGE'] as const) {
+        const desc = testDescriptor(preset === 'MOUNTAIN_RIDGE' ? 4242 : 7777, preset);
+        const terrain = buildProceduralTerrain(desc);
+        const buildings = buildProceduralBuildings(desc);
+
+        // Verify groundMesh exists in terrain with position.y = -1
+        const groundMesh = terrain.group.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh;
+        expect(groundMesh).toBeDefined();
+        expect(groundMesh.position.y).toBe(-1);
+
+        const zoneMeshes = buildings.selectableMeshes.filter((m) =>
+          m.userData?.envObjectId?.startsWith('BLD-U1')
+        );
+        expect(zoneMeshes.length).toBeGreaterThanOrEqual(6);
+
+        const reportList: Array<{
+          id: string;
+          floatingGap: number;
+          foundationContact: number;
+          burialDepth: number;
+          localTerrainRelief: number;
+        }> = [];
+
+        for (const mesh of zoneMeshes) {
+          const info = mesh.userData?.envObjectInfo;
+          expect(info).toBeDefined();
+          if (!info) continue;
+
+          const bbox = new THREE.Box3().setFromObject(mesh);
+          const foundationBaseY = bbox.min.y;
+
+          // Extract building dimensions from stored footprint metadata or geometry parameters
+          let sizeX = mesh.userData?.footprintSizeX ?? 20;
+          let sizeZ = mesh.userData?.footprintSizeZ ?? 20;
+          if (mesh.userData?.footprintSizeX === undefined) {
+            if (mesh instanceof THREE.Mesh && mesh.geometry instanceof THREE.BoxGeometry) {
+              sizeX = mesh.geometry.parameters.width;
+              sizeZ = mesh.geometry.parameters.depth;
+            } else if (mesh instanceof THREE.Mesh && mesh.geometry instanceof THREE.CylinderGeometry) {
+              sizeX = mesh.geometry.parameters.radiusBottom * 2;
+              sizeZ = mesh.geometry.parameters.radiusBottom * 2;
+            }
+          }
+          const yaw = mesh.userData?.yawAngle ?? mesh.rotation.y;
+
+          // 1. Center
+          const centerPt: [number, number] = [info.position.x, info.position.y];
+
+          // 2. 4 Corners (NW, NE, SE, SW)
+          const corners = getRotatedFootprintCorners(centerPt[0], centerPt[1], sizeX, sizeZ, yaw);
+
+          // 3. 4 Edge Midpoints
+          const edgeMidpoints: [number, number][] = [
+            [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2],
+            [(corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2],
+            [(corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2],
+            [(corners[3][0] + corners[0][0]) / 2, (corners[3][0] + corners[0][1]) / 2],
+          ];
+
+          const all9Points = [centerPt, ...corners, ...edgeMidpoints];
+          expect(all9Points.length).toBe(9);
+
+          // Compute Three.js ground heights (accounting for groundMesh position.y = -1)
+          const groundHeightsY = all9Points.map(([px, py]) => getTerrainElevation(px, py, preset) - 1);
+          const minGroundY = Math.min(...groundHeightsY);
+          const maxGroundY = Math.max(...groundHeightsY);
+          const localTerrainRelief = maxGroundY - minGroundY;
+
+          // Measure metrics:
+          // Floating gap: distance foundation floats above the lowest terrain point (must be 0 <= tolerance)
+          const floatingGap = Math.max(0, foundationBaseY - minGroundY);
+
+          // Foundation contact: absolute difference between foundation base and lowest terrain point
+          const foundationContact = Math.abs(foundationBaseY - minGroundY);
+
+          // Burial depth: how deep the foundation extends below highest terrain point
+          const burialDepth = maxGroundY - foundationBaseY;
+
+          reportList.push({
+            id: info.id,
+            floatingGap,
+            foundationContact,
+            burialDepth,
+            localTerrainRelief,
+          });
+
+          // Mandatory assertions (Section 5):
+          // 1. Zero floating gap beyond tolerance
+          expect(floatingGap).toBeLessThanOrEqual(0.05);
+
+          // 2. Foundation contacts lowest sampled terrain
+          expect(foundationContact).toBeLessThanOrEqual(0.05);
+
+          // 3. Bounded burial depth within measured local terrain relief
+          expect(burialDepth).toBeLessThanOrEqual(localTerrainRelief + 0.05);
+
+          // 4. Roof extends above highest sampled ground
+          expect(bbox.max.y).toBeGreaterThan(maxGroundY);
+        }
+
+        // Verify report contains results for all buildings
+        expect(reportList.length).toBe(zoneMeshes.length);
+        for (const item of reportList) {
+          expect(item.floatingGap).toBeLessThanOrEqual(0.05);
+          expect(item.foundationContact).toBeLessThanOrEqual(0.05);
+          expect(item.burialDepth).toBeLessThanOrEqual(item.localTerrainRelief + 0.05);
+        }
+      }
+    });
+
+    it('formats track label text pure helper with exact altitude and label tags (Section 4)', () => {
+      // Distinct altitudes 80m, 250m, 400m
+      const t80 = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-01', pos: { x: 500, y: 500, z: 80 }, traineeLabel: null }));
+      expect(t80.altM).toBe(80);
+      expect(t80.text).toBe('T-01 [NON] 80m');
+      expect(t80.labelTag).toBe('NON');
+      expect(t80.colorHex).toBe('#FFCC00');
+
+      const t250 = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-02', pos: { x: 500, y: 500, z: 250 }, traineeLabel: 'FRIENDLY' }));
+      expect(t250.altM).toBe(250);
+      expect(t250.text).toBe('T-02 [FRIEND] 250m');
+      expect(t250.labelTag).toBe('FRIEND');
+      expect(t250.colorHex).toBe('#00CCFF');
+
+      const t400 = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-03', pos: { x: 500, y: 500, z: 400 }, traineeLabel: 'CIVIL_UAS' }));
+      expect(t400.altM).toBe(400);
+      expect(t400.text).toBe('T-03 [CIVIL] 400m');
+      expect(t400.labelTag).toBe('CIVIL');
+      expect(t400.colorHex).toBe('#00FF66');
+
+      // Other label tags
+      const tBird = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-04', pos: { x: 500, y: 500, z: 150 }, traineeLabel: 'BIRD' }));
+      expect(tBird.text).toBe('T-04 [BIRD] 150m');
+      expect(tBird.labelTag).toBe('BIRD');
+      expect(tBird.colorHex).toBe('#8A99A8');
+
+      const tAtk = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-05', pos: { x: 500, y: 500, z: 120 }, traineeLabel: 'HOSTILE_ATTACK' }));
+      expect(tAtk.text).toBe('T-05 [H-ATK] 120m');
+      expect(tAtk.labelTag).toBe('H-ATK');
+      expect(tAtk.colorHex).toBe('#FF3333');
+
+      const tIsr = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-06', pos: { x: 500, y: 500, z: 90 }, traineeLabel: 'HOSTILE_ISR' }));
+      expect(tIsr.text).toBe('T-06 [H-ISR] 90m');
+      expect(tIsr.labelTag).toBe('H-ISR');
+      expect(tIsr.colorHex).toBe('#FF3333');
+
+      const tSwarm = formatTrackLabelText(makeSafeTrack({ trackNo: 'T-07', pos: { x: 500, y: 500, z: 45 }, traineeLabel: 'SWARM_ELEMENT' }));
+      expect(tSwarm.text).toBe('T-07 [SWARM] 45m');
+      expect(tSwarm.labelTag).toBe('SWARM');
+      expect(tSwarm.colorHex).toBe('#FF3333');
     });
 
     it('verifies geometry helper functions (pointInPolygon, segmentsIntersect, getRotatedFootprintCorners, isFootprintFullyContained)', () => {

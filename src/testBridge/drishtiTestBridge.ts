@@ -178,7 +178,8 @@ export interface DrishtiTestBridge {
   loadCatalogScenario?: (id: string, seed?: number, difficulty?: number) => { spec: import('@/sim/types').ScenarioSpec };
   aggregateAARMetrics?: (events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) => import('@/sim/types').AARMetrics;
   getActiveEffectsCount?: () => number;
-  getSceneTrackModels?: () => Array<{ trackNo: string; category?: string; signature?: string; modelName?: string }>;
+  getSceneTrackModels?: () => Array<{ trackNo: string; category?: string; signature?: string; modelName?: string; labelText?: string }>;
+  advanceSimTicks?: (ticks: number) => boolean;
   fireTrack?: (trackNo: string) => void;
   getActiveScenarioSpec?: () => import('@/sim/types').ScenarioSpec | null;
   setMockProgressionTxFailure?: (mode: import('@/db/sessionRepo').MockTransactionFailurePoint) => void;
@@ -321,6 +322,11 @@ export function installDrishtiTestBridge(
       entity.prev = { x: pos.x, y: pos.y, z: pos.z };
       entity.vel = { x: 0, y: 0, z: 0 };
       entity.masked = false;
+
+      estimateOverrides.set(trackNo, {
+        estPos: { x: pos.x, y: pos.y, z: pos.z },
+        estVel: { x: 0, y: 0, z: 0 },
+      });
 
       const r3d = getRenderer3D();
       if (r3d) {
@@ -983,7 +989,23 @@ export function installDrishtiTestBridge(
       return r3d?.getScene3D()?.engagementEffectManager?.getActiveEffectsCount() ?? 0;
     },
 
-    getSceneTrackModels(): Array<{ trackNo: string; category?: string; signature?: string; modelName?: string }> {
+    advanceSimTicks(ticks: number): boolean {
+      for (let i = 0; i < ticks; i++) {
+        if (engine.sessionEnded) break;
+        engine.step();
+      }
+      useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
+      const r3d = getRenderer3D();
+      if (r3d) {
+        const cur = r3d.getCurrentTracks();
+        if (cur) {
+          r3d.update(cur.tracks, cur.selectedTrackNo);
+        }
+      }
+      return true;
+    },
+
+    getSceneTrackModels(): Array<{ trackNo: string; category?: string; signature?: string; modelName?: string; labelText?: string }> {
       const r3d = getRenderer3D();
       if (!r3d) return [];
       return r3d.getScene3D().getAllTrackRecords().map((r) => ({
@@ -991,6 +1013,7 @@ export function installDrishtiTestBridge(
         category: r.currentCategory,
         signature: r.currentSignature,
         modelName: r.targetModelInstance?.group.name,
+        labelText: r.currentLabelText,
       }));
     },
 
