@@ -11,7 +11,7 @@ type WindowWithDrishti = Window & {
 };
 
 test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Estimation Decoupling', () => {
-  const outDir18 = path.resolve(process.cwd(), 'reports/screenshots/task18');
+  const outDir18 = path.resolve(process.cwd(), 'test-results/screenshots/task18');
   const artifactDir = 'C:\\Users\\Missi\\.gemini\\antigravity\\brain\\dcbbc993-bf1f-433e-850f-d7e049737f29';
 
   test.beforeAll(() => {

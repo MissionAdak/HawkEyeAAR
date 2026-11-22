@@ -11,13 +11,12 @@ type WindowWithDrishti = Window & {
 };
 
 test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutral Recognition', () => {
-  const outDir17_3 = path.resolve(process.cwd(), 'reports/screenshots/task17_3');
-  const outDir17_4 = path.resolve(process.cwd(), 'reports/screenshots/task17_4');
-  const outDir17_5 = path.resolve(process.cwd(), 'reports/screenshots/task17_5');
+  const outDir17_3 = path.resolve(process.cwd(), 'test-results/screenshots/task17_3');
+  const outDir17_5 = path.resolve(process.cwd(), 'test-results/screenshots/task17_5');
   const artifactDir = 'C:\\Users\\Missi\\.gemini\\antigravity\\brain\\dcbbc993-bf1f-433e-850f-d7e049737f29';
 
   test.beforeAll(() => {
-    for (const d of [outDir17_3, outDir17_4, outDir17_5]) {
+    for (const d of [outDir17_3, outDir17_5]) {
       if (!fs.existsSync(d)) {
         fs.mkdirSync(d, { recursive: true });
       }
@@ -27,10 +26,6 @@ test.describe('TASK 17.5 E2E Security Boundary, Sensor-Health Lifecycle & Neutra
   const saveShot = async (page: Page, filename: string, alsoInTask17_3?: string) => {
     const filePath = path.join(outDir17_5, filename);
     await page.screenshot({ path: filePath, fullPage: true });
-
-    // Also copy to legacy folders for report continuity
-    const p17_4 = path.join(outDir17_4, filename);
-    fs.copyFileSync(filePath, p17_4);
 
     if (fs.existsSync(artifactDir)) {
       fs.copyFileSync(filePath, path.join(artifactDir, filename));

@@ -8,7 +8,7 @@ type WindowWithDrishti = Window & {
 };
 
 test.describe('TASK 20 — Unit Performance View, Longitudinal Session History & Trend Dashboard', () => {
-  const outDir20 = path.resolve(process.cwd(), 'reports/screenshots/task20');
+  const outDir20 = path.resolve(process.cwd(), 'test-results/screenshots/task20');
   const artifactDir = 'C:\\Users\\Missi\\.gemini\\antigravity\\brain\\dcbbc993-bf1f-433e-850f-d7e049737f29';
 
   test.beforeAll(() => {

@@ -209,4 +209,19 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
       expect(content).toContain("typeof __DRISHTI_E2E_BUILD__ === 'undefined' || !__DRISHTI_E2E_BUILD__");
     });
   });
+
+  describe('Test Isolation & Screenshot Protection Guard', () => {
+    it('strictly prohibits automated E2E tests from writing to reports/screenshots/', () => {
+      const e2eDir = path.resolve('tests/e2e');
+      const files = getAllSourceFiles(e2eDir);
+      expect(files.length).toBeGreaterThan(0);
+      for (const file of files) {
+        const content = fs.readFileSync(file, 'utf-8');
+        expect(
+          content.includes('reports/screenshots'),
+          `Automated test file ${path.relative(process.cwd(), file)} must not write directly to reports/screenshots/ to prevent repository evidence pollution.`
+        ).toBe(false);
+      }
+    });
+  });
 });

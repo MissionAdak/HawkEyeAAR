@@ -11,7 +11,7 @@ type WindowWithDrishti = Window & {
 };
 
 test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Workflow', () => {
-  const outDir19 = path.resolve(process.cwd(), 'reports/screenshots/task19');
+  const outDir19 = path.resolve(process.cwd(), 'test-results/screenshots/task19');
   const artifactDir = 'C:\\Users\\Missi\\.gemini\\antigravity\\brain\\dcbbc993-bf1f-433e-850f-d7e049737f29';
 
   test.beforeAll(() => {

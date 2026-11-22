@@ -4,7 +4,7 @@ import path from 'path';
 
 test.describe('TASK 17.2 Visual Acceptance Test & Screenshots', () => {
   test('captures screenshots for all visual verification states', async ({ page }) => {
-    const outDir = path.resolve(process.cwd(), 'reports/screenshots/task17_2');
+    const outDir = path.resolve(process.cwd(), 'test-results/screenshots/task17_2');
     if (!fs.existsSync(outDir)) {
       fs.mkdirSync(outDir, { recursive: true });
     }
