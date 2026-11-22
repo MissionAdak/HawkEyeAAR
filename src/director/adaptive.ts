@@ -1,4 +1,7 @@
-import type { WeaknessVector } from '@/sim/types';
+import type { WeaknessVector, AARMetrics } from '@/sim/types';
+
+export const DEFAULT_TRAIN_DIFFICULTY = 0.3;
+export const DEFAULT_METRIC_EMA = 50.0;
 
 /**
  * Updates Exponential Moving Average (EMA) for trainee performance metrics.
@@ -7,6 +10,21 @@ import type { WeaknessVector } from '@/sim/types';
 export function updateEMA(currentEMA: number | null, observation: number, alpha = 0.4): number {
   if (currentEMA === null) return observation;
   return alpha * observation + (1 - alpha) * currentEMA;
+}
+
+/**
+ * Computes difficulty adjustment according to Rules.md R4.2 & PRD.md §4.9:
+ * d_{n+1} = clamp(d_n + 0.15 * (Score_n - 70) / 30, 0, 1)
+ * Scores > 70 increase d; scores < 70 decrease d; score = 70 preserves d.
+ * Clamped strictly to [0, 1].
+ */
+export function computeNextDifficulty(currentD: number, sessionScore: number): number {
+  if (!Number.isFinite(currentD) || !Number.isFinite(sessionScore)) {
+    return Math.max(0, Math.min(1, Number.isFinite(currentD) ? currentD : DEFAULT_TRAIN_DIFFICULTY));
+  }
+  const delta = 0.15 * ((sessionScore - 70) / 30);
+  const next = currentD + delta;
+  return Math.max(0, Math.min(1, Math.round(next * 10000) / 10000));
 }
 
 /**
@@ -40,3 +58,178 @@ export function computeWeaknessWeights(ema: WeaknessVector): Record<string, numb
 
   return normalized;
 }
+
+/**
+ * Updates full trainee EMA performance profile across all 6 skill dimensions.
+ * Missing metrics in a session (e.g. no chaos event -> sal is null) are skipped
+ * and retain their previous EMA without zeroing (PRD.md §4.9).
+ */
+export function updateWeaknessProfile(
+  currentProfile: WeaknessVector | null,
+  metrics: Partial<AARMetrics>
+): WeaknessVector {
+  const current: WeaknessVector = currentProfile ?? {
+    d: DEFAULT_METRIC_EMA,
+    c: DEFAULT_METRIC_EMA,
+    econ: DEFAULT_METRIC_EMA,
+    r: DEFAULT_METRIC_EMA,
+    sal: DEFAULT_METRIC_EMA,
+    sat: DEFAULT_METRIC_EMA,
+  };
+
+  const isColdStart = currentProfile === null;
+
+  const updateDim = (curr: number, obs: number | null | undefined): number => {
+    if (obs === null || obs === undefined || !Number.isFinite(obs)) {
+      return curr;
+    }
+    const clampedObs = Math.max(0, Math.min(100, obs));
+    if (isColdStart) {
+      return clampedObs;
+    }
+    return Math.round(updateEMA(curr, clampedObs, 0.4) * 100) / 100;
+  };
+
+  const satObs =
+    metrics.swarmSat !== null && metrics.swarmSat !== undefined && Number.isFinite(metrics.swarmSat)
+      ? Math.round(metrics.swarmSat * 100)
+      : null;
+
+  return {
+    d: updateDim(current.d, metrics.dScore),
+    c: updateDim(current.c, metrics.cScore),
+    econ: updateDim(current.econ, metrics.econScore),
+    r: updateDim(current.r, metrics.rScore),
+    sal: updateDim(current.sal, metrics.salScore),
+    sat: updateDim(current.sat, satObs),
+  };
+}
+
+export type WeaknessDimension = keyof WeaknessVector;
+
+export interface AdaptiveLeverInfo {
+  dimension: WeaknessDimension;
+  leverId: string;
+  name: string;
+  reason: string;
+}
+
+/**
+ * Weakness to lever mapping per PRD.md §5.4 (what the Adaptive Red Team exploits).
+ */
+export const WEAKNESS_LEVER_MAP: Record<WeaknessDimension, AdaptiveLeverInfo> = {
+  d: {
+    dimension: 'd',
+    leverId: 'LOW_RCS_MASKED',
+    name: 'Terrain-Masked Ingress',
+    reason: 'Detection latency weak; stressing radar masking line-of-sight awareness and terrain hugging.',
+  },
+  c: {
+    dimension: 'c',
+    leverId: 'DECOY_FLOOD',
+    name: 'Civilian & Avian Clutter',
+    reason: 'Classification accuracy weak; deploying high civilian and bird clutter with ambiguous signatures.',
+  },
+  econ: {
+    dimension: 'econ',
+    leverId: 'PROPORTIONALITY_DRILL',
+    name: 'Cost-Exchange Proportionality',
+    reason: 'Cost-exchange ratio (CER) weak; fielding low-cost ISR recon quads demanding softkill or laser response.',
+  },
+  r: {
+    dimension: 'r',
+    leverId: 'URBAN_COLLATERAL_RISK',
+    name: 'Urban Buffer ROE Gating',
+    reason: 'ROE compliance weak; routing hostiles over urban collateral zones where kinetic release is penalized.',
+  },
+  sal: {
+    dimension: 'sal',
+    leverId: 'SENSOR_CHAOS_CHALLENGE',
+    name: 'Sensor Jamming & Clutter',
+    reason: 'Sensor adaptation latency slow; scheduling environmental sensor dropout to force cross-modality switching.',
+  },
+  sat: {
+    dimension: 'sat',
+    leverId: 'SWARM_SATURATION',
+    name: 'Coordinated Multi-Axis Swarm',
+    reason: 'Swarm saturation handling weak; scheduling multi-axis simultaneous elements attacking asset perimeter.',
+  },
+};
+
+export function getWeakestDimension(ema: WeaknessVector): {
+  dimension: WeaknessDimension;
+  emaValue: number;
+  weaknessWeight: number;
+  lever: AdaptiveLeverInfo;
+} {
+  const weights = computeWeaknessWeights(ema);
+  let weakestDim: WeaknessDimension = 'd';
+  let minEma = ema.d;
+
+  const dims: WeaknessDimension[] = ['d', 'c', 'econ', 'r', 'sal', 'sat'];
+  for (const dim of dims) {
+    if (ema[dim] < minEma) {
+      minEma = ema[dim];
+      weakestDim = dim;
+    }
+  }
+
+  return {
+    dimension: weakestDim,
+    emaValue: minEma,
+    weaknessWeight: weights[weakestDim] ?? 0.1667,
+    lever: WEAKNESS_LEVER_MAP[weakestDim],
+  };
+}
+
+export interface AdaptivePlan {
+  traineeId: string;
+  currentDifficulty: number;
+  nextDifficulty: number;
+  weakestDimension: WeaknessDimension;
+  weakestEma: number;
+  targetLever: string;
+  leverName: string;
+  rationale: string;
+  recommendedScenarioId: string;
+  profile: WeaknessVector;
+  weights: Record<string, number>;
+}
+
+export function getAdaptivePlan(
+  traineeId: string,
+  profile: WeaknessVector | null,
+  currentDifficulty: number = DEFAULT_TRAIN_DIFFICULTY,
+  lastScore?: number
+): AdaptivePlan {
+  const effectiveProfile = profile ?? {
+    d: DEFAULT_METRIC_EMA,
+    c: DEFAULT_METRIC_EMA,
+    econ: DEFAULT_METRIC_EMA,
+    r: DEFAULT_METRIC_EMA,
+    sal: DEFAULT_METRIC_EMA,
+    sat: DEFAULT_METRIC_EMA,
+  };
+
+  const nextD = typeof lastScore === 'number'
+    ? computeNextDifficulty(currentDifficulty, lastScore)
+    : currentDifficulty;
+
+  const weakest = getWeakestDimension(effectiveProfile);
+  const weights = computeWeaknessWeights(effectiveProfile);
+
+  return {
+    traineeId,
+    currentDifficulty,
+    nextDifficulty: nextD,
+    weakestDimension: weakest.dimension,
+    weakestEma: weakest.emaValue,
+    targetLever: weakest.lever.leverId,
+    leverName: weakest.lever.name,
+    rationale: weakest.lever.reason,
+    recommendedScenarioId: 'PROCEDURAL-1',
+    profile: effectiveProfile,
+    weights,
+  };
+}
+

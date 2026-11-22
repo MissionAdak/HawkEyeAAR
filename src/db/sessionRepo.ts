@@ -1,6 +1,11 @@
 import { db, migrateLegacySession, type SessionRow, type TraineeRow, type UnitRow } from './dexie';
 import { createSessionUid, getMockPersistenceFailureMode } from './recorder';
-import type { AARMetrics, Grade, SessionMode } from '@/sim/types';
+import type { AARMetrics, Grade, SessionMode, WeaknessVector } from '@/sim/types';
+import {
+  computeNextDifficulty,
+  updateWeaknessProfile,
+  DEFAULT_TRAIN_DIFFICULTY,
+} from '@/director/adaptive';
 
 export interface UnitTraineeSummary {
   callsign: string;
@@ -34,6 +39,132 @@ export type DatasetScope = 'REAL' | 'DEMO' | 'ALL';
 const inMemorySessions: SessionRow[] = [];
 const inMemoryTrainees: TraineeRow[] = [];
 const inMemoryUnits: UnitRow[] = [];
+const inMemoryDifficulties: Map<string, { d: number; lastScore: number }> = new Map();
+const inMemoryProfiles: Map<string, WeaknessVector> = new Map();
+const processedProgressionSessions: Set<string> = new Set();
+
+export async function getTraineeDifficulty(traineeUidOrCallsign?: string): Promise<number> {
+  const traineeUid = traineeUidOrCallsign
+    ? traineeUidOrCallsign.startsWith('trainee-')
+      ? traineeUidOrCallsign
+      : callsignToUid(traineeUidOrCallsign)
+    : 'trainee-viper-2';
+
+  if (typeof indexedDB === 'undefined') {
+    return inMemoryDifficulties.get(traineeUid)?.d ?? DEFAULT_TRAIN_DIFFICULTY;
+  }
+
+  const row = await db.difficulty.get(traineeUid);
+  return row?.d ?? DEFAULT_TRAIN_DIFFICULTY;
+}
+
+export async function getTraineeProfile(
+  traineeUidOrCallsign?: string
+): Promise<WeaknessVector | null> {
+  const traineeUid = traineeUidOrCallsign
+    ? traineeUidOrCallsign.startsWith('trainee-')
+      ? traineeUidOrCallsign
+      : callsignToUid(traineeUidOrCallsign)
+    : 'trainee-viper-2';
+
+  if (typeof indexedDB === 'undefined') {
+    const cached = inMemoryProfiles.get(traineeUid);
+    return cached ? { ...cached } : null;
+  }
+
+  const rows = await db.traineeProfile.where('traineeUid').equals(traineeUid).toArray();
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const profile: WeaknessVector = {
+    d: 50,
+    c: 50,
+    econ: 50,
+    r: 50,
+    sal: 50,
+    sat: 50,
+  };
+
+  for (const r of rows) {
+    if (r.metric in profile) {
+      profile[r.metric as keyof WeaknessVector] = r.ema;
+    }
+  }
+
+  return profile;
+}
+
+export async function updateTraineeProgression(
+  session: SessionRow
+): Promise<{ d: number; profile: WeaknessVector } | null> {
+  // Rules.md R4.4 & Task 21-PT: Only completed, non-aborted, verified TRAIN sessions update difficulty and EMA
+  if (session.mode !== 'TRAIN' || session.aborted || session.unverified) {
+    return null;
+  }
+
+  const traineeUid = session.traineeUid;
+
+  // Idempotency guard: prevent duplicate session completion events from double-updating progression
+  if (session.uid && processedProgressionSessions.has(session.uid)) {
+    const currentD = await getTraineeDifficulty(traineeUid);
+    const currentProfile = (await getTraineeProfile(traineeUid)) ?? {
+      d: 50,
+      c: 50,
+      econ: 50,
+      r: 50,
+      sal: 50,
+      sat: 50,
+    };
+    return { d: currentD, profile: currentProfile };
+  }
+
+  if (session.uid) {
+    processedProgressionSessions.add(session.uid);
+  }
+
+  const currentD = await getTraineeDifficulty(traineeUid);
+  const nextD = computeNextDifficulty(currentD, session.score);
+
+  const currentProfile = await getTraineeProfile(traineeUid);
+  const updatedProfile = updateWeaknessProfile(
+    currentProfile,
+    session.metrics ?? { score: session.score }
+  );
+
+  if (typeof indexedDB === 'undefined') {
+    inMemoryDifficulties.set(traineeUid, { d: nextD, lastScore: session.score });
+    inMemoryProfiles.set(traineeUid, updatedProfile);
+    return { d: nextD, profile: updatedProfile };
+  }
+
+  await db.transaction('rw', [db.difficulty, db.traineeProfile], async () => {
+    await db.difficulty.put({ traineeUid, d: nextD, lastScore: session.score });
+    const now = Date.now();
+    for (const [metric, ema] of Object.entries(updatedProfile)) {
+      await db.traineeProfile.put({
+        traineeUid,
+        metric,
+        ema,
+        n: currentProfile ? 2 : 1,
+        updatedAt: now,
+      });
+    }
+  });
+
+  return { d: nextD, profile: updatedProfile };
+}
+
+export function resetTraineeProgressionForTest(traineeUid?: string): void {
+  if (traineeUid) {
+    inMemoryDifficulties.delete(traineeUid);
+    inMemoryProfiles.delete(traineeUid);
+  } else {
+    inMemoryDifficulties.clear();
+    inMemoryProfiles.clear();
+    processedProgressionSessions.clear();
+  }
+}
 
 export function callsignToUid(callsign: string): string {
   return `trainee-${callsign.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
@@ -84,6 +215,7 @@ export async function saveCompletedSession(
     } else {
       inMemorySessions.push(sessionToSave);
     }
+    await updateTraineeProgression(sessionToSave);
     return;
   }
 
@@ -114,6 +246,8 @@ export async function saveCompletedSession(
       }
     }
   });
+
+  await updateTraineeProgression(sessionToSave);
 }
 
 export async function getAllTrainees(): Promise<TraineeRow[]> {

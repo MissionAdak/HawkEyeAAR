@@ -15,15 +15,20 @@ import { AarReplaySection } from './aar/AarReplaySection';
 import { TrendChart } from './aar/charts/TrendChart';
 import { SessionTable } from './aar/panels/SessionTable';
 import { UnitView } from './aar/panels/UnitView';
+import { RedTeamPlan } from './aar/RedTeamPlan';
 import {
   getTraineeSessions,
   getUnitTraineeSummaries,
   getCohortStats,
   seedDemoSessionsIfEmpty,
+  getTraineeDifficulty,
+  getTraineeProfile,
+  callsignToUid,
   type UnitTraineeSummary,
   type UnitCohortStats,
 } from '@/db/sessionRepo';
 import type { SessionRow } from '@/db/dexie';
+import type { WeaknessVector } from '@/sim/types';
 
 interface HotWashProps {
   onClose: () => void;
@@ -51,8 +56,10 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   });
   const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null);
   const [cohortScope, setCohortScope] = useState<'REAL' | 'DEMO'>('REAL');
+  const [traineeDifficulty, setTraineeDifficulty] = useState<number>(0.3);
+  const [traineeProfile, setTraineeProfile] = useState<WeaknessVector | null>(null);
 
-  // Load historical sessions & unit summaries
+  // Load historical sessions, unit summaries & trainee progression profile
   useEffect(() => {
     let isMounted = true;
     const loadData = async () => {
@@ -61,10 +68,14 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
         const sessions = await getTraineeSessions(currentCallsign, 'asc', cohortScope);
         const summaries = await getUnitTraineeSummaries(cohortScope);
         const stats = await getCohortStats(cohortScope);
+        const diff = await getTraineeDifficulty(currentCallsign);
+        const prof = await getTraineeProfile(currentCallsign);
         if (isMounted) {
           setTraineeSessions(sessions);
           setUnitSummaries(summaries);
           setCohortStats(stats);
+          setTraineeDifficulty(diff);
+          setTraineeProfile(prof);
         }
       } catch (err) {
         console.error('[HotWash] Failed to load historical sessions:', err);
@@ -570,6 +581,20 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
               )}
             </div>
           </div>
+
+          {/* 5. Adaptive Red Team Progression & Training Plan (TASK 21-PT / F-07) */}
+          <RedTeamPlan
+            traineeId={callsignToUid(currentCallsign)}
+            callsign={currentCallsign}
+            currentDifficulty={traineeDifficulty}
+            mode={engineInstance.mode}
+            profile={traineeProfile}
+            lastScore={metrics.score}
+            onSelectRecommendedScenario={(_scenId, _targetDiff) => {
+              onClose();
+              void restartSession();
+            }}
+          />
         </>
       )}
 
@@ -585,6 +610,18 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
       {/* Tab 3: Longitudinal Trend Chart and Session Drill Table (Task 20 / P3-09) */}
       {activeTab === 'TRENDS' && (
         <div className="space-y-4" data-testid="aar-trends-panel">
+          <RedTeamPlan
+            traineeId={callsignToUid(currentCallsign)}
+            callsign={currentCallsign}
+            currentDifficulty={traineeDifficulty}
+            mode={engineInstance.mode}
+            profile={traineeProfile}
+            lastScore={metrics.score}
+            onSelectRecommendedScenario={(_scenId, _targetDiff) => {
+              onClose();
+              void restartSession();
+            }}
+          />
           <TrendChart
             sessions={traineeSessions}
             selectedSessionUid={selectedSession?.uid}

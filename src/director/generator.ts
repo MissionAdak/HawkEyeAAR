@@ -1,14 +1,25 @@
-import type { ScenarioSpec, ThreatSpawn, ZoneSpec, FormationKind, FormationGroupSpec } from '@/sim/types';
+import type {
+  ScenarioSpec,
+  ThreatSpawn,
+  ZoneSpec,
+  FormationKind,
+  FormationGroupSpec,
+  WeaknessVector,
+  ChaosSpec,
+} from '@/sim/types';
 import { mulberry32, hash32, streamSeed } from '@/sim/rng';
 import { validate } from './validate';
 import { isNovel } from './novelty';
 import { expandFormation, resolveFormationSpacing } from './formations';
+import { getWeakestDimension, WEAKNESS_LEVER_MAP } from './adaptive';
 import demo1Json from './bundled/demo1.json';
 
 export interface GenerateScenarioOptions {
   useFormations?: boolean;
   formationKind?: FormationKind;
   spacingM?: number;
+  weaknessVector?: WeaknessVector;
+  targetLever?: string;
 }
 
 /**
@@ -150,6 +161,91 @@ export function generateScenario(
 
     const features = buildScenarioFeatures(finalThreats, formations, d);
 
+    let leverId = formations ? 'PROCEDURAL_FORMATION' : 'ADAPTIVE_TRAIN';
+    let leverReason = formations
+      ? `Procedural formation ${formations[0].kind}`
+      : 'Adapted to trainee weakness profile';
+    let decoys: ThreatSpawn[] = [];
+    const chaos: ChaosSpec[] = [];
+
+    const activeLeverId =
+      options?.targetLever ??
+      (options?.weaknessVector
+        ? getWeakestDimension(options.weaknessVector).lever.leverId
+        : null);
+
+    if (activeLeverId === 'SWARM_SATURATION') {
+      leverId = 'SWARM_SATURATION';
+      leverReason = WEAKNESS_LEVER_MAP.sat.reason;
+      for (const t of finalThreats) {
+        t.droneType = 'SWARM_ELEMENT';
+        t.trueClass = 'SWARM_ELEMENT';
+        t.profile = 'SWARM_SATURATE';
+        t.valueInr = 50000;
+      }
+    } else if (activeLeverId === 'PROPORTIONALITY_DRILL') {
+      leverId = 'PROPORTIONALITY_DRILL';
+      leverReason = WEAKNESS_LEVER_MAP.econ.reason;
+      for (const t of finalThreats) {
+        t.droneType = 'RECON_QUAD';
+        t.trueClass = 'HOSTILE_ISR';
+        t.valueInr = 40000;
+        t.speedMps = Math.max(30, Math.min(36, t.speedMps));
+      }
+    } else if (activeLeverId === 'DECOY_FLOOD') {
+      leverId = 'DECOY_FLOOD';
+      leverReason = WEAKNESS_LEVER_MAP.c.reason;
+      decoys = [
+        {
+          id: `C-CIV-${seed}`,
+          droneType: 'CIVIL_UAS',
+          trueClass: 'CIVIL_UAS',
+          spawnTMs: 5000,
+          waypoints: [{ x: 1200, y: 1200, z: 60 }],
+          speedMps: 10,
+          profile: 'LOITER',
+          rcsM2: 0.02,
+          valueInr: null,
+          emitsRf: true,
+          remoteId: true,
+          iff: false,
+        },
+        {
+          id: `B-BRD-${seed}`,
+          droneType: 'BIRD',
+          trueClass: 'BIRD',
+          spawnTMs: 10000,
+          waypoints: [{ x: -600, y: 1000, z: 40 }],
+          speedMps: 6,
+          profile: 'ERRATIC',
+          rcsM2: 0.003,
+          valueInr: null,
+          emitsRf: false,
+          remoteId: false,
+          iff: false,
+        },
+      ];
+    } else if (activeLeverId === 'SENSOR_CHAOS_CHALLENGE') {
+      leverId = 'SENSOR_CHAOS_CHALLENGE';
+      leverReason = WEAKNESS_LEVER_MAP.sal.reason;
+      chaos.push({
+        type: 'RADAR_DROPOUT',
+        tStartMs: 15000,
+        tEndMs: 30000,
+        severity: 1.0,
+      });
+    } else if (activeLeverId === 'LOW_RCS_MASKED') {
+      leverId = 'LOW_RCS_MASKED';
+      leverReason = WEAKNESS_LEVER_MAP.d.reason;
+      for (const t of finalThreats) {
+        t.rcsM2 = 0.005;
+        t.profile = 'TERRAIN_HUG';
+      }
+    } else if (activeLeverId === 'URBAN_COLLATERAL_RISK') {
+      leverId = 'URBAN_COLLATERAL_RISK';
+      leverReason = WEAKNESS_LEVER_MAP.r.reason;
+    }
+
     const spec: ScenarioSpec = {
       id: `SCEN-${seed}`,
       schemaVersion: 1,
@@ -163,15 +259,15 @@ export function generateScenario(
       asset: { x: 0, y: 0, rMinM: 500 },
       zones,
       threats: finalThreats,
-      decoys: [],
-      chaos: [],
+      decoys,
+      chaos,
       triggers: [],
       formations,
       roeText: 'WEAPONS TIGHT URBAN | HOLD FIRE CIVIL | NO RELEASE ON UNCLASSIFIED',
       levers: [
         {
-          id: formations ? 'PROCEDURAL_FORMATION' : 'ADAPTIVE_TRAIN',
-          reason: formations ? `Procedural formation ${formations[0].kind}` : 'Adapted to trainee weakness profile',
+          id: leverId,
+          reason: leverReason,
         },
       ],
       features,
