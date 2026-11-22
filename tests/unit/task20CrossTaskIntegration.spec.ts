@@ -779,7 +779,7 @@ describe('TASK 20-A5 — Cross-Task Longitudinal Performance, Provenance & Persi
       // Subsequent call does not duplicate
       await seedDemoSessionsIfEmpty();
       const demoSummaries2 = await getUnitTraineeSummaries('DEMO');
-      expect(demoSummaries2.length).toBe(demoSummaries.length);
+      expect(demoSummaries2).toHaveLength(demoSummaries.length);
     });
   });
 
@@ -806,7 +806,7 @@ describe('TASK 20-A5 — Cross-Task Longitudinal Performance, Provenance & Persi
 
       // Verify zero records were written to events table
       const storedEvents = await getRecordedEventsForSession('sess-transfer-tampered');
-      expect(storedEvents.length).toBe(0);
+      expect(storedEvents).toHaveLength(0);
     });
 
     it('reconstructs deterministic AAR replay states for scrubber navigation', () => {

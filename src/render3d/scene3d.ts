@@ -77,7 +77,13 @@ export function formatTrackLabelText(track: SafeTrackView): {
     label === 'HOSTILE_ISR' ||
     label === 'SWARM_ELEMENT'
   ) {
-    labelTag = label === 'HOSTILE_ATTACK' ? 'H-ATK' : label === 'HOSTILE_ISR' ? 'H-ISR' : 'SWARM';
+    if (label === 'HOSTILE_ATTACK') {
+      labelTag = 'H-ATK';
+    } else if (label === 'HOSTILE_ISR') {
+      labelTag = 'H-ISR';
+    } else {
+      labelTag = 'SWARM';
+    }
     colorHex = '#FF3333';
   }
 

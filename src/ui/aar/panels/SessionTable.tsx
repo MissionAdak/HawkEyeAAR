@@ -1,6 +1,25 @@
 import React, { useState, useMemo } from 'react';
 import type { SessionRow } from '@/db/dexie';
 
+function renderScoreDelta(delta: number | null | undefined): React.ReactNode {
+  if (delta === null || delta === undefined) {
+    return <span className="text-text-dim">—</span>;
+  }
+  if (delta > 0) {
+    return <span className="text-phosphor">{`+${delta}`}</span>;
+  }
+  if (delta < 0) {
+    return <span className="text-threat">{delta}</span>;
+  }
+  return <span className="text-text-dim">0</span>;
+}
+
+function formatGradeShort(grade: string): string {
+  if (grade === 'PROFICIENT_IN_SIMULATION') return 'PROFICIENT';
+  if (grade === 'DEVELOPING') return 'DEV';
+  return 'RETRAIN';
+}
+
 interface SessionTableProps {
   sessions: SessionRow[];
   selectedSessionUid?: string | null;
@@ -183,23 +202,11 @@ export const SessionTable: React.FC<SessionTableProps> = ({
                       {session.score}
                     </td>
                     <td className="py-1.5 px-2 text-center text-[10px] font-bold">
-                      {delta === null || delta === undefined ? (
-                        <span className="text-text-dim">—</span>
-                      ) : delta > 0 ? (
-                        <span className="text-phosphor">{`+${delta}`}</span>
-                      ) : delta < 0 ? (
-                        <span className="text-threat">{delta}</span>
-                      ) : (
-                        <span className="text-text-dim">0</span>
-                      )}
+                      {renderScoreDelta(delta)}
                     </td>
                     <td className="py-1.5 px-2 text-center">
                       <span className={`px-1.5 py-0.5 text-[9px] border ${getGradeBadge(session.grade)}`}>
-                        {session.grade === 'PROFICIENT_IN_SIMULATION'
-                          ? 'PROFICIENT'
-                          : session.grade === 'DEVELOPING'
-                            ? 'DEV'
-                            : 'RETRAIN'}
+                        {formatGradeShort(session.grade)}
                       </span>
                     </td>
                     <td className="py-1.5 px-2 text-right text-text-dim">{session.metrics?.dScore ?? '—'}</td>

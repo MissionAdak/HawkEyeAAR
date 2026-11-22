@@ -355,7 +355,7 @@ export class EoirLayer {
     ctx.strokeStyle = targetHot;
     ctx.lineWidth = 1.2;
 
-    if (obs && obs.resolutionLevel === 'FULL') {
+    if (obs?.resolutionLevel === 'FULL') {
       if (obs.signature === 'BIRD_LIKE') {
         ctx.fill(birdSilhouettePath);
         ctx.stroke(birdSilhouettePath);

@@ -207,7 +207,7 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
       const resA = buildProceduralBuildings(testDescriptor(2026));
       const resB = buildProceduralBuildings(testDescriptor(2026));
 
-      expect(resA.objects.length).toBe(resB.objects.length);
+      expect(resA.objects).toHaveLength(resB.objects.length);
       expect(resA.objects.length).toBeGreaterThan(6);
 
       for (let i = 0; i < resA.objects.length; i++) {
@@ -417,7 +417,7 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
       const yawAngle = Math.PI / 6;
 
       const corners = getRotatedFootprintCorners(cx, cy, sizeX, sizeZ, yawAngle);
-      expect(corners.length).toBe(4);
+      expect(corners).toHaveLength(4);
 
       // Independently derived expected coordinates:
       // Local unrotated offsets: NW [-15, -7], NE [15, -7], SE [15, 7], SW [-15, 7]
@@ -576,7 +576,7 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
           ];
 
           const all9Points = [centerPt, ...corners, ...edgeMidpoints];
-          expect(all9Points.length).toBe(9);
+          expect(all9Points).toHaveLength(9);
 
           // Query actual generated Three.js ground mesh geometry for each of the 9 footprint sample points
           const groundHeightsY = all9Points.map(([px, py]) => sampleMeshGroundY(px, py));
@@ -620,7 +620,7 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
         }
 
         // Verify report contains results for all buildings
-        expect(reportList.length).toBe(zoneMeshes.length);
+        expect(reportList).toHaveLength(zoneMeshes.length);
         for (const item of reportList) {
           expect(item.floatingGap).toBeLessThanOrEqual(0.05);
           expect(item.foundationContact).toBeLessThanOrEqual(0.05);
@@ -740,7 +740,7 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
 
       // getRotatedFootprintCorners
       const corners0 = getRotatedFootprintCorners(50, 50, 20, 10, 0);
-      expect(corners0.length).toBe(4);
+      expect(corners0).toHaveLength(4);
       // At yaw 0: [-10, -5] -> (40, 55), [10, -5] -> (60, 55), [10, 5] -> (60, 45), [-10, 5] -> (40, 45)
       expect(corners0[0][0]).toBeCloseTo(40, 1);
       expect(corners0[0][1]).toBeCloseTo(55, 1);

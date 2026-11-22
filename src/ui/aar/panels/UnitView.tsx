@@ -10,6 +10,137 @@ interface UnitViewProps {
   onSelectScope?: (scope: 'REAL' | 'DEMO') => void;
 }
 
+function getGradeBadge(grade: string | null): string {
+  switch (grade) {
+    case 'PROFICIENT_IN_SIMULATION':
+      return 'text-phosphor border-phosphor bg-phosphorDim/20';
+    case 'DEVELOPING':
+      return 'text-amber border-amber bg-amber/10';
+    case 'NEEDS_RETRAINING':
+      return 'text-threat border-threat bg-threat/10';
+    default:
+      return 'text-text-dim border-line bg-carbon-800';
+  }
+}
+
+function formatGradeShort(grade: string): string {
+  if (grade === 'PROFICIENT_IN_SIMULATION') return 'PROFICIENT';
+  if (grade === 'DEVELOPING') return 'DEV';
+  return 'RETRAIN';
+}
+
+interface TraineeLeaderboardRowProps {
+  trainee: UnitTraineeSummary;
+  rank: number;
+  isCurrent: boolean;
+  onSelectTrainee: (callsign: string) => void;
+}
+
+const TraineeLeaderboardRow: React.FC<TraineeLeaderboardRowProps> = ({
+  trainee,
+  rank,
+  isCurrent,
+  onSelectTrainee,
+}) => {
+  const hasEval = trainee.latestEvalScore !== null;
+  const metSec = hasEval && trainee.latestEvalMetrics?.metMs
+    ? `${(trainee.latestEvalMetrics.metMs / 1000).toFixed(1)}s`
+    : '—';
+
+  return (
+    <tr
+      key={trainee.traineeUid}
+      className={`transition-colors ${
+        isCurrent
+          ? 'bg-carbon-800/80 border-l-2 border-l-phosphor'
+          : 'hover:bg-carbon-900/50'
+      }`}
+      data-testid={`unit-trainee-row-${trainee.callsign}`}
+    >
+      {/* Rank */}
+      <td className="py-2 px-2.5 text-center font-bold text-text-dim">
+        {hasEval ? `#${rank}` : '—'}
+      </td>
+
+      {/* Callsign */}
+      <td className="py-2 px-2.5 font-bold">
+        <span className={isCurrent ? 'text-phosphor' : 'text-text-main'}>
+          {trainee.callsign}
+        </span>
+        {isCurrent && (
+          <span className="ml-1.5 text-[9px] text-phosphor border border-phosphor/40 px-1 py-0.2">
+            ACTIVE
+          </span>
+        )}
+      </td>
+
+      {/* Unit */}
+      <td className="py-2 px-2.5 text-text-dim text-[11px]">
+        {trainee.unitName}
+      </td>
+
+      {/* Latest EVAL Score (Rules.md R4.4: TRAIN-only shows '—') */}
+      <td className="py-2 px-2.5 text-right font-clock font-bold text-sm">
+        {hasEval ? (
+          <span className="text-phosphor">{trainee.latestEvalScore}</span>
+        ) : (
+          <span className="text-text-dim text-xs font-mono font-normal">
+            — <span className="text-[9px] text-amber border border-amber/40 px-1">IN TRAINING</span>
+          </span>
+        )}
+      </td>
+
+      {/* Grade */}
+      <td className="py-2 px-2.5 text-center">
+        {hasEval && trainee.latestEvalGrade ? (
+          <span className={`px-1.5 py-0.5 text-[9px] border font-bold ${getGradeBadge(trainee.latestEvalGrade)}`}>
+            {formatGradeShort(trainee.latestEvalGrade)}
+          </span>
+        ) : (
+          <span className="text-text-dim text-[10px]">—</span>
+        )}
+      </td>
+
+      {/* Highest Train d */}
+      <td className="py-2 px-2.5 text-right text-friend font-bold">
+        {trainee.highestTrainDifficulty > 0
+          ? `d=${trainee.highestTrainDifficulty.toFixed(2)}`
+          : '—'}
+      </td>
+
+      {/* D, C, G, R: Rules.md R4.4 & Remediation C (Strictly from latest valid EVAL) */}
+      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.dScore ?? '—') : '—'}</td>
+      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.cScore ?? '—') : '—'}</td>
+      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.gScore ?? '—') : '—'}</td>
+      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.rScore ?? '—') : '—'}</td>
+      <td className="py-2 px-2.5 text-right text-text-dim">{metSec}</td>
+
+      {/* Drills Count */}
+      <td className="py-2 px-2.5 text-right text-text-dim">
+        <span className="font-bold text-text-main">{trainee.totalSessions}</span>
+        <span className="text-[10px] text-text-dim ml-1">
+          ({trainee.evalSessionsCount}E / {trainee.trainSessionsCount}T)
+        </span>
+      </td>
+
+      {/* Select Action */}
+      <td className="py-2 px-2.5 text-center">
+        <button
+          type="button"
+          onClick={() => onSelectTrainee(trainee.callsign)}
+          className={`px-2 py-0.5 text-[10px] font-bold border transition-colors ${
+            isCurrent
+              ? 'bg-phosphor text-carbon-950 border-phosphor'
+              : 'bg-carbon-900 text-text-dim border-line hover:text-text-main hover:border-phosphor/50'
+          }`}
+        >
+          {isCurrent ? 'VIEWING' : 'INSPECT'}
+        </button>
+      </td>
+    </tr>
+  );
+};
+
 export const UnitView: React.FC<UnitViewProps> = ({
   summaries,
   cohortStats,
@@ -18,18 +149,6 @@ export const UnitView: React.FC<UnitViewProps> = ({
   datasetScope = 'REAL',
   onSelectScope,
 }) => {
-  const getGradeBadge = (grade: string | null) => {
-    switch (grade) {
-      case 'PROFICIENT_IN_SIMULATION':
-        return 'text-phosphor border-phosphor bg-phosphorDim/20';
-      case 'DEVELOPING':
-        return 'text-amber border-amber bg-amber/10';
-      case 'NEEDS_RETRAINING':
-        return 'text-threat border-threat bg-threat/10';
-      default:
-        return 'text-text-dim border-line bg-carbon-800';
-    }
-  };
 
   return (
     <div className="space-y-4 font-mono text-xs select-none" data-testid="unit-view-container">
@@ -42,7 +161,7 @@ export const UnitView: React.FC<UnitViewProps> = ({
           </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-3xl font-clock font-bold text-phosphor">
-              {cohortStats.cohortMeanEvalScore !== null ? cohortStats.cohortMeanEvalScore : '—'}
+              {cohortStats.cohortMeanEvalScore ?? '—'}
             </span>
             <span className="text-xs text-text-dim">/ 100</span>
           </div>
@@ -113,7 +232,7 @@ export const UnitView: React.FC<UnitViewProps> = ({
           </div>
           <div className="flex items-center gap-2">
             {onSelectScope && (
-              <div className="flex items-center gap-1 border border-line p-0.5 bg-carbon-900" role="group" aria-label="Dataset scope">
+              <fieldset className="flex items-center gap-1 border border-line p-0.5 bg-carbon-900" aria-label="Dataset scope">
                 <button
                   type="button"
                   data-testid="scope-operational-btn"
@@ -138,7 +257,7 @@ export const UnitView: React.FC<UnitViewProps> = ({
                 >
                   DEMO BENCHMARK
                 </button>
-              </div>
+              </fieldset>
             )}
             <div className="text-[10px] text-text-dim">
               Click operator callsign to view longitudinal trend
@@ -180,110 +299,15 @@ export const UnitView: React.FC<UnitViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                summaries.map((trainee, idx) => {
-                  const isCurrent = trainee.callsign === selectedTraineeCallsign;
-                  const hasEval = trainee.latestEvalScore !== null;
-                  const metSec = hasEval && trainee.latestEvalMetrics?.metMs
-                    ? `${(trainee.latestEvalMetrics.metMs / 1000).toFixed(1)}s`
-                    : '—';
-
-                  return (
-                    <tr
-                      key={trainee.traineeUid}
-                      className={`transition-colors ${
-                        isCurrent
-                          ? 'bg-carbon-800/80 border-l-2 border-l-phosphor'
-                          : 'hover:bg-carbon-900/50'
-                      }`}
-                      data-testid={`unit-trainee-row-${trainee.callsign}`}
-                    >
-                      {/* Rank */}
-                      <td className="py-2 px-2.5 text-center font-bold text-text-dim">
-                        {hasEval ? `#${idx + 1}` : '—'}
-                      </td>
-
-                      {/* Callsign */}
-                      <td className="py-2 px-2.5 font-bold">
-                        <span className={isCurrent ? 'text-phosphor' : 'text-text-main'}>
-                          {trainee.callsign}
-                        </span>
-                        {isCurrent && (
-                          <span className="ml-1.5 text-[9px] text-phosphor border border-phosphor/40 px-1 py-0.2">
-                            ACTIVE
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Unit */}
-                      <td className="py-2 px-2.5 text-text-dim text-[11px]">
-                        {trainee.unitName}
-                      </td>
-
-                      {/* Latest EVAL Score (Rules.md R4.4: TRAIN-only shows '—') */}
-                      <td className="py-2 px-2.5 text-right font-clock font-bold text-sm">
-                        {hasEval ? (
-                          <span className="text-phosphor">{trainee.latestEvalScore}</span>
-                        ) : (
-                          <span className="text-text-dim text-xs font-mono font-normal">
-                            — <span className="text-[9px] text-amber border border-amber/40 px-1">IN TRAINING</span>
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Grade */}
-                      <td className="py-2 px-2.5 text-center">
-                        {hasEval && trainee.latestEvalGrade ? (
-                          <span className={`px-1.5 py-0.5 text-[9px] border font-bold ${getGradeBadge(trainee.latestEvalGrade)}`}>
-                            {trainee.latestEvalGrade === 'PROFICIENT_IN_SIMULATION'
-                              ? 'PROFICIENT'
-                              : trainee.latestEvalGrade === 'DEVELOPING'
-                                ? 'DEV'
-                                : 'RETRAIN'}
-                          </span>
-                        ) : (
-                          <span className="text-text-dim text-[10px]">—</span>
-                        )}
-                      </td>
-
-                      {/* Highest Train d */}
-                      <td className="py-2 px-2.5 text-right text-friend font-bold">
-                        {trainee.highestTrainDifficulty > 0
-                          ? `d=${trainee.highestTrainDifficulty.toFixed(2)}`
-                          : '—'}
-                      </td>
-
-                      {/* D, C, G, R: Rules.md R4.4 & Remediation C (Strictly from latest valid EVAL) */}
-                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.dScore ?? '—') : '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.cScore ?? '—') : '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.gScore ?? '—') : '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{hasEval ? (trainee.latestEvalMetrics?.rScore ?? '—') : '—'}</td>
-                      <td className="py-2 px-2.5 text-right text-text-dim">{metSec}</td>
-
-                      {/* Drills Count */}
-                      <td className="py-2 px-2.5 text-right text-text-dim">
-                        <span className="font-bold text-text-main">{trainee.totalSessions}</span>
-                        <span className="text-[10px] text-text-dim ml-1">
-                          ({trainee.evalSessionsCount}E / {trainee.trainSessionsCount}T)
-                        </span>
-                      </td>
-
-                      {/* Select Action */}
-                      <td className="py-2 px-2.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => onSelectTrainee(trainee.callsign)}
-                          className={`px-2 py-0.5 text-[10px] font-bold border transition-colors ${
-                            isCurrent
-                              ? 'bg-phosphor text-carbon-950 border-phosphor'
-                              : 'bg-carbon-900 text-text-dim border-line hover:text-text-main hover:border-phosphor/50'
-                          }`}
-                        >
-                          {isCurrent ? 'VIEWING' : 'INSPECT'}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
+                summaries.map((trainee, idx) => (
+                  <TraineeLeaderboardRow
+                    key={trainee.traineeUid}
+                    trainee={trainee}
+                    rank={idx + 1}
+                    isCurrent={trainee.callsign === selectedTraineeCallsign}
+                    onSelectTrainee={onSelectTrainee}
+                  />
+                ))
               )}
             </tbody>
           </table>

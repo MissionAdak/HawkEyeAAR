@@ -80,19 +80,25 @@ export class EventRecorder {
   }
 
   public async flush(): Promise<void> {
-    while (this.flushPromise || this.buffer.length > 0) {
-      if (this.flushPromise) {
-        await this.flushPromise;
-        continue;
-      }
+    if (this.flushPromise) {
+      await this.flushPromise;
+      return this.flush();
+    }
 
-      this.flushPromise = this.flushPendingEvents();
+    if (this.buffer.length === 0) {
+      return;
+    }
 
-      try {
-        await this.flushPromise;
-      } finally {
-        this.flushPromise = null;
-      }
+    this.flushPromise = this.flushPendingEvents();
+
+    try {
+      await this.flushPromise;
+    } finally {
+      this.flushPromise = null;
+    }
+
+    if (this.buffer.length > 0) {
+      return this.flush();
     }
   }
 

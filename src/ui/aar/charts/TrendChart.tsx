@@ -3,7 +3,6 @@ import type { SessionRow } from '@/db/dexie';
 
 interface TrendChartProps {
   sessions: SessionRow[];
-  width?: number;
   height?: number;
   selectedSessionUid?: string | null;
   onSelectSession?: (session: SessionRow) => void;
@@ -25,6 +24,194 @@ const METRICS: MetricConfig[] = [
   { key: 'r', label: 'ROE [R]', color: '#FF3333' },
   { key: 'diff', label: 'Difficulty [d]', color: '#8B949E', dash: [4, 4], isRightAxis: true },
 ];
+
+function getMetricValue(s: SessionRow, key: MetricConfig['key']): number | null {
+  switch (key) {
+    case 'score':
+      return s.score;
+    case 'd':
+      return typeof s.metrics?.dScore === 'number' ? s.metrics.dScore : null;
+    case 'c':
+      return typeof s.metrics?.cScore === 'number' ? s.metrics.cScore : null;
+    case 'g':
+      return typeof s.metrics?.gScore === 'number' ? s.metrics.gScore : null;
+    case 'r':
+      return typeof s.metrics?.rScore === 'number' ? s.metrics.rScore : null;
+    case 'diff':
+      return typeof s.dStart === 'number' ? s.dStart : 0.3;
+  }
+}
+
+function drawBackgroundAndGrid(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  canvasHeight: number,
+  padLeft: number,
+  padTop: number,
+  plotWidth: number,
+  plotHeight: number
+): void {
+  // Clear background
+  ctx.fillStyle = '#0D1117';
+  ctx.fillRect(0, 0, width, canvasHeight);
+
+  // Draw Plot Area Background
+  ctx.fillStyle = '#161B22';
+  ctx.fillRect(padLeft, padTop, plotWidth, plotHeight);
+
+  // Draw Horizontal Grid Lines (0 to 100 on left, 0.0 to 1.0 on right)
+  const gridSteps = 5;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.font = '10px "JetBrains Mono", monospace';
+
+  for (let i = 0; i <= gridSteps; i++) {
+    const pct = i / gridSteps;
+    const y = padTop + plotHeight - pct * plotHeight;
+    const scoreVal = Math.round(pct * 100);
+    const diffVal = (pct * 1.0).toFixed(1);
+
+    // Grid line
+    ctx.beginPath();
+    ctx.strokeStyle = i === 0 ? '#262B33' : '#1F2630';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.moveTo(padLeft, y);
+    ctx.lineTo(padLeft + plotWidth, y);
+    ctx.stroke();
+
+    // Left Axis Label (Score / Percentage)
+    ctx.fillStyle = '#7D8590';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${scoreVal}`, padLeft - 6, y);
+
+    // Right Axis Label (Difficulty d in cyan)
+    ctx.fillStyle = '#00CCFF';
+    ctx.textAlign = 'left';
+    ctx.fillText(`d=${diffVal}`, padLeft + plotWidth + 6, y);
+  }
+}
+
+function drawVerticalTicks(
+  ctx: CanvasRenderingContext2D,
+  n: number,
+  chronologicalSessions: SessionRow[],
+  selectedSessionUid: string | null | undefined,
+  padTop: number,
+  plotHeight: number,
+  getX: (index: number) => number
+): void {
+  for (let i = 0; i < n; i++) {
+    const x = getX(i);
+    const s = chronologicalSessions[i];
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#1F2630';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.moveTo(x, padTop);
+    ctx.lineTo(x, padTop + plotHeight);
+    ctx.stroke();
+
+    ctx.fillStyle = s.uid === selectedSessionUid ? '#00FF66' : '#7D8590';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.fillText(`S${i + 1}`, x, padTop + plotHeight + 6);
+  }
+}
+
+function drawMetricSeries(
+  ctx: CanvasRenderingContext2D,
+  n: number,
+  chronologicalSessions: SessionRow[],
+  visibleMetrics: Record<string, boolean>,
+  getX: (index: number) => number,
+  getYLeft: (val: number) => number,
+  getYRight: (val: number) => number
+): void {
+  for (const metric of METRICS) {
+    if (!visibleMetrics[metric.key]) continue;
+
+    ctx.beginPath();
+    ctx.strokeStyle = metric.color;
+    ctx.lineWidth = metric.key === 'score' ? 2.5 : 1.5;
+    ctx.setLineDash(metric.dash || []);
+
+    let hasStarted = false;
+    for (let i = 0; i < n; i++) {
+      const val = getMetricValue(chronologicalSessions[i], metric.key);
+      if (val === null) {
+        hasStarted = false;
+        continue;
+      }
+      const x = getX(i);
+      const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
+
+      if (!hasStarted) {
+        ctx.moveTo(x, y);
+        hasStarted = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+
+    // Draw point markers
+    ctx.setLineDash([]);
+    for (let i = 0; i < n; i++) {
+      const val = getMetricValue(chronologicalSessions[i], metric.key);
+      if (val === null) continue;
+      const x = getX(i);
+      const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
+
+      ctx.beginPath();
+      ctx.fillStyle = metric.color;
+      ctx.arc(x, y, metric.key === 'score' ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#0D1117';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawActiveHighlight(
+  ctx: CanvasRenderingContext2D,
+  activeSession: SessionRow,
+  activeX: number,
+  visibleMetrics: Record<string, boolean>,
+  padTop: number,
+  plotHeight: number,
+  getYLeft: (val: number) => number,
+  getYRight: (val: number) => number
+): void {
+  // Hairline crosshair
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 2]);
+  ctx.moveTo(activeX, padTop);
+  ctx.lineTo(activeX, padTop + plotHeight);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Highlight circles for active session
+  for (const metric of METRICS) {
+    if (!visibleMetrics[metric.key]) continue;
+    const val = getMetricValue(activeSession, metric.key);
+    if (val === null) continue;
+    const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
+
+    ctx.beginPath();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.arc(activeX, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = metric.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+}
 
 export const TrendChart: React.FC<TrendChartProps> = ({
   sessions,
@@ -84,45 +271,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     const plotWidth = width - padLeft - padRight;
     const plotHeight = canvasHeight - padTop - padBottom;
 
-    // Clear background
-    ctx.fillStyle = '#0D1117';
-    ctx.fillRect(0, 0, width, canvasHeight);
-
-    // Draw Plot Area Background
-    ctx.fillStyle = '#161B22';
-    ctx.fillRect(padLeft, padTop, plotWidth, plotHeight);
-
-    // Draw Horizontal Grid Lines (0 to 100 on left, 0.0 to 1.0 on right)
-    const gridSteps = 5;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    ctx.font = '10px "JetBrains Mono", monospace';
-
-    for (let i = 0; i <= gridSteps; i++) {
-      const pct = i / gridSteps;
-      const y = padTop + plotHeight - pct * plotHeight;
-      const scoreVal = Math.round(pct * 100);
-      const diffVal = (pct * 1.0).toFixed(1);
-
-      // Grid line
-      ctx.beginPath();
-      ctx.strokeStyle = i === 0 ? '#262B33' : '#1F2630';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([]);
-      ctx.moveTo(padLeft, y);
-      ctx.lineTo(padLeft + plotWidth, y);
-      ctx.stroke();
-
-      // Left Axis Label (Score / Percentage)
-      ctx.fillStyle = '#7D8590';
-      ctx.textAlign = 'right';
-      ctx.fillText(`${scoreVal}`, padLeft - 6, y);
-
-      // Right Axis Label (Difficulty d in cyan)
-      ctx.fillStyle = '#00CCFF';
-      ctx.textAlign = 'left';
-      ctx.fillText(`d=${diffVal}`, padLeft + plotWidth + 6, y);
-    }
+    drawBackgroundAndGrid(ctx, width, canvasHeight, padLeft, padTop, plotWidth, plotHeight);
 
     // If no sessions, draw empty state
     if (chronologicalSessions.length === 0) {
@@ -149,123 +298,18 @@ export const TrendChart: React.FC<TrendChartProps> = ({
       return padTop + plotHeight - clamped * plotHeight;
     };
 
-    // Draw Vertical session ticks on X axis
-    for (let i = 0; i < n; i++) {
-      const x = getX(i);
-      const s = chronologicalSessions[i];
+    // Draw vertical session ticks on X axis
+    drawVerticalTicks(ctx, n, chronologicalSessions, selectedSessionUid, padTop, plotHeight, getX);
 
-      // Tick line
-      ctx.beginPath();
-      ctx.strokeStyle = '#1F2630';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([]);
-      ctx.moveTo(x, padTop);
-      ctx.lineTo(x, padTop + plotHeight);
-      ctx.stroke();
+    // Draw metric series
+    drawMetricSeries(ctx, n, chronologicalSessions, visibleMetrics, getX, getYLeft, getYRight);
 
-      // Label (e.g. S1, S2...)
-      ctx.fillStyle = s.uid === selectedSessionUid ? '#00FF66' : '#7D8590';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.font = '10px "JetBrains Mono", monospace';
-      ctx.fillText(`S${i + 1}`, x, padTop + plotHeight + 6);
-    }
-
-    // Function to extract metric value for a session
-    const getMetricValue = (s: SessionRow, key: MetricConfig['key']): number | null => {
-      switch (key) {
-        case 'score':
-          return s.score;
-        case 'd':
-          return typeof s.metrics?.dScore === 'number' ? s.metrics.dScore : null;
-        case 'c':
-          return typeof s.metrics?.cScore === 'number' ? s.metrics.cScore : null;
-        case 'g':
-          return typeof s.metrics?.gScore === 'number' ? s.metrics.gScore : null;
-        case 'r':
-          return typeof s.metrics?.rScore === 'number' ? s.metrics.rScore : null;
-        case 'diff':
-          return typeof s.dStart === 'number' ? s.dStart : 0.3;
-      }
-    };
-
-    // Draw Metric Lines
-    for (const metric of METRICS) {
-      if (!visibleMetrics[metric.key]) continue;
-
-      ctx.beginPath();
-      ctx.strokeStyle = metric.color;
-      ctx.lineWidth = metric.key === 'score' ? 2.5 : 1.5;
-      ctx.setLineDash(metric.dash || []);
-
-      let hasStarted = false;
-      for (let i = 0; i < n; i++) {
-        const val = getMetricValue(chronologicalSessions[i], metric.key);
-        if (val === null) {
-          hasStarted = false;
-          continue;
-        }
-        const x = getX(i);
-        const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
-
-        if (!hasStarted) {
-          ctx.moveTo(x, y);
-          hasStarted = true;
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.stroke();
-
-      // Draw point markers
-      ctx.setLineDash([]);
-      for (let i = 0; i < n; i++) {
-        const val = getMetricValue(chronologicalSessions[i], metric.key);
-        if (val === null) continue;
-        const x = getX(i);
-        const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
-
-        ctx.beginPath();
-        ctx.fillStyle = metric.color;
-        ctx.arc(x, y, metric.key === 'score' ? 4 : 2.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#0D1117';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-    }
-
-    // Highlight Hovered Session or Selected Session
-    const activeIdx = hoveredIndex !== null ? hoveredIndex : chronologicalSessions.findIndex((s) => s.uid === selectedSessionUid);
+    // Highlight hovered session or selected session
+    const activeIdx = hoveredIndex ?? chronologicalSessions.findIndex((s) => s.uid === selectedSessionUid);
     if (activeIdx >= 0 && activeIdx < n) {
       const activeX = getX(activeIdx);
       const activeSession = chronologicalSessions[activeIdx];
-
-      // Hairline crosshair
-      ctx.beginPath();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 2]);
-      ctx.moveTo(activeX, padTop);
-      ctx.lineTo(activeX, padTop + plotHeight);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Highlight circles for active session
-      for (const metric of METRICS) {
-        if (!visibleMetrics[metric.key]) continue;
-        const val = getMetricValue(activeSession, metric.key);
-        if (val === null) continue;
-        const y = metric.isRightAxis ? getYRight(val) : getYLeft(val);
-
-        ctx.beginPath();
-        ctx.fillStyle = '#FFFFFF';
-        ctx.arc(activeX, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = metric.color;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+      drawActiveHighlight(ctx, activeSession, activeX, visibleMetrics, padTop, plotHeight, getYLeft, getYRight);
     }
 
     // Outer border of plot
@@ -412,7 +456,7 @@ export const TrendChart: React.FC<TrendChartProps> = ({
       {/* Screen-reader accessible summary */}
       <div className="sr-only">
         Trend chart shows performance across {chronologicalSessions.length} sessions.
-        Latest score is {chronologicalSessions[chronologicalSessions.length - 1]?.score ?? 0} with grade {chronologicalSessions[chronologicalSessions.length - 1]?.grade ?? 'N/A'}.
+        Latest score is {chronologicalSessions.at(-1)?.score ?? 0} with grade {chronologicalSessions.at(-1)?.grade ?? 'N/A'}.
       </div>
     </div>
   );

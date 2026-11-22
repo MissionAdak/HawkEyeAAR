@@ -109,14 +109,14 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       engineExpired.baselineSensorHealth.RADAR = 'OUT';
       for (let t = 0; t < 40 * 3; t++) engineExpired.step();
       expect(targetExp.hitHistory).toEqual([false, false, false]);
-      expect(targetExp.hitHistory.filter(Boolean).length).toBe(0);
+      expect(targetExp.hitHistory.filter(Boolean)).toHaveLength(0);
       expect(targetExp.tTrk).toBeNull();
       expect(engineExpired.events.some((e) => e.type === 'TRACK_INIT' && e.trackNo === targetExp.trackNo)).toBe(false);
     });
 
     it('advances Alpha-Beta track estimates according to canonical filtering equations', () => {
       const tracker = new TrackEstimator();
-      expect(tracker.getAllEstimates().length).toBe(0);
+      expect(tracker.getAllEstimates()).toHaveLength(0);
 
       // Measurement 1 at t = 1000 ms: Range 2000m, Azimuth 45 deg
       // x1 = 2000 * sin(45 deg) = 1414.21 m, y1 = 2000 * cos(45 deg) = 1414.21 m
@@ -652,9 +652,9 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       ];
 
       const metrics = aggregateAARMetrics(events, matrixSpec);
-      expect(metrics.confusion.length).toBe(6); // 6 canonical truth rows
+      expect(metrics.confusion).toHaveLength(6); // 6 canonical truth rows
       for (const row of metrics.confusion) {
-        expect(row.length).toBe(8); // 7 canonical classes + NONE column (column 7)
+        expect(row).toHaveLength(8); // 7 canonical classes + NONE column (column 7)
       }
 
       // True-positive for HOSTILE_ATTACK (row 0, col 1: HA in PRED_COLUMNS)
@@ -710,7 +710,7 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       expect(payload.version).toBe(1);
       expect(payload.sessionUid).toBe(testSessionUid);
       expect(payload.eventCount).toBe(4);
-      expect(payload.events.length).toBe(4);
+      expect(payload.events).toHaveLength(4);
 
       // Independent SHA-256 calculation
       const canonicalData = stableJson({ sessionUid: testSessionUid, events: payload.events });

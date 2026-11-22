@@ -1532,7 +1532,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       const events = await getRecordedEventsForSession(sessionUid);
       const authoritative = aggregateAARMetrics(events, spec);
       expect(authoritative.confusion).toBeDefined();
-      expect(authoritative.confusion.length).toBe(6); // 6x6 matrix
+      expect(authoritative.confusion).toHaveLength(6); // 6x6 matrix
 
       // Prove that historical reconstruction using exact snapshot produces identical G
       const sessionRow: SessionRow = {
@@ -1625,7 +1625,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       const allSessions = await getTraineeSessions('VIPER-2', 'asc', 'ALL');
       const savedUid = useSessionStore.getState().latestSavedSessionUid;
       const matching = allSessions.filter((s) => s.uid === savedUid);
-      expect(matching.length).toBe(1); // No duplicates
+      expect(matching).toHaveLength(1); // No duplicates
     });
   });
 });
