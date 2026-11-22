@@ -151,19 +151,57 @@ function createMockRenderer(): THREE.WebGLRenderer {
 
 /**
  * Authoritative deterministic simulation state serializer.
- * Encodes complete authoritative simulation state (clock, lifecycle, active tools, sensor health,
- * complete event stream, all entity physics and lifecycle states, tracking estimator
- * states, and input queue) while strictly omitting presentation/renderer metadata.
+ * Encodes complete authoritative simulation state:
+ * - Scenario configuration metadata (specId, seed, difficulty, mode, durationSec, pnrRangeM)
+ * - Simulation clock & event sequence (tickIndex, eventSeq, sessionEnded)
+ * - Sensor & tool state (baselineSensorHealth, effective sensorHealth, activeSensor, selectedTrackNo, activeEffector, eoirAzimuthDeg)
+ * - Training aid state (trainingAidActive, trainingAidTicks)
+ * - Complete event stream (all emitted events with sequence, timestamp, type, track, payload)
+ * - Authoritative current entity physics (curr TrackEntity[])
+ * - Authoritative previous entity physics (prev TrackEntity[] capturing previous-state data)
+ * - Alpha-Beta estimator states (getAllEstimates())
+ * - Sensor measurements (rfMeasurements)
+ * - Queued operator actions (inputQueue)
+ *
+ * Limitation note: JavaScript closures (such as private `engine.killRng` created via mulberry32)
+ * cannot be serialized into JSON directly. Alignment of internal private RNG state between
+ * presentation modes is verified empirically via deterministic follow-on fire/kill outcome tests.
  */
 export function serializeAuthoritativeSimState(engine: SimEngine): string {
   const state = {
+    // 1. Scenario configuration metadata
+    spec: engine.spec
+      ? {
+          id: engine.spec.id,
+          seed: engine.spec.seed,
+          difficulty: engine.spec.difficulty,
+          mode: engine.spec.mode,
+          durationMs: engine.spec.durationMs,
+          threatsCount: engine.spec.threats?.length ?? 0,
+          decoysCount: engine.spec.decoys?.length ?? 0,
+          zonesCount: engine.spec.zones?.length ?? 0,
+          chaosCount: engine.spec.chaos?.length ?? 0,
+        }
+      : null,
+
+    // 2. Simulation clock & sequence state
     tick: engine.tickIndex,
+    eventSeq: engine.eventSeq,
     sessionEnded: engine.sessionEnded,
+
+    // 3. Sensor & Tool state
+    baselineSensorHealth: engine.baselineSensorHealth,
+    sensorHealth: engine.sensorHealth,
     activeSensor: engine.activeSensor,
     selectedTrackNo: engine.selectedTrackNo,
     activeEffector: engine.activeEffector,
     eoirAzimuthDeg: engine.eoirAzimuthDeg,
-    sensorHealth: engine.sensorHealth,
+
+    // 4. Training aid state
+    trainingAidActive: engine.trainingAidActive,
+    trainingAidTicks: engine.trainingAidTicks,
+
+    // 5. Complete event stream
     events: engine.events.map((e) => ({
       seq: e.seq,
       tMs: e.tMs,
@@ -172,6 +210,8 @@ export function serializeAuthoritativeSimState(engine: SimEngine): string {
       entityId: e.entityId,
       payload: e.payload,
     })),
+
+    // 6. Current authoritative entities
     entities: engine.curr.map((e) => ({
       id: e.id,
       trackNo: e.trackNo,
@@ -199,6 +239,24 @@ export function serializeAuthoritativeSimState(engine: SimEngine): string {
       weaponUsed: e.weaponUsed,
       traineeLabel: e.traineeLabel,
     })),
+
+    // 7. Previous authoritative entities (capturing previous-state data)
+    prevEntities: engine.prev.map((e) => ({
+      id: e.id,
+      trackNo: e.trackNo,
+      pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
+      vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
+      rcsM2: e.rcsM2,
+      trueClass: e.trueClass,
+      droneType: e.droneType,
+      lifecycle: e.lifecycle,
+      step: e.step,
+      q: e.q,
+      cCls: e.cCls,
+      masked: e.masked,
+    })),
+
+    // 8. Tracking estimator states
     trackerEstimates: engine.tracker.getAllEstimates().map((est) => ({
       trackNo: est.trackNo,
       entityId: est.entityId,
@@ -217,7 +275,11 @@ export function serializeAuthoritativeSimState(engine: SimEngine): string {
       step: est.step,
       lifecycle: est.lifecycle,
     })),
+
+    // 9. RF measurements
     rfMeasurements: engine.rfMeasurements,
+
+    // 10. Queued actions
     inputQueue: ((engine.inputQueue as unknown as { queue?: UserAction[] }).queue ?? []).map((i) => ({
       tRawMs: i.tRawMs,
       applyTick: i.applyTick,
@@ -346,6 +408,34 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
         expect(hashes3D[cp]).toBeDefined();
         expect(hashes2D[cp]).toBe(hashes3D[cp]);
       }
+
+      // Deterministic follow-on RNG alignment verification (TASK 25-A):
+      // Private engine.killRng cannot be serialized directly. Here, queue follow-on actions at tick 201,
+      // advance both engines to draw from killRng, and verify identical event payloads and post-draw hashes.
+      const followOnActions: UserAction[] = [
+        { tRawMs: 10050, applyTick: 201, action: { type: 'DESIGNATE', trackNo: 'T-02', via: 'CLICK' } },
+        { tRawMs: 10100, applyTick: 202, action: { type: 'CLASSIFY', trackNo: 'T-02', label: 'HOSTILE_ATTACK' as TrackClass } },
+        { tRawMs: 10150, applyTick: 203, action: { type: 'SELECT_EFFECTOR', effectorId: 'RF_SOFTKILL' as EffectorId } },
+        { tRawMs: 10150, applyTick: 203, action: { type: 'FIRE', trackNo: 'T-02' } },
+      ];
+      for (const act of followOnActions) {
+        engine2D.inputQueue.push(act);
+        engine3D.inputQueue.push(act);
+      }
+
+      for (let tick = 201; tick <= 240; tick++) {
+        engine2D.step();
+        engine3D.step();
+        const { tracks, selectedTrackNo } = renderer3D.getCurrentTracks()!;
+        renderer3D.update(tracks, selectedTrackNo);
+      }
+
+      // Assert identical post-fire event sequence and bit-identical state hash
+      expect(engine2D.events.length).toBe(engine3D.events.length);
+      for (let i = 0; i < engine2D.events.length; i++) {
+        expect(engine2D.events[i]).toEqual(engine3D.events[i]);
+      }
+      expect(computeAuthoritativeStateHash(engine2D)).toBe(computeAuthoritativeStateHash(engine3D));
 
       // Teardown
       renderer3D.dispose();
@@ -730,12 +820,14 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
   /* -------------------------------------------------------------------------- */
   describe('TASK 24-D: Real Renderer Lifecycle Instrumentation & 10-Cycle Audit', () => {
     it('executes 10 consecutive real renderer lifecycle cycles with complete geometry/material disposal and listener cleanup', () => {
-      // Instrument Three.js geometry and material disposals
+      // Instrument Three.js geometry, material, and texture disposals
       let disposedGeometriesCount = 0;
       let disposedMaterialsCount = 0;
+      let disposedTexturesCount = 0;
 
       const origGeomDispose = THREE.BufferGeometry.prototype.dispose;
       const origMatDispose = THREE.Material.prototype.dispose;
+      const origTexDispose = THREE.Texture.prototype.dispose;
 
       vi.spyOn(THREE.BufferGeometry.prototype, 'dispose').mockImplementation(function (this: THREE.BufferGeometry) {
         disposedGeometriesCount++;
@@ -747,9 +839,15 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
         return origMatDispose.call(this);
       });
 
+      vi.spyOn(THREE.Texture.prototype, 'dispose').mockImplementation(function (this: THREE.Texture) {
+        disposedTexturesCount++;
+        return origTexDispose.call(this);
+      });
+
       for (let cycle = 1; cycle <= 10; cycle++) {
         const initialDisposedGeoms = disposedGeometriesCount;
         const initialDisposedMats = disposedMaterialsCount;
+        const initialDisposedTexs = disposedTexturesCount;
 
         const canvas = createMockCanvas();
         const mockRenderer = createMockRenderer();
@@ -790,15 +888,29 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
         r3d.start();
         expect(scheduledRafCallbacks.size).toBe(rafCountBefore);
 
-        // Perform one update
+        // Test stop() cancels scheduled frame
+        r3d.stop();
+        expect(scheduledRafCallbacks.size).toBe(0);
+
+        // Resume loop
+        r3d.start();
+        expect(scheduledRafCallbacks.size).toBeGreaterThanOrEqual(1);
+
+        // Perform one update (creates/updates label sprites and canvas textures)
         const currentTracks = r3d.getCurrentTracks()!;
         r3d.update(currentTracks.tracks, currentTracks.selectedTrackNo);
 
         // 2. Dispose renderer
         r3d.dispose();
 
-        // 3. Assert animation loop cancelled and no frames scheduled
+        // 3. Explicit post-disposal assertions (TASK 25-D Requirement A):
+        // Loop is cancelled and zero outstanding scheduled frames remain
         expect(r3d.disposed).toBe(true);
+        expect(scheduledRafCallbacks.size).toBe(0);
+
+        // Assert callbacks cannot schedule another frame after disposal
+        r3d.start();
+        expect(scheduledRafCallbacks.size).toBe(0);
 
         // 4. Assert all canvas listeners registered by renderer have been detached
         const canvasListeners = (canvas as unknown as { __listeners: Record<string, unknown[]> }).__listeners;
@@ -806,9 +918,10 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
           expect(arr, `Canvas event '${evtName}' should have 0 active listeners after disposal`).toHaveLength(0);
         }
 
-        // 5. Assert real geometries and materials allocated by Scene3D/Environment were disposed
+        // 5. Assert real geometries, materials, and textures allocated by Scene3D were disposed
         expect(disposedGeometriesCount).toBeGreaterThan(initialDisposedGeoms);
         expect(disposedMaterialsCount).toBeGreaterThan(initialDisposedMats);
+        expect(disposedTexturesCount).toBeGreaterThanOrEqual(initialDisposedTexs);
 
         // 6. Assert mockRenderer.dispose was called
         expect(mockRenderer.dispose).toHaveBeenCalled();
@@ -816,11 +929,14 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
         // 7. Repeated stop and dispose remain safe and idempotent
         expect(() => r3d.stop()).not.toThrow();
         expect(() => r3d.dispose()).not.toThrow();
+        expect(r3d.disposed).toBe(true);
+        expect(scheduledRafCallbacks.size).toBe(0);
       }
 
       // Final lifecycle audit: 10 cycles executed with verified non-zero resource disposals
       expect(disposedGeometriesCount).toBeGreaterThan(50);
       expect(disposedMaterialsCount).toBeGreaterThan(50);
+      expect(disposedTexturesCount).toBeGreaterThanOrEqual(10);
     });
   });
 });

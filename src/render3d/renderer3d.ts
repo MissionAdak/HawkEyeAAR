@@ -611,6 +611,10 @@ export class Renderer3D {
       this.cameraController.updateTransition();
 
       this.renderer.render(this.scene3d.scene, this.camera);
+      if (this.isDisposed) {
+        this.animFrameId = null;
+        return;
+      }
       this.animFrameId = requestAnimationFrame(renderLoop);
     };
 

@@ -180,6 +180,7 @@ export interface DrishtiTestBridge {
   aggregateAARMetrics?: (events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) => import('@/sim/types').AARMetrics;
   getActiveEffectsCount?: () => number;
   getRenderer3D?: () => unknown;
+  getSimTick?: () => number;
   getSceneTrackModels?: () => Array<{ trackNo: string; category?: string; signature?: string; modelName?: string; labelText?: string }>;
   advanceSimTicks?: (ticks: number) => boolean;
   fireTrack?: (trackNo: string) => void;
@@ -1069,6 +1070,10 @@ export function installDrishtiTestBridge(
         progressionLog,
         progressionLogCount: logRows.length,
       };
+    },
+
+    getSimTick(): number {
+      return engine.tickIndex;
     },
   };
 
