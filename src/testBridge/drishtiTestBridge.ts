@@ -179,6 +179,7 @@ export interface DrishtiTestBridge {
   loadCatalogScenario?: (id: string, seed?: number, difficulty?: number) => { spec: import('@/sim/types').ScenarioSpec };
   aggregateAARMetrics?: (events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) => import('@/sim/types').AARMetrics;
   getActiveEffectsCount?: () => number;
+  getRenderer3D?: () => unknown;
   getSceneTrackModels?: () => Array<{ trackNo: string; category?: string; signature?: string; modelName?: string; labelText?: string }>;
   advanceSimTicks?: (ticks: number) => boolean;
   fireTrack?: (trackNo: string) => void;
@@ -998,6 +999,10 @@ export function installDrishtiTestBridge(
     getActiveEffectsCount(): number {
       const r3d = getRenderer3D();
       return r3d?.getScene3D()?.engagementEffectManager?.getActiveEffectsCount() ?? 0;
+    },
+
+    getRenderer3D(): unknown {
+      return getRenderer3D();
     },
 
     advanceSimTicks(ticks: number): boolean {

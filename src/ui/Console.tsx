@@ -392,12 +392,43 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   );
 };
 
+export const DEFAULT_CHUNK_LOAD_TIMEOUT_MS = 3000;
+
+export interface LoadRender3DOptions {
+  timeoutMs?: number;
+  loader?: () => Promise<typeof import('@/render3d')>;
+}
+
+export async function loadRender3DModuleWithTimeout(
+  options?: LoadRender3DOptions
+): Promise<typeof import('@/render3d')> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CHUNK_LOAD_TIMEOUT_MS;
+  const loader = options?.loader ?? (() => import('@/render3d'));
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`3D chunk loading timed out (> ${timeoutMs}ms, Rule R10.6)`)),
+      timeoutMs
+    );
+  });
+
+  try {
+    return await Promise.race([loader(), timeoutPromise]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export const Console: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvas3dRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ConsoleRenderer | null>(null);
   const renderer3dRef = useRef<Renderer3D | null>(null);
   const xrManagerRef = useRef<WebXRManager | null>(null);
+  const isInitializing3DRef = useRef<boolean>(false);
 
   const [isVrModalOpen, setIsVrModalOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
@@ -578,22 +609,7 @@ export const Console: React.FC = () => {
     }
 
     // Rule R10.6: Enforce 3-second chunk load timeout for lazy 3D bundle
-    let chunkTimeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      chunkTimeoutId = setTimeout(
-        () => reject(new Error('3D chunk loading timed out (> 3000ms, Rule R10.6)')),
-        3000
-      );
-    });
-
-    let render3dModule;
-    try {
-      render3dModule = await Promise.race([import('@/render3d'), timeoutPromise]);
-    } finally {
-      if (chunkTimeoutId) {
-        clearTimeout(chunkTimeoutId);
-      }
-    }
+    const render3dModule = await loadRender3DModuleWithTimeout();
 
     const {
       Renderer3D,
@@ -630,7 +646,15 @@ export const Console: React.FC = () => {
       },
       onContextLost: () => {
         xrManagerRef.current?.exitVR();
-        renderer3dRef.current?.stop();
+        const lostRenderer = renderer3dRef.current ?? r3d;
+        renderer3dRef.current = null;
+        if (lostRenderer) {
+          try {
+            lostRenderer.dispose();
+          } catch {
+            // safe idempotent cleanup
+          }
+        }
         setViewMode('2D');
         setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
       },
@@ -711,6 +735,9 @@ export const Console: React.FC = () => {
 
   // Toggle 2D / 3D Tactical View with WebGL2 probe and graceful fallback
   const toggleViewMode = async () => {
+    if (isInitializing3DRef.current) {
+      return;
+    }
     if (viewMode === '3D') {
       xrManagerRef.current?.exitVR();
       renderer3dRef.current?.stop();
@@ -718,6 +745,7 @@ export const Console: React.FC = () => {
       return;
     }
 
+    isInitializing3DRef.current = true;
     try {
       const r3d = await initRenderer3D();
       if (!r3d) {
@@ -744,6 +772,8 @@ export const Console: React.FC = () => {
           : 'Failed to load 3D renderer. Restoring 2D mode.'
       );
       setViewMode('2D');
+    } finally {
+      isInitializing3DRef.current = false;
     }
   };
 

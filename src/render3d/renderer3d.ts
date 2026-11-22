@@ -36,6 +36,11 @@ export class Renderer3D {
   private animFrameId: number | null = null;
   private cleanupContextLoss: (() => void) | null = null;
   private cleanupKeydown: (() => void) | null = null;
+  private isDisposed: boolean = false;
+
+  public get disposed(): boolean {
+    return this.isDisposed;
+  }
 
   // Interaction & Picking State
   private readonly raycaster: THREE.Raycaster = new THREE.Raycaster();
@@ -174,60 +179,85 @@ export class Renderer3D {
       this.showTrainingAid = true;
     }
 
-    // 1. Initialize Three.js WebGLRenderer
-    this.renderer =
-      options.threeRenderer ??
-      new THREE.WebGLRenderer({
+    try {
+      // 1. Initialize Three.js WebGLRenderer
+      this.renderer =
+        options.threeRenderer ??
+        new THREE.WebGLRenderer({
+          canvas,
+          antialias: true,
+          alpha: false,
+          powerPreference: 'default',
+        });
+      this.renderer.setSize(canvas.width, canvas.height, false);
+      const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+      this.renderer.setPixelRatio(dpr);
+
+      // 2. Setup Tactical Camera (near plane 5m, far plane 45000m)
+      const aspect = canvas.width / canvas.height;
+      this.camera = new THREE.PerspectiveCamera(45, aspect, 5, 45000);
+
+      // 3. Initialize Camera Controller (Navigation, Pan, Orbit, Zoom to Cursor, Focus)
+      this.cameraController = new CameraController({
         canvas,
-        antialias: true,
-        alpha: false,
-        powerPreference: 'default',
+        camera: this.camera,
+        onSelectTrack: (clientX, clientY) => this.handlePointerClick(clientX, clientY),
+        onDoubleClick: (clientX, clientY) => this.handleDoubleClick(clientX, clientY),
       });
-    this.renderer.setSize(canvas.width, canvas.height, false);
-    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
-    this.renderer.setPixelRatio(dpr);
 
-    // 2. Setup Tactical Camera (near plane 5m, far plane 45000m)
-    const aspect = canvas.width / canvas.height;
-    this.camera = new THREE.PerspectiveCamera(45, aspect, 5, 45000);
+      // 4. Initialize Tactical Scene with Procedural Environment
+      this.scene3d = new Scene3D(options);
 
-    // 3. Initialize Camera Controller (Navigation, Pan, Orbit, Zoom to Cursor, Focus)
-    this.cameraController = new CameraController({
-      canvas,
-      camera: this.camera,
-      onSelectTrack: (clientX, clientY) => this.handlePointerClick(clientX, clientY),
-      onDoubleClick: (clientX, clientY) => this.handleDoubleClick(clientX, clientY),
-    });
+      // 5. Attach Context Loss Listener (Rule R10.1)
+      if (options.onContextLost) {
+        this.cleanupContextLoss = attachContextLossHandler(canvas, () => {
+          this.stop();
+          options.onContextLost?.();
+        });
+      }
 
-    // 4. Initialize Tactical Scene with Procedural Environment
-    this.scene3d = new Scene3D(options);
-
-    // 5. Attach Context Loss Listener (Rule R10.1)
-    if (options.onContextLost) {
-      this.cleanupContextLoss = attachContextLossHandler(canvas, () => {
-        this.stop();
-        options.onContextLost?.();
-      });
-    }
-
-    // 6. Global Navigation Keyboard Handler (F to focus, Home to reset)
-    if (typeof window !== 'undefined') {
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (
-          e.target instanceof HTMLInputElement ||
-          e.target instanceof HTMLTextAreaElement ||
-          (e.target instanceof HTMLElement && e.target.isContentEditable)
-        ) {
-          return;
+      // 6. Global Navigation Keyboard Handler (F to focus, Home to reset)
+      if (typeof window !== 'undefined') {
+        const handleKeyDown = (e: KeyboardEvent) => {
+          if (
+            e.target instanceof HTMLInputElement ||
+            e.target instanceof HTMLTextAreaElement ||
+            (e.target instanceof HTMLElement && e.target.isContentEditable)
+          ) {
+            return;
+          }
+          if (e.key === 'Home') {
+            this.resetCamera();
+          } else if (e.key === 'f' || e.key === 'F') {
+            this.focusSelection();
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        this.cleanupKeydown = () => window.removeEventListener('keydown', handleKeyDown);
+      }
+    } catch (err) {
+      // Internal initialization cleanup: dispose allocated resources if constructor fails
+      try {
+        const self = this as unknown as {
+          cameraController?: CameraController;
+          scene3d?: Scene3D;
+          renderer?: THREE.WebGLRenderer;
+        };
+        self.cameraController?.dispose();
+        if (this.cleanupKeydown) {
+          this.cleanupKeydown();
+          this.cleanupKeydown = null;
         }
-        if (e.key === 'Home') {
-          this.resetCamera();
-        } else if (e.key === 'f' || e.key === 'F') {
-          this.focusSelection();
+        if (this.cleanupContextLoss) {
+          this.cleanupContextLoss();
+          this.cleanupContextLoss = null;
         }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      this.cleanupKeydown = () => window.removeEventListener('keydown', handleKeyDown);
+        self.scene3d?.dispose();
+        self.renderer?.dispose();
+      } catch {
+        // ignore secondary cleanup errors
+      }
+      throw err;
     }
   }
 
@@ -531,7 +561,7 @@ export class Renderer3D {
    * INVARIANT: This loop renders visuals ONLY and MUST NOT advance simulation ticks.
    */
   public start(): void {
-    if (this.animFrameId !== null) return;
+    if (this.isDisposed || this.animFrameId !== null) return;
 
     const renderLoop = () => {
       if (this.getTracks) {
@@ -621,6 +651,11 @@ export class Renderer3D {
    * Complete renderer and scene teardown.
    */
   public dispose(): void {
+    if (this.isDisposed) {
+      return;
+    }
+    this.isDisposed = true;
+
     this.stop();
     this.cameraController.dispose();
 
