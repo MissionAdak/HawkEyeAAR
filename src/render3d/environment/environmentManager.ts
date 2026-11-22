@@ -36,7 +36,7 @@ export class EnvironmentManager {
     this.disposables.push(terrainRes.disposables);
 
     // 3. Build Buildings, Towers & Installations
-    const bldRes = buildProceduralBuildings(descriptor);
+    const bldRes = buildProceduralBuildings(descriptor, terrainRes.groundMesh);
     this.group.add(bldRes.group);
     bldRes.objects.forEach((obj) => this.objectsMap.set(obj.id, obj));
     this.selectableMeshes.push(...bldRes.selectableMeshes);

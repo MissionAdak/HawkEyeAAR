@@ -169,7 +169,7 @@ export function isFootprintFullyContained(
  * Builds 3D buildings, radar installations, command towers, and air defense infrastructure.
  * Uses shared geometries, instancing, and seeded deterministic layout.
  */
-export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): BuildingsBuildResult {
+export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, groundMesh?: THREE.Mesh): BuildingsBuildResult {
   const group = new THREE.Group();
   group.name = 'ProceduralBuildings';
   const objects: EnvironmentObjectInfo[] = [];
@@ -178,6 +178,23 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
   const materials: THREE.Material[] = [];
 
   const { preset, zones } = descriptor;
+
+  if (groundMesh) {
+    groundMesh.updateMatrixWorld(true);
+  }
+  const groundRaycaster = groundMesh ? new THREE.Raycaster() : null;
+  const downDir = new THREE.Vector3(0, -1, 0);
+
+  function sampleGround(simX: number, simY: number): number {
+    if (groundMesh && groundRaycaster) {
+      groundRaycaster.set(new THREE.Vector3(simX, 1500, -simY), downDir);
+      const hits = groundRaycaster.intersectObject(groundMesh, false);
+      if (hits.length > 0) {
+        return hits[0].point.y;
+      }
+    }
+    return getTerrainElevation(simX, simY, preset) - 1;
+  }
 
   // 1. Core Materials
   const bldMatConcrete = new THREE.MeshLambertMaterial({ color: 0x272e39 });
@@ -476,19 +493,21 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor): Bui
         // Account for procedural terrain surface elevation and Three.js ground mesh offset (groundMesh.position.y = -1).
         // Evaluate ground elevation across footprint corners, center, and 4 edge midpoints to eliminate any floating foundation gap on slopes.
         const corners = getRotatedFootprintCorners(candidateX, candidateY, bldSizeX, bldSizeZ, yawAngle);
-        const centerElev = getTerrainElevation(candidateX, candidateY, preset);
-        const cornerElevs = corners.map((c) => getTerrainElevation(c[0], c[1], preset));
-        const midElevs = [
-          getTerrainElevation((corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2, preset),
-          getTerrainElevation((corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2, preset),
-          getTerrainElevation((corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2, preset),
-          getTerrainElevation((corners[3][0] + corners[0][0]) / 2, (corners[3][0] + corners[0][1]) / 2, preset),
+        const centerGroundY = sampleGround(candidateX, candidateY);
+        const cornerGroundY = corners.map((c) => sampleGround(c[0], c[1]));
+        const midGroundY = [
+          sampleGround((corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2),
+          sampleGround((corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2),
+          sampleGround((corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2),
+          sampleGround((corners[3][0] + corners[0][0]) / 2, (corners[3][1] + corners[0][1]) / 2),
         ];
-        const minGroundElev = Math.min(centerElev, ...cornerElevs, ...midElevs);
+        const minGroundY = Math.min(centerGroundY, ...cornerGroundY, ...midGroundY);
+        const centerElev = centerGroundY + 1;
+        const minGroundElev = minGroundY + 1;
 
-        // Ground mesh surface in Three.js world coordinates is at (getTerrainElevation - 1).
-        // Foundation base extends down to (minGroundElev - 1) to coincide with or embed into terrain mesh surface.
-        const foundationBaseY = minGroundElev - 1;
+        // Ground mesh surface in Three.js world coordinates is sampled directly via sampleGround().
+        // Foundation base extends down to minGroundY to coincide with or embed into terrain mesh surface.
+        const foundationBaseY = minGroundY;
         const roofTopY = centerElev + bldHeight;
         const totalHeight = roofTopY - foundationBaseY;
         const meshCenterY = foundationBaseY + totalHeight / 2;

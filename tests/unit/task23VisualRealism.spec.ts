@@ -406,16 +406,111 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
       }
     });
 
+    it('accurately calculates all 4 edge-midpoints for non-symmetric rotated footprints against independent geometry (Section 3)', () => {
+      // Non-symmetric rotated footprint parameters:
+      // Center: (100, 200), Size: 30m x 14m, Yaw: 30 deg (pi/6)
+      // Half-extents: hx = 15, hz = 7 (hx != hz and cx != cy)
+      const cx = 100;
+      const cy = 200;
+      const sizeX = 30;
+      const sizeZ = 14;
+      const yawAngle = Math.PI / 6;
+
+      const corners = getRotatedFootprintCorners(cx, cy, sizeX, sizeZ, yawAngle);
+      expect(corners.length).toBe(4);
+
+      // Independently derived expected coordinates:
+      // Local unrotated offsets: NW [-15, -7], NE [15, -7], SE [15, 7], SW [-15, 7]
+      // In Three.js: +X = East, -Z = North; yaw around Y axis:
+      // SimX = cx + dx * cos(yaw) + dz * sin(yaw)
+      // SimY = cy + dx * sin(yaw) - dz * cos(yaw)
+      // For theta = pi/6: cos = sqrt(3)/2, sin = 0.5
+      //
+      // Edge midpoints in local frame:
+      // Edge 0-1 (NW to NE): dx = 0, dz = -7  -> (100 - 3.5, 200 + 7*sqrt(3)/2) = (96.5, 200 + 6.0621778)
+      // Edge 1-2 (NE to SE): dx = 15, dz = 0  -> (100 + 15*sqrt(3)/2, 200 + 7.5) = (100 + 12.990381, 207.5)
+      // Edge 2-3 (SE to SW): dx = 0, dz = 7   -> (100 + 3.5, 200 - 7*sqrt(3)/2) = (103.5, 200 - 6.0621778)
+      // Edge 3-0 (SW to NW): dx = -15, dz = 0 -> (100 - 15*sqrt(3)/2, 200 - 7.5) = (100 - 12.990381, 192.5)
+      const expectedM01: [number, number] = [96.5, 200 + 7 * Math.cos(Math.PI / 6)];
+      const expectedM12: [number, number] = [100 + 15 * Math.cos(Math.PI / 6), 207.5];
+      const expectedM23: [number, number] = [103.5, 200 - 7 * Math.cos(Math.PI / 6)];
+      const expectedM30: [number, number] = [100 - 15 * Math.cos(Math.PI / 6), 192.5];
+
+      // Derived edge midpoints from corner array (with corrected fourth midpoint)
+      const m01: [number, number] = [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2];
+      const m12: [number, number] = [(corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2];
+      const m23: [number, number] = [(corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2];
+      const m30: [number, number] = [(corners[3][0] + corners[0][0]) / 2, (corners[3][1] + corners[0][1]) / 2];
+
+      // 1. Assert midpoints match independent analytical derivations
+      expect(m01[0]).toBeCloseTo(expectedM01[0], 4);
+      expect(m01[1]).toBeCloseTo(expectedM01[1], 4);
+
+      expect(m12[0]).toBeCloseTo(expectedM12[0], 4);
+      expect(m12[1]).toBeCloseTo(expectedM12[1], 4);
+
+      expect(m23[0]).toBeCloseTo(expectedM23[0], 4);
+      expect(m23[1]).toBeCloseTo(expectedM23[1], 4);
+
+      expect(m30[0]).toBeCloseTo(expectedM30[0], 4);
+      expect(m30[1]).toBeCloseTo(expectedM30[1], 4);
+
+      // 2. Assert each midpoint lies on its corresponding edge (equidistant and collinear)
+      const edges: Array<{ i: number; j: number; m: [number, number] }> = [
+        { i: 0, j: 1, m: m01 },
+        { i: 1, j: 2, m: m12 },
+        { i: 2, j: 3, m: m23 },
+        { i: 3, j: 0, m: m30 },
+      ];
+
+      for (const { i, j, m } of edges) {
+        const c1 = corners[i];
+        const c2 = corners[j];
+        const edgeLen = Math.hypot(c2[0] - c1[0], c2[1] - c1[1]);
+        const distToC1 = Math.hypot(m[0] - c1[0], m[1] - c1[1]);
+        const distToC2 = Math.hypot(c2[0] - m[0], c2[1] - m[1]);
+
+        expect(distToC1).toBeCloseTo(edgeLen / 2, 4);
+        expect(distToC2).toBeCloseTo(edgeLen / 2, 4);
+        expect(distToC1 + distToC2).toBeCloseTo(edgeLen, 4); // Collinear between endpoints
+      }
+
+      // 3. Explicitly verify the buggy formula (corners[3][0] + corners[0][1]) / 2 produces a huge error
+      const buggyY30 = (corners[3][0] + corners[0][1]) / 2;
+      expect(Math.abs(buggyY30 - m30[1])).toBeGreaterThan(40); // > 40m error if X and Y mixed
+    });
+
     it('rigorously validates building foundations across 9 footprint points on sloped (MOUNTAIN_RIDGE) and flat (URBAN_DENSE) terrain against Three.js ground mesh', () => {
       for (const preset of ['URBAN_DENSE', 'MOUNTAIN_RIDGE'] as const) {
         const desc = testDescriptor(preset === 'MOUNTAIN_RIDGE' ? 4242 : 7777, preset);
         const terrain = buildProceduralTerrain(desc);
-        const buildings = buildProceduralBuildings(desc);
+        const buildings = buildProceduralBuildings(desc, terrain.groundMesh);
 
         // Verify groundMesh exists in terrain with position.y = -1
-        const groundMesh = terrain.group.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh;
+        const groundMesh = terrain.groundMesh ?? (terrain.group.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh);
         expect(groundMesh).toBeDefined();
         expect(groundMesh.position.y).toBe(-1);
+
+        // Update world matrix before raycasting
+        groundMesh.updateMatrixWorld(true);
+
+        const raycaster = new THREE.Raycaster();
+        const rayDir = new THREE.Vector3(0, -1, 0);
+
+        function sampleMeshGroundY(simX: number, simY: number): number {
+          // 1. Convert simulation coordinates to Three.js world coordinates:
+          //    World X = simulation X, World Z = negative simulation Y
+          const worldX = simX;
+          const worldZ = -simY;
+          // 2. Cast vertical ray downward from safely above max terrain elevation (1500m)
+          raycaster.set(new THREE.Vector3(worldX, 1500, worldZ), rayDir);
+          // 3. Intersect actual generated Three.js ground mesh
+          const hits = raycaster.intersectObject(groundMesh, false);
+          // 6. Fail the test if no ground intersection is found
+          expect(hits.length).toBeGreaterThan(0);
+          // 4. Obtain hit world-space Y coordinate (includes mesh position.y = -1)
+          return hits[0].point.y;
+        }
 
         const zoneMeshes = buildings.selectableMeshes.filter((m) =>
           m.userData?.envObjectId?.startsWith('BLD-U1')
@@ -424,6 +519,9 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
 
         const reportList: Array<{
           id: string;
+          foundationBaseY: number;
+          minGroundY: number;
+          maxGroundY: number;
           floatingGap: number;
           foundationContact: number;
           burialDepth: number;
@@ -435,6 +533,7 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
           expect(info).toBeDefined();
           if (!info) continue;
 
+          // Obtain actual building foundation base from transformed geometry / bounding box
           const bbox = new THREE.Box3().setFromObject(mesh);
           const foundationBaseY = bbox.min.y;
 
@@ -458,42 +557,45 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
           // 2. 4 Corners (NW, NE, SE, SW)
           const corners = getRotatedFootprintCorners(centerPt[0], centerPt[1], sizeX, sizeZ, yaw);
 
-          // 3. 4 Edge Midpoints
+          // 3. 4 Edge Midpoints (all 4 with corrected Y coordinate index)
           const edgeMidpoints: [number, number][] = [
             [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2],
             [(corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2],
             [(corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2],
-            [(corners[3][0] + corners[0][0]) / 2, (corners[3][0] + corners[0][1]) / 2],
+            [(corners[3][0] + corners[0][0]) / 2, (corners[3][1] + corners[0][1]) / 2],
           ];
 
           const all9Points = [centerPt, ...corners, ...edgeMidpoints];
           expect(all9Points.length).toBe(9);
 
-          // Compute Three.js ground heights (accounting for groundMesh position.y = -1)
-          const groundHeightsY = all9Points.map(([px, py]) => getTerrainElevation(px, py, preset) - 1);
+          // Query actual generated Three.js ground mesh geometry for each of the 9 footprint sample points
+          const groundHeightsY = all9Points.map(([px, py]) => sampleMeshGroundY(px, py));
           const minGroundY = Math.min(...groundHeightsY);
           const maxGroundY = Math.max(...groundHeightsY);
           const localTerrainRelief = maxGroundY - minGroundY;
 
-          // Measure metrics:
-          // Floating gap: distance foundation floats above the lowest terrain point (must be 0 <= tolerance)
-          const floatingGap = Math.max(0, foundationBaseY - minGroundY);
+          // Measure metrics as defined in Section 4:
+          // Floating gap: max positive distance by which foundation base lies above any sampled ground surface
+          const floatingGap = Math.max(0, ...groundHeightsY.map((gY) => foundationBaseY - gY));
 
-          // Foundation contact: absolute difference between foundation base and lowest terrain point
+          // Foundation contact error: abs(foundationBaseY - minimumSampledGroundY)
           const foundationContact = Math.abs(foundationBaseY - minGroundY);
 
-          // Burial depth: how deep the foundation extends below highest terrain point
-          const burialDepth = maxGroundY - foundationBaseY;
+          // Burial depth: max depth by which foundation base lies below any sampled ground surface
+          const burialDepth = Math.max(0, ...groundHeightsY.map((gY) => gY - foundationBaseY));
 
           reportList.push({
             id: info.id,
+            foundationBaseY,
+            minGroundY,
+            maxGroundY,
             floatingGap,
             foundationContact,
             burialDepth,
             localTerrainRelief,
           });
 
-          // Mandatory assertions (Section 5):
+          // Mandatory assertions (Section 4 & 5):
           // 1. Zero floating gap beyond tolerance
           expect(floatingGap).toBeLessThanOrEqual(0.05);
 

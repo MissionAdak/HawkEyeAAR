@@ -9,6 +9,7 @@ const COLOR_AMBER = 0xFF9900;
 
 export interface TerrainBuildResult {
   group: THREE.Group;
+  groundMesh?: THREE.Mesh;
   objects: EnvironmentObjectInfo[];
   disposables: { geometries: THREE.BufferGeometry[]; materials: THREE.Material[] };
 }
@@ -41,6 +42,7 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
   const objects: EnvironmentObjectInfo[] = [];
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
+  let primaryGroundMesh: THREE.Mesh | undefined;
 
   const { preset, mapRadiusM, rMinM } = descriptor;
   const terrainSize = mapRadiusM * 2.2;
@@ -81,6 +83,7 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
     const groundMesh = new THREE.Mesh(groundGeom, groundMat);
     groundMesh.position.y = -1;
     group.add(groundMesh);
+    primaryGroundMesh = groundMesh;
 
     // Contour wireframe for tactical elevation clarity
     const contourMat = new THREE.LineBasicMaterial({
@@ -120,6 +123,7 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
     const landMesh = new THREE.Mesh(landGeom, landMat);
     landMesh.position.y = -1;
     group.add(landMesh);
+    primaryGroundMesh = landMesh;
 
     // Water Surface (Western maritime sector: X < -1800m)
     const seaGeom = new THREE.PlaneGeometry(terrainSize * 0.5, terrainSize);
@@ -216,6 +220,7 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
     const groundMesh = new THREE.Mesh(groundGeom, groundMat);
     groundMesh.position.y = -1;
     group.add(groundMesh);
+    primaryGroundMesh = groundMesh;
 
     // If Rural or Suburban: draw procedural agricultural / lot parcels
     if (preset === 'OPEN_RURAL' || preset === 'SUBURBAN') {
@@ -296,5 +301,5 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
     description: '500m radius Point of No Return. Unauthorized aerial crossing constitutes a terminal breach.',
   });
 
-  return { group, objects, disposables: { geometries, materials } };
+  return { group, groundMesh: primaryGroundMesh, objects, disposables: { geometries, materials } };
 }

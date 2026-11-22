@@ -467,21 +467,43 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
       });
 
-      // Mandatory assertions (Section 3):
+      // Mandatory assertions (Section 7):
       expect(sceneModels.length).toBeGreaterThanOrEqual(3);
       const distinctTracks = new Set(sceneModels.map((m) => m.trackNo));
       expect(distinctTracks.size).toBeGreaterThanOrEqual(3);
       const distinctModelNames = new Set(sceneModels.map((m) => m.modelName));
       expect(distinctModelNames.size).toBeGreaterThanOrEqual(3);
 
-      expect(sceneModels.some((m) => m.modelName === 'Target_FPV_Attack')).toBe(true);
-      expect(sceneModels.some((m) => m.modelName === 'Target_Loitering_Munition')).toBe(true);
-      expect(sceneModels.some((m) => m.modelName === 'Target_Bird')).toBe(true);
+      // Verify each track appears exactly once and map 1-to-1 to expected models
+      expect(sceneModels.filter((m) => m.trackNo === 'T-01').length).toBe(1);
+      expect(sceneModels.filter((m) => m.trackNo === 'T-02').length).toBe(1);
+      expect(sceneModels.filter((m) => m.trackNo === 'T-03').length).toBe(1);
 
-      // Verify ground-truth isolation
+      const m01 = sceneModels.find((m) => m.trackNo === 'T-01');
+      const m02 = sceneModels.find((m) => m.trackNo === 'T-02');
+      const m03 = sceneModels.find((m) => m.trackNo === 'T-03');
+
+      expect(m01?.modelName).toBe('Target_FPV_Attack');
+      expect(m01?.signature).toBe('MULTIROTOR_COMPACT');
+      expect(m01?.category).toBe('OBSERVED_MULTIROTOR');
+
+      expect(m02?.modelName).toBe('Target_Loitering_Munition');
+      expect(m02?.signature).toBe('FIXED_WING_DELTA');
+      expect(m02?.category).toBe('OBSERVED_FIXED_WING');
+
+      expect(m03?.modelName).toBe('Target_Bird');
+      expect(m03?.signature).toBe('BIRD_LIKE');
+      expect(m03?.category).toBe('BIRD');
+
+      // Fail-closed ground-truth audit: inspection method must exist and return real result
       const leakCheck = await page.evaluate(() => {
-        return window.__DRISHTI_TEST__?.inspectOperatorFacingData?.() || { hasLeaks: false };
+        const bridge = window.__DRISHTI_TEST__;
+        if (!bridge || typeof bridge.inspectOperatorFacingData !== 'function') {
+          return { hasLeaks: true, leakedProperties: ['INSPECTOR_MISSING'] };
+        }
+        return bridge.inspectOperatorFacingData();
       });
+      expect(leakCheck.leakedProperties).not.toContain('INSPECTOR_MISSING');
       expect(leakCheck.hasLeaks).toBe(false);
 
       await saveShot(page, '06_multiple_target_models.png');
@@ -525,6 +547,26 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         await page.waitForTimeout(600);
       }
 
+      // Helper to extract exact integer altitude token from label string (e.g. "T-01 [NON] 80m" -> 80)
+      const parseAltitudeToken = (labelText: string | undefined): number | null => {
+        if (!labelText) return null;
+        const match = labelText.match(/\s(\d+)m$/);
+        return match ? parseInt(match[1], 10) : null;
+      };
+
+      // Test dynamic label update when test bridge changes estimated position (Section 6)
+      await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        bridge?.positionTrack?.('T-01', { x: 800, y: 800, z: 120 });
+      });
+      await page.waitForTimeout(200);
+
+      const intermediateModels = await page.evaluate(() => {
+        return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
+      });
+      const t01Inter = intermediateModels.find((m) => m.trackNo === 'T-01');
+      expect(parseAltitudeToken(t01Inter?.labelText)).toBe(120);
+
       // Re-position tracks at exact test altitudes (80m, 250m, 400m)
       await page.evaluate(() => {
         const bridge = window.__DRISHTI_TEST__;
@@ -534,7 +576,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       });
       await page.waitForTimeout(200);
 
-      // Assert exact rendered label strings on the 3 distinct tracks (Section 4):
+      // Assert exact rendered label strings on the 3 distinct tracks (Section 6):
       const altitudeModels = await page.evaluate(() => {
         return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
       });
@@ -543,12 +585,46 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const t02 = altitudeModels.find((m) => m.trackNo === 'T-02');
       const t03 = altitudeModels.find((m) => m.trackNo === 'T-03');
 
-      expect(t01?.labelText).toContain('80m');
-      expect(t02?.labelText).toContain('250m');
-      expect(t03?.labelText).toContain('400m');
+      expect(t01).toBeDefined();
+      expect(t02).toBeDefined();
+      expect(t03).toBeDefined();
 
-      const distinctAltitudes = new Set([t01?.labelText, t02?.labelText, t03?.labelText]);
+      const alt01 = parseAltitudeToken(t01?.labelText);
+      const alt02 = parseAltitudeToken(t02?.labelText);
+      const alt03 = parseAltitudeToken(t03?.labelText);
+
+      // 1. Exact numeric altitude matching
+      expect(alt01).toBe(80);
+      expect(alt02).toBe(250);
+      expect(alt03).toBe(400);
+
+      // 2. Exact label regex matching (format: "${trackNo} [${labelTag}] ${altM}m")
+      expect(t01?.labelText).toMatch(/^T-01\s+\[[A-Z-]+\]\s+80m$/);
+      expect(t02?.labelText).toMatch(/^T-02\s+\[[A-Z-]+\]\s+250m$/);
+      expect(t03?.labelText).toMatch(/^T-03\s+\[[A-Z-]+\]\s+400m$/);
+
+      // 3. All 3 values are distinct
+      const distinctAltitudes = new Set([alt01, alt02, alt03]);
       expect(distinctAltitudes.size).toBe(3);
+
+      // 4. Verify labels are generated from SafeTrackView (not leaked truth)
+      const safeTrackCheck = await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        const tracks = bridge?.getTrackList?.() || [];
+        const tr1 = tracks.find((t) => t.trackNo === 'T-01');
+        const tr2 = tracks.find((t) => t.trackNo === 'T-02');
+        const tr3 = tracks.find((t) => t.trackNo === 'T-03');
+        return {
+          hasSafeTracks: !!(tr1 && tr2 && tr3),
+          t1Alt: tr1?.pos?.z,
+          t2Alt: tr2?.pos?.z,
+          t3Alt: tr3?.pos?.z,
+        };
+      });
+      expect(safeTrackCheck.hasSafeTracks).toBe(true);
+      expect(safeTrackCheck.t1Alt).toBe(80);
+      expect(safeTrackCheck.t2Alt).toBe(250);
+      expect(safeTrackCheck.t3Alt).toBe(400);
 
       await saveShot(page, '09_aircraft_altitudes.png');
 
