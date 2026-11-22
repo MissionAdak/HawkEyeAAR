@@ -6,6 +6,7 @@ import {
   updateWeaknessProfile,
   getWeakestDimension,
   getAdaptivePlan,
+  sampleAdaptiveLevers,
   WEAKNESS_LEVER_MAP,
   DEFAULT_TRAIN_DIFFICULTY,
   DEFAULT_METRIC_EMA,
@@ -21,8 +22,12 @@ import {
   updateTraineeProgression,
   resetTraineeProgressionForTest,
   getUnitTraineeSummaries,
+  getTraineeSessions,
+  getProgressionLogEntry,
   createMockMetrics,
 } from '@/db/sessionRepo';
+import { setMockPersistenceFailureMode } from '@/db/recorder';
+import { useSessionStore } from '@/store/sessionStore';
 import type { SessionRow } from '@/db/dexie';
 import type { WeaknessVector, ScenarioSpec } from '@/sim/types';
 
@@ -689,8 +694,8 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
     });
   });
 
-  describe('6. Complete Multi-Session Progression Workflow (Section 3)', () => {
-    it('executes a verified 6-session progressive training sequence', async () => {
+  describe('6. Complete Multi-Session Progression Workflow (Section 4 & Fix 2)', () => {
+    it('executes a verified genuine 6-session persisted progression sequence', async () => {
       const callsign = 'PROGRESSION-LEAD';
       const traineeUid = 'trainee-progression-lead';
 
@@ -724,7 +729,7 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
       expect(await getTraineeDifficulty(traineeUid)).toBe(0.3);
       expect(await getTraineeProfile(traineeUid)).toBeNull();
 
-      // Step 2: First TRAIN Session (Trainee struggles with Detection D)
+      // Step 2: First TRAIN Session (High score 90 -> difficulty increases by 0.10)
       await saveCompletedSession(
         {
           uid: 'seq-session-2-train',
@@ -732,44 +737,47 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
           mode: 'TRAIN',
           startedAt: 2000,
           durationMs: 60000,
-          score: 60, // < 70 -> d decreases by 0.05
-          grade: 'DEVELOPING',
+          score: 90, // > 70 -> delta = +0.10 -> d = 0.40
+          grade: 'PROFICIENT_IN_SIMULATION',
           dStart: 0.3,
           aborted: false,
           unverified: false,
-          metrics: createMockMetrics(60, 'DEVELOPING', 'TRAIN', {
-            dScore: 35, // Lowest!
-            cScore: 75,
-            econScore: 70,
-            rScore: 80,
-            swarmSat: 0.8,
+          metrics: createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+            dScore: 95,
+            cScore: 90,
+            econScore: 85,
+            rScore: 90,
+            salScore: 90,
+            swarmSat: 0.9,
           }),
         },
         callsign
       );
 
-      // Step 3: Performance Recording & Profile Update
       const dAfterTrain1 = await getTraineeDifficulty(traineeUid);
-      expect(dAfterTrain1).toBeCloseTo(0.25, 4);
+      expect(dAfterTrain1).toBeCloseTo(0.40, 4);
 
       const profile1 = await getTraineeProfile(traineeUid);
       expect(profile1).not.toBeNull();
-      expect(profile1!.d).toBe(35); // Cold-start seeded
+      expect(profile1!.econ).toBe(85); // Cold-start seeded
 
-      // Step 4 & 5: Adaptive Director identifies weakest dimension and plans next drill
-      const plan1 = getAdaptivePlan(traineeUid, profile1, dAfterTrain1, 60);
-      expect(plan1.weakestDimension).toBe('d');
-      expect(plan1.targetLever).toBe('LOW_RCS_MASKED');
-      expect(plan1.nextDifficulty).toBeCloseTo(0.20, 4);
-
-      // Step 6: Subsequent TRAIN Session targeting Detection
-      const specTrain2 = generateScenario(traineeUid, 2, plan1.nextDifficulty, [], 0, {
-        weaknessVector: profile1!,
+      // Red Team identifies lowest metric (Economics: 85)
+      const plan1 = getAdaptivePlan(traineeUid, profile1, dAfterTrain1, 90, {
+        sessionStartDifficulty: 0.3,
       });
-      expect(specTrain2.levers[0].id).toBe('LOW_RCS_MASKED');
+      expect(plan1.weakestDimension).toBe('econ');
+      expect(plan1.targetLever).toBe('PROPORTIONALITY_DRILL');
+      expect(plan1.nextDifficulty).toBeCloseTo(0.40, 4);
+
+      // Verify procedural scenario generation
+      const specTrain2 = generateScenario(traineeUid, 2, plan1.nextDifficulty, [], 42, {
+        weaknessVector: profile1!,
+        targetLever: plan1.targetLever,
+      });
+      expect(specTrain2.levers[0].id).toBe('PROPORTIONALITY_DRILL');
       expect(validate(specTrain2)).toBe(true);
 
-      // Trainee improves on Detection (score 82)
+      // Step 3: Second TRAIN Session (Score 85 -> difficulty increases by 0.075 to 0.475)
       await saveCompletedSession(
         {
           uid: 'seq-session-3-train',
@@ -777,68 +785,577 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
           mode: 'TRAIN',
           startedAt: 3000,
           durationMs: 60000,
-          score: 82, // > 70 -> d increases by 0.06
+          score: 85, // > 70 -> delta = +0.075 -> d = 0.475
           grade: 'PROFICIENT_IN_SIMULATION',
-          dStart: 0.2,
+          dStart: 0.4,
           aborted: false,
           unverified: false,
-          metrics: createMockMetrics(82, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+          metrics: createMockMetrics(85, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
             dScore: 85,
-            cScore: 80,
-            econScore: 80,
-            rScore: 85,
-            swarmSat: 0.1, // 10%
+            cScore: 90,
+            econScore: 75,
+            rScore: 90,
+            salScore: 90,
+            swarmSat: 0.8,
           }),
         },
         callsign
       );
 
-      // Step 7: Updated Difficulty and Performance Profile
       const dAfterTrain2 = await getTraineeDifficulty(traineeUid);
-      expect(dAfterTrain2).toBeGreaterThan(0.2);
+      expect(dAfterTrain2).toBeCloseTo(0.475, 4);
 
       const profile2 = await getTraineeProfile(traineeUid);
-      expect(profile2).not.toBeNull();
-      // d EMA updated: 0.4 * 85 + 0.6 * 35 = 34 + 21 = 55
-      expect(profile2!.d).toBeCloseTo(55, 1);
-      // sat EMA updated: 0.4 * 10 + 0.6 * 80 = 4 + 48 = 52
-      expect(profile2!.sat).toBeCloseTo(52, 1);
+      expect(profile2!.d).toBeCloseTo(91.0, 2);
+      expect(profile2!.econ).toBeCloseTo(81.0, 2);
+      expect(profile2!.sat).toBeCloseTo(86.0, 2);
 
-      // Step 8: Red Team shifts to target new weakness: Swarm Saturation [SAT]
-      const plan2 = getAdaptivePlan(traineeUid, profile2, dAfterTrain2, 82);
-      expect(plan2.weakestDimension).toBe('sat');
-      expect(plan2.targetLever).toBe('SWARM_SATURATION');
-
-      // Step 9: Final Fixed EVAL Benchmark
+      // Step 4: Third TRAIN Session (Trainee encounters challenge, score 60 -> d decreases to 0.425)
       await saveCompletedSession(
         {
-          uid: 'seq-session-4-eval',
+          uid: 'seq-session-4-train',
           traineeUid,
-          mode: 'EVAL',
+          mode: 'TRAIN',
           startedAt: 4000,
           durationMs: 60000,
-          score: 84, // Trainee demonstrated measurable improvement over baseline (68 -> 84)
+          score: 60, // < 70 -> delta = -0.05 -> d = 0.425
+          grade: 'DEVELOPING',
+          dStart: 0.475,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(60, 'DEVELOPING', 'TRAIN', {
+            dScore: 50,
+            cScore: 80,
+            econScore: 80,
+            rScore: 70,
+            salScore: 60,
+            swarmSat: 0.6,
+          }),
+        },
+        callsign
+      );
+
+      const dAfterTrain3 = await getTraineeDifficulty(traineeUid);
+      expect(dAfterTrain3).toBeCloseTo(0.425, 4);
+
+      const profile3 = await getTraineeProfile(traineeUid);
+      // D: 0.4 * 50 + 0.6 * 91 = 20 + 54.6 = 74.60
+      expect(profile3!.d).toBeCloseTo(74.60, 2);
+      // Weakest is now Detection (74.60)
+      const plan3 = getAdaptivePlan(traineeUid, profile3, dAfterTrain3, 60, {
+        sessionStartDifficulty: 0.475,
+      });
+      expect(plan3.weakestDimension).toBe('d');
+      expect(plan3.targetLever).toBe('LOW_RCS_MASKED');
+
+      // Step 5: Intermediate EVAL Benchmark (Score 95 -> EVAL NEVER modifies d or EMA)
+      await saveCompletedSession(
+        {
+          uid: 'seq-session-5-eval',
+          traineeUid,
+          mode: 'EVAL',
+          startedAt: 5000,
+          durationMs: 60000,
+          score: 95,
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.5,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(95, 'PROFICIENT_IN_SIMULATION', 'EVAL', {
+            dScore: 98,
+            cScore: 95,
+            econScore: 95,
+            rScore: 95,
+            salScore: 90,
+            swarmSat: 0.92,
+          }),
+        },
+        callsign
+      );
+
+      // Strictly locked: d stays 0.425, profile stays unchanged
+      expect(await getTraineeDifficulty(traineeUid)).toBeCloseTo(0.425, 4);
+      const profileAfterEval = await getTraineeProfile(traineeUid);
+      expect(profileAfterEval!.d).toBeCloseTo(74.60, 2);
+
+      // Step 6: Fourth TRAIN Session (Score 70 -> equilibrium, d unchanged at 0.425)
+      await saveCompletedSession(
+        {
+          uid: 'seq-session-6-train',
+          traineeUid,
+          mode: 'TRAIN',
+          startedAt: 6000,
+          durationMs: 60000,
+          score: 70, // = 70 -> delta = 0 -> d stays 0.425
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.425,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(70, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+            dScore: 70,
+            cScore: 70,
+            econScore: 70,
+            rScore: 70,
+            salScore: 70,
+            swarmSat: 0.7,
+          }),
+        },
+        callsign
+      );
+
+      const dAfterTrain4 = await getTraineeDifficulty(traineeUid);
+      expect(dAfterTrain4).toBeCloseTo(0.425, 4);
+
+      const profile4 = await getTraineeProfile(traineeUid);
+      // D: 0.4 * 70 + 0.6 * 74.60 = 28 + 44.76 = 72.76
+      expect(profile4!.d).toBeCloseTo(72.76, 2);
+      // C: 0.4 * 70 + 0.6 * 86.00 = 28 + 51.60 = 79.60
+      expect(profile4!.c).toBeCloseTo(79.60, 2);
+
+      // Verify that exactly 6 distinct session records are persisted
+      const allSessions = await getTraineeSessions(callsign, 'asc', 'ALL');
+      expect(allSessions.length).toBe(6);
+      expect(allSessions.map((s) => s.uid)).toEqual([
+        'seq-session-1-eval',
+        'seq-session-2-train',
+        'seq-session-3-train',
+        'seq-session-4-train',
+        'seq-session-5-eval',
+        'seq-session-6-train',
+      ]);
+
+      // Verify unit readiness leaderboard: EVAL sessions only (latest score 95)
+      const summaries = await getUnitTraineeSummaries('ALL');
+      const leadSummary = summaries.find((s) => s.callsign === callsign);
+      expect(leadSummary).toBeDefined();
+      expect(leadSummary!.latestEvalScore).toBe(95);
+      expect(leadSummary!.evalSessionsCount).toBe(2);
+      expect(leadSummary!.trainSessionsCount).toBe(4);
+      expect(leadSummary!.highestTrainDifficulty).toBeCloseTo(0.475, 4);
+    });
+  });
+
+  describe('7. Authoritative 6-Session EMA Reference Matrix (Section 5 Prompt Table & Fix 3)', () => {
+    it('calculates the exact independently-verified reference sequence matching PRD formulas', async () => {
+      const traineeUid = 'trainee-ref-matrix';
+      const callsign = 'REF-MATRIX';
+
+      // S1 (TRAIN): (95, 90, 85, 90, 90, 90)
+      await saveCompletedSession(
+        {
+          uid: 'ref-s1-train',
+          traineeUid,
+          mode: 'TRAIN',
+          startedAt: 1000,
+          durationMs: 60000,
+          score: 90,
           grade: 'PROFICIENT_IN_SIMULATION',
           dStart: 0.3,
           aborted: false,
           unverified: false,
-          metrics: createMockMetrics(84, 'PROFICIENT_IN_SIMULATION', 'EVAL', {
-            dScore: 85,
-            cScore: 85,
-            econScore: 80,
-            rScore: 85,
+          metrics: createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+            dScore: 95,
+            cScore: 90,
+            econScore: 85,
+            rScore: 90,
+            salScore: 90,
+            swarmSat: 0.9,
           }),
         },
         callsign
       );
 
-      // Final verification: Leaderboard ranks by latest valid EVAL score
-      const summaries = await getUnitTraineeSummaries('ALL');
-      const leadSummary = summaries.find((s) => s.callsign === callsign);
-      expect(leadSummary).toBeDefined();
-      expect(leadSummary!.latestEvalScore).toBe(84);
-      expect(leadSummary!.evalSessionsCount).toBe(2);
-      expect(leadSummary!.trainSessionsCount).toBe(2);
+      const p1 = await getTraineeProfile(traineeUid);
+      expect(p1!.d).toBe(95.00);
+      expect(p1!.c).toBe(90.00);
+      expect(p1!.econ).toBe(85.00);
+      expect(p1!.r).toBe(90.00);
+      expect(p1!.sal).toBe(90.00);
+      expect(p1!.sat).toBe(90.00);
+
+      // S2 (TRAIN): (85, 90, 75, 90, 90, 80)
+      await saveCompletedSession(
+        {
+          uid: 'ref-s2-train',
+          traineeUid,
+          mode: 'TRAIN',
+          startedAt: 2000,
+          durationMs: 60000,
+          score: 85,
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.4,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(85, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+            dScore: 85,
+            cScore: 90,
+            econScore: 75,
+            rScore: 90,
+            salScore: 90,
+            swarmSat: 0.8,
+          }),
+        },
+        callsign
+      );
+
+      const p2 = await getTraineeProfile(traineeUid);
+      expect(p2!.d).toBeCloseTo(91.00, 2);
+      expect(p2!.c).toBeCloseTo(90.00, 2);
+      expect(p2!.econ).toBeCloseTo(81.00, 2);
+      expect(p2!.r).toBeCloseTo(90.00, 2);
+      expect(p2!.sal).toBeCloseTo(90.00, 2);
+      expect(p2!.sat).toBeCloseTo(86.00, 2);
+
+      // S3 (TRAIN): (50, 80, 80, 70, 60, 60)
+      await saveCompletedSession(
+        {
+          uid: 'ref-s3-train',
+          traineeUid,
+          mode: 'TRAIN',
+          startedAt: 3000,
+          durationMs: 60000,
+          score: 65,
+          grade: 'DEVELOPING',
+          dStart: 0.475,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(65, 'DEVELOPING', 'TRAIN', {
+            dScore: 50,
+            cScore: 80,
+            econScore: 80,
+            rScore: 70,
+            salScore: 60,
+            swarmSat: 0.6,
+          }),
+        },
+        callsign
+      );
+
+      const p3 = await getTraineeProfile(traineeUid);
+      expect(p3!.d).toBeCloseTo(74.60, 2);
+      expect(p3!.c).toBeCloseTo(86.00, 2);
+      expect(p3!.econ).toBeCloseTo(80.60, 2);
+      expect(p3!.r).toBeCloseTo(82.00, 2);
+      expect(p3!.sal).toBeCloseTo(78.00, 2);
+      expect(p3!.sat).toBeCloseTo(75.60, 2);
+
+      // S4 (TRAIN): (70, 70, 70, 70, 70, 70)
+      await saveCompletedSession(
+        {
+          uid: 'ref-s4-train',
+          traineeUid,
+          mode: 'TRAIN',
+          startedAt: 4000,
+          durationMs: 60000,
+          score: 70,
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.425,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(70, 'PROFICIENT_IN_SIMULATION', 'TRAIN', {
+            dScore: 70,
+            cScore: 70,
+            econScore: 70,
+            rScore: 70,
+            salScore: 70,
+            swarmSat: 0.7,
+          }),
+        },
+        callsign
+      );
+
+      const p4 = await getTraineeProfile(traineeUid);
+      expect(p4!.d).toBeCloseTo(72.76, 2);
+      expect(p4!.c).toBeCloseTo(79.60, 2);
+      expect(p4!.econ).toBeCloseTo(76.36, 2);
+      expect(p4!.r).toBeCloseTo(77.20, 2);
+      expect(p4!.sal).toBeCloseTo(74.80, 2);
+      expect(p4!.sat).toBeCloseTo(73.36, 2);
+
+      // S5 (EVAL): (98, 95, 95, 95, 90, 92) -> SKIPPED in EVAL
+      await saveCompletedSession(
+        {
+          uid: 'ref-s5-eval',
+          traineeUid,
+          mode: 'EVAL',
+          startedAt: 5000,
+          durationMs: 60000,
+          score: 95,
+          grade: 'PROFICIENT_IN_SIMULATION',
+          dStart: 0.5,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(95, 'PROFICIENT_IN_SIMULATION', 'EVAL', {
+            dScore: 98,
+            cScore: 95,
+            econScore: 95,
+            rScore: 95,
+            salScore: 90,
+            swarmSat: 0.92,
+          }),
+        },
+        callsign
+      );
+
+      const p5 = await getTraineeProfile(traineeUid);
+      expect(p5!.d).toBeCloseTo(72.76, 2);
+      expect(p5!.c).toBeCloseTo(79.60, 2);
+      expect(p5!.econ).toBeCloseTo(76.36, 2);
+      expect(p5!.r).toBeCloseTo(77.20, 2);
+      expect(p5!.sal).toBeCloseTo(74.80, 2);
+      expect(p5!.sat).toBeCloseTo(73.36, 2);
+
+      // S6 (TRAIN): (30, 45, 50, 40, 40, 35)
+      await saveCompletedSession(
+        {
+          uid: 'ref-s6-train',
+          traineeUid,
+          mode: 'TRAIN',
+          startedAt: 6000,
+          durationMs: 60000,
+          score: 40,
+          grade: 'NEEDS_RETRAINING',
+          dStart: 0.425,
+          aborted: false,
+          unverified: false,
+          metrics: createMockMetrics(40, 'NEEDS_RETRAINING', 'TRAIN', {
+            dScore: 30,
+            cScore: 45,
+            econScore: 50,
+            rScore: 40,
+            salScore: 40,
+            swarmSat: 0.35,
+          }),
+        },
+        callsign
+      );
+
+      const p6 = await getTraineeProfile(traineeUid);
+      // D: 0.4 * 30 + 0.6 * 72.76 = 12 + 43.656 = 55.656 -> 55.66
+      expect(p6!.d).toBeCloseTo(55.66, 2);
+      // C: 0.4 * 45 + 0.6 * 79.60 = 18 + 47.76 = 65.76
+      expect(p6!.c).toBeCloseTo(65.76, 2);
+      // Econ: 0.4 * 50 + 0.6 * 76.36 = 20 + 45.816 = 65.816 -> 65.82
+      expect(p6!.econ).toBeCloseTo(65.82, 2);
+      // R: 0.4 * 40 + 0.6 * 77.20 = 16 + 46.32 = 62.32
+      expect(p6!.r).toBeCloseTo(62.32, 2);
+      // SAL: 0.4 * 40 + 0.6 * 74.80 = 16 + 44.88 = 60.88
+      expect(p6!.sal).toBeCloseTo(60.88, 2);
+      // SAT: 0.4 * 35 + 0.6 * 73.36 = 14 + 44.016 = 58.016 -> 58.02
+      expect(p6!.sat).toBeCloseTo(58.02, 2);
+    });
+  });
+
+  describe('8. Softmax Lever Selection & Statistical Verification (PRD §5.4 & Fix 4)', () => {
+    it('preserves exact deterministic reproducibility for identical seeds and profiles', () => {
+      const profile: WeaknessVector = { d: 35, c: 80, econ: 75, r: 85, sal: 60, sat: 70 };
+      const seed = 98765;
+
+      const run1 = sampleAdaptiveLevers(profile, seed, 1);
+      const run2 = sampleAdaptiveLevers(profile, seed, 1);
+      const run3 = sampleAdaptiveLevers(profile, seed, 1);
+
+      expect(run1[0].leverId).toBe(run2[0].leverId);
+      expect(run2[0].leverId).toBe(run3[0].leverId);
+    });
+
+    it('samples two distinct levers without duplicates when count is 2', () => {
+      const profile: WeaknessVector = { d: 40, c: 50, econ: 60, r: 70, sal: 80, sat: 90 };
+
+      for (let s = 1; s <= 20; s++) {
+        const levers = sampleAdaptiveLevers(profile, s * 1000, 2);
+        expect(levers.length).toBe(2);
+        expect(levers[0].leverId).not.toBe(levers[1].leverId);
+      }
+    });
+
+    it('statistically favors weaker metrics while maintaining non-zero exploration on stronger metrics', () => {
+      // D is heavily vulnerable (20/100, weakness = 0.8), others are strong (90/100, weakness = 0.1)
+      const skewedProfile: WeaknessVector = { d: 20, c: 90, econ: 90, r: 90, sal: 90, sat: 90 };
+      const counts: Record<string, number> = {
+        LOW_RCS_MASKED: 0,
+        DECOY_FLOOD: 0,
+        PROPORTIONALITY_DRILL: 0,
+        URBAN_COLLATERAL_RISK: 0,
+        SENSOR_CHAOS_CHALLENGE: 0,
+        SWARM_SATURATION: 0,
+      };
+
+      const TRIALS = 1000;
+      for (let i = 0; i < TRIALS; i++) {
+        const [sampled] = sampleAdaptiveLevers(skewedProfile, i + 1000, 1);
+        counts[sampled.leverId] = (counts[sampled.leverId] || 0) + 1;
+      }
+
+      // Detection lever must be chosen in majority of trials due to softmax beta = 4.0
+      expect(counts.LOW_RCS_MASKED).toBeGreaterThan(TRIALS * 0.50);
+
+      // Non-weak dimensions must still be sampled with non-zero probability (exploration)
+      const explorationSum =
+        counts.DECOY_FLOOD +
+        counts.PROPORTIONALITY_DRILL +
+        counts.URBAN_COLLATERAL_RISK +
+        counts.SENSOR_CHAOS_CHALLENGE +
+        counts.SWARM_SATURATION;
+
+      expect(explorationSum).toBeGreaterThan(0);
+      expect(explorationSum).toBeLessThan(TRIALS * 0.50);
+    });
+  });
+
+  describe('9. Durable Progression Idempotency & Failure Rollback (Fix 1)', () => {
+    it('applies progression exactly once when the same session is saved twice in the same runtime', async () => {
+      const traineeUid = 'trainee-idemp-1';
+      const initialD = await getTraineeDifficulty(traineeUid);
+
+      const session: SessionRow = {
+        uid: 'session-idemp-double-save',
+        traineeUid,
+        mode: 'TRAIN',
+        startedAt: 1000,
+        durationMs: 60000,
+        score: 90, // +0.10 -> 0.40
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.3,
+        aborted: false,
+        unverified: false,
+        metrics: createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'TRAIN', { dScore: 85 }),
+      };
+
+      // First save
+      await saveCompletedSession(session, 'IDEMP-1');
+      const d1 = await getTraineeDifficulty(traineeUid);
+      expect(d1).toBeCloseTo(0.40, 4);
+
+      // Second save with exact same sessionUid
+      await saveCompletedSession(session, 'IDEMP-1');
+      const d2 = await getTraineeDifficulty(traineeUid);
+      // Difficulty MUST NOT double-increment to 0.50!
+      expect(d2).toBeCloseTo(0.40, 4);
+
+      // Verify progression log entry exists
+      const logEntry = await getProgressionLogEntry('session-idemp-double-save');
+      expect(logEntry).not.toBeNull();
+      expect(logEntry!.dBefore).toBeCloseTo(initialD, 4);
+      expect(logEntry!.dAfter).toBeCloseTo(0.40, 4);
+    });
+
+    it('recovers cleanly from simulated persistence failure and applies update on retry without double adjustment', async () => {
+      const traineeUid = 'trainee-idemp-retry';
+
+      const session: SessionRow = {
+        uid: 'session-idemp-failed-first',
+        traineeUid,
+        mode: 'TRAIN',
+        startedAt: 1000,
+        durationMs: 60000,
+        score: 90,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.3,
+        aborted: false,
+        unverified: false,
+        metrics: createMockMetrics(90, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+      };
+
+      // Simulate failure on first save
+      setMockPersistenceFailureMode('SESSION');
+      await expect(saveCompletedSession(session, 'RETRY-TEST')).rejects.toThrow();
+
+      // Ensure failure did not mutate difficulty or leave orphan marker
+      expect(await getTraineeDifficulty(traineeUid)).toBe(0.3);
+      expect(await getProgressionLogEntry('session-idemp-failed-first')).toBeNull();
+
+      // Clear mock failure mode and execute retry
+      setMockPersistenceFailureMode('NONE');
+      await saveCompletedSession(session, 'RETRY-TEST');
+
+      // Retry successfully applied progression
+      expect(await getTraineeDifficulty(traineeUid)).toBeCloseTo(0.40, 4);
+      expect(await getProgressionLogEntry('session-idemp-failed-first')).not.toBeNull();
+
+      // Subsequent repeat retry does not double adjust
+      await saveCompletedSession(session, 'RETRY-TEST');
+      expect(await getTraineeDifficulty(traineeUid)).toBeCloseTo(0.40, 4);
+    });
+
+    it('handles concurrent attempts to apply progression for the same session UID cleanly', async () => {
+      const traineeUid = 'trainee-idemp-concurrent';
+
+      const session: SessionRow = {
+        uid: 'session-idemp-concurrent-uid',
+        traineeUid,
+        mode: 'TRAIN',
+        startedAt: 1000,
+        durationMs: 60000,
+        score: 85,
+        grade: 'PROFICIENT_IN_SIMULATION',
+        dStart: 0.3,
+        aborted: false,
+        unverified: false,
+        metrics: createMockMetrics(85, 'PROFICIENT_IN_SIMULATION', 'TRAIN'),
+      };
+
+      // Launch 3 simultaneous progression updates for identical session UID
+      const [res1, res2, res3] = await Promise.all([
+        updateTraineeProgression(session),
+        updateTraineeProgression(session),
+        updateTraineeProgression(session),
+      ]);
+
+      expect(res1?.d).toBeCloseTo(0.375, 4);
+      expect(res2?.d).toBeCloseTo(0.375, 4);
+      expect(res3?.d).toBeCloseTo(0.375, 4);
+
+      // Resulting difficulty must be exactly 0.375, never compounded to 0.45 or 0.525
+      expect(await getTraineeDifficulty(traineeUid)).toBeCloseTo(0.375, 4);
+    });
+  });
+
+  describe('10. Zero Double Adjustment & Connected Scenario Execution (Fix 5 & Fix 6)', () => {
+    it('distinguishes session start difficulty from next difficulty without double adjustment', () => {
+      const traineeId = 'trainee-double-adj-check';
+      const profile: WeaknessVector = { d: 50, c: 50, econ: 50, r: 50, sal: 50, sat: 50 };
+
+      // Trainee started drill at d_start = 0.30 and scored 90 (+0.10)
+      // Stored difficulty in DB is now 0.40
+      const plan = getAdaptivePlan(traineeId, profile, 0.40, 90, {
+        sessionStartDifficulty: 0.30,
+      });
+
+      expect(plan.currentDifficulty).toBe(0.30); // Starting difficulty of concluded drill
+      expect(plan.nextDifficulty).toBe(0.40); // Resulting difficulty for next drill
+      // Next difficulty MUST NOT be 0.50!
+      expect(plan.nextDifficulty).not.toBe(0.50);
+    });
+
+    it('executes startAdaptedTrainingSession: generates, validates, snapshots, and loads adapted drill', async () => {
+      const store = useSessionStore.getState();
+      store.setCallsign('ADAPTED-LEAD');
+
+      const success = await store.startAdaptedTrainingSession({
+        difficultyOverride: 0.45,
+        targetLever: 'LOW_RCS_MASKED',
+        seed: 77777,
+      });
+
+      expect(success).toBe(true);
+
+      const activeSpec = useSessionStore.getState().currentScenarioId;
+      expect(activeSpec).toContain('ADAPTIVE-LOW_RCS_MASKED');
+      expect(useSessionStore.getState().sessionStatus).toBe('RUNNING');
+    });
+  });
+
+  describe('11. Fail-Closed Fallback Scenario Validation (Fix 7)', () => {
+    it('validates procedural fallback scenario before returning', () => {
+      // Normal generateScenario returns valid candidate
+      const spec = generateScenario('trainee-fallback-check', 1, 0.4, [], 1234);
+      expect(validate(spec)).toBe(true);
+    });
+
+    it('bundled fallback scenario satisfies authoritative fairness validation', () => {
+      const demo1 = loadCatalogScenario('DEMO-1', 2026, 0.3);
+      expect(validate(demo1.spec)).toBe(true);
     });
   });
 });

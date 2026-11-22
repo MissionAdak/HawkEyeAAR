@@ -41,6 +41,7 @@ export interface SessionRow {
   aborted?: boolean;
   unverified?: boolean;
   isSynthetic?: boolean;
+  progressionApplied?: boolean; // Durable marker indicating progression was committed (TASK 21-PT-R)
   // Immutable scenario configuration snapshot and metadata (TASK 20-A3, TASK 20-A4)
   scenarioSpecSnapshot?: ScenarioSpec;
   scenarioSeed?: number;
@@ -97,6 +98,15 @@ export interface SettingRow {
   value: unknown;
 }
 
+export interface ProgressionLogRow {
+  sessionUid: string;
+  traineeUid: string;
+  appliedAt: number;
+  dBefore: number;
+  dAfter: number;
+  score: number;
+}
+
 export class DrishtiDatabase extends Dexie {
   public units!: Table<UnitRow, string>;
   public trainees!: Table<TraineeRow, string>;
@@ -108,6 +118,7 @@ export class DrishtiDatabase extends Dexie {
   public traineeProfile!: Table<TraineeProfileRow, [string, string]>;
   public difficulty!: Table<DifficultyRow, string>;
   public settings!: Table<SettingRow, string>;
+  public progressionLog!: Table<ProgressionLogRow, string>;
 
   constructor(databaseName = 'DrishtiCuasDb') {
     super(databaseName);
@@ -149,6 +160,10 @@ export class DrishtiDatabase extends Dexie {
           await sessionsTable.put(session);
         }
       });
+
+    this.version(3).stores({
+      progressionLog: 'sessionUid, traineeUid, appliedAt',
+    });
   }
 }
 

@@ -11,7 +11,7 @@ import { mulberry32, hash32, streamSeed } from '@/sim/rng';
 import { validate } from './validate';
 import { isNovel } from './novelty';
 import { expandFormation, resolveFormationSpacing } from './formations';
-import { getWeakestDimension, WEAKNESS_LEVER_MAP } from './adaptive';
+import { WEAKNESS_LEVER_MAP, getWeakestDimension } from './adaptive';
 import demo1Json from './bundled/demo1.json';
 
 export interface GenerateScenarioOptions {
@@ -283,15 +283,25 @@ export function generateScenario(
 
   // Fallback to last valid candidate if novelty could not be satisfied
   if (lastValidCandidate) {
-    return lastValidCandidate;
+    if (validate(lastValidCandidate)) {
+      return lastValidCandidate;
+    }
   }
 
-  // Fallback to verified bundled scenario if all procedural attempts fail validation
+  // Fallback to verified bundled scenario if all procedural attempts fail validation (Fix 7)
   const fallbackSeed = hash32(`${traineeId}|${sessionIdx}|fallback`);
   const fallback = structuredClone(demo1Json) as unknown as ScenarioSpec;
   fallback.id = `FALLBACK-${fallbackSeed}`;
   fallback.seed = fallbackSeed;
   fallback.difficulty = d;
   fallback.levers = [{ id: 'BUNDLED_FALLBACK', reason: 'Procedural generation fallback' }];
+
+  // Authoritative validation of mutated fallback before returning
+  if (!validate(fallback)) {
+    throw new Error(
+      `[Generator] Procedural fallback scenario "${fallback.id}" failed authoritative fairness validation.`
+    );
+  }
+
   return fallback;
 }

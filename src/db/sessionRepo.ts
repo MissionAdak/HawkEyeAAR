@@ -1,10 +1,18 @@
-import { db, migrateLegacySession, type SessionRow, type TraineeRow, type UnitRow } from './dexie';
+import {
+  db,
+  migrateLegacySession,
+  type SessionRow,
+  type TraineeRow,
+  type UnitRow,
+  type ProgressionLogRow,
+} from './dexie';
 import { createSessionUid, getMockPersistenceFailureMode } from './recorder';
 import type { AARMetrics, Grade, SessionMode, WeaknessVector } from '@/sim/types';
 import {
   computeNextDifficulty,
   updateWeaknessProfile,
   DEFAULT_TRAIN_DIFFICULTY,
+  DEFAULT_METRIC_EMA,
 } from '@/director/adaptive';
 
 export interface UnitTraineeSummary {
@@ -41,7 +49,7 @@ const inMemoryTrainees: TraineeRow[] = [];
 const inMemoryUnits: UnitRow[] = [];
 const inMemoryDifficulties: Map<string, { d: number; lastScore: number }> = new Map();
 const inMemoryProfiles: Map<string, WeaknessVector> = new Map();
-const processedProgressionSessions: Set<string> = new Set();
+const inMemoryProgressionLog: Map<string, ProgressionLogRow> = new Map();
 
 export async function getTraineeDifficulty(traineeUidOrCallsign?: string): Promise<number> {
   const traineeUid = traineeUidOrCallsign
@@ -95,6 +103,15 @@ export async function getTraineeProfile(
   return profile;
 }
 
+export async function getProgressionLogEntry(
+  sessionUid: string
+): Promise<ProgressionLogRow | null> {
+  if (typeof indexedDB === 'undefined') {
+    return inMemoryProgressionLog.get(sessionUid) ?? null;
+  }
+  return (await db.progressionLog.get(sessionUid)) ?? null;
+}
+
 export async function updateTraineeProgression(
   session: SessionRow
 ): Promise<{ d: number; profile: WeaknessVector } | null> {
@@ -104,65 +121,149 @@ export async function updateTraineeProgression(
   }
 
   const traineeUid = session.traineeUid;
-
-  // Idempotency guard: prevent duplicate session completion events from double-updating progression
-  if (session.uid && processedProgressionSessions.has(session.uid)) {
-    const currentD = await getTraineeDifficulty(traineeUid);
-    const currentProfile = (await getTraineeProfile(traineeUid)) ?? {
-      d: 50,
-      c: 50,
-      econ: 50,
-      r: 50,
-      sal: 50,
-      sat: 50,
-    };
-    return { d: currentD, profile: currentProfile };
+  const sessionUid = session.uid;
+  if (!sessionUid) {
+    return null;
   }
-
-  if (session.uid) {
-    processedProgressionSessions.add(session.uid);
-  }
-
-  const currentD = await getTraineeDifficulty(traineeUid);
-  const nextD = computeNextDifficulty(currentD, session.score);
-
-  const currentProfile = await getTraineeProfile(traineeUid);
-  const updatedProfile = updateWeaknessProfile(
-    currentProfile,
-    session.metrics ?? { score: session.score }
-  );
 
   if (typeof indexedDB === 'undefined') {
+    // In-memory fallback: check persistent in-memory progression log
+    if (inMemoryProgressionLog.has(sessionUid)) {
+      const currentD = inMemoryDifficulties.get(traineeUid)?.d ?? DEFAULT_TRAIN_DIFFICULTY;
+      const currentProfile = inMemoryProfiles.get(traineeUid) ?? {
+        d: DEFAULT_METRIC_EMA,
+        c: DEFAULT_METRIC_EMA,
+        econ: DEFAULT_METRIC_EMA,
+        r: DEFAULT_METRIC_EMA,
+        sal: DEFAULT_METRIC_EMA,
+        sat: DEFAULT_METRIC_EMA,
+      };
+      return { d: currentD, profile: currentProfile };
+    }
+
+    const currentD = inMemoryDifficulties.get(traineeUid)?.d ?? DEFAULT_TRAIN_DIFFICULTY;
+    const nextD = computeNextDifficulty(currentD, session.score);
+
+    const currentProfile = inMemoryProfiles.get(traineeUid) ?? null;
+    const updatedProfile = updateWeaknessProfile(
+      currentProfile,
+      session.metrics ?? { score: session.score }
+    );
+
+    // Commit atomically in-memory
     inMemoryDifficulties.set(traineeUid, { d: nextD, lastScore: session.score });
     inMemoryProfiles.set(traineeUid, updatedProfile);
+    inMemoryProgressionLog.set(sessionUid, {
+      sessionUid,
+      traineeUid,
+      appliedAt: Date.now(),
+      dBefore: currentD,
+      dAfter: nextD,
+      score: session.score,
+    });
+    session.progressionApplied = true;
+
     return { d: nextD, profile: updatedProfile };
   }
 
-  await db.transaction('rw', [db.difficulty, db.traineeProfile], async () => {
-    await db.difficulty.put({ traineeUid, d: nextD, lastScore: session.score });
-    const now = Date.now();
-    for (const [metric, ema] of Object.entries(updatedProfile)) {
-      await db.traineeProfile.put({
-        traineeUid,
-        metric,
-        ema,
-        n: currentProfile ? 2 : 1,
-        updatedAt: now,
-      });
-    }
-  });
+  // Persistent, transactionally safe Dexie transaction (TASK 21-PT-R Fix 1)
+  return await db.transaction(
+    'rw',
+    [db.difficulty, db.traineeProfile, db.progressionLog, db.sessions],
+    async () => {
+      // 1. Atomically check whether progression has already been applied for this session
+      const existingProg = await db.progressionLog.get(sessionUid);
+      if (existingProg) {
+        const diffRow = await db.difficulty.get(traineeUid);
+        const profile = await getTraineeProfile(traineeUid);
+        return {
+          d: diffRow?.d ?? DEFAULT_TRAIN_DIFFICULTY,
+          profile: profile ?? {
+            d: DEFAULT_METRIC_EMA,
+            c: DEFAULT_METRIC_EMA,
+            econ: DEFAULT_METRIC_EMA,
+            r: DEFAULT_METRIC_EMA,
+            sal: DEFAULT_METRIC_EMA,
+            sat: DEFAULT_METRIC_EMA,
+          },
+        };
+      }
 
-  return { d: nextD, profile: updatedProfile };
+      // Check stored session record if already present
+      const storedSession = await db.sessions.get(sessionUid);
+      if (storedSession?.progressionApplied) {
+        const diffRow = await db.difficulty.get(traineeUid);
+        const profile = await getTraineeProfile(traineeUid);
+        return {
+          d: diffRow?.d ?? DEFAULT_TRAIN_DIFFICULTY,
+          profile: profile ?? {
+            d: DEFAULT_METRIC_EMA,
+            c: DEFAULT_METRIC_EMA,
+            econ: DEFAULT_METRIC_EMA,
+            r: DEFAULT_METRIC_EMA,
+            sal: DEFAULT_METRIC_EMA,
+            sat: DEFAULT_METRIC_EMA,
+          },
+        };
+      }
+
+      // 2. Compute difficulty and EMA updates
+      const diffRow = await db.difficulty.get(traineeUid);
+      const currentD = diffRow?.d ?? DEFAULT_TRAIN_DIFFICULTY;
+      const nextD = computeNextDifficulty(currentD, session.score);
+
+      const currentProfile = await getTraineeProfile(traineeUid);
+      const updatedProfile = updateWeaknessProfile(
+        currentProfile,
+        session.metrics ?? { score: session.score }
+      );
+
+      // 3. Atomically commit difficulty, profile, progression log and session marker
+      await db.difficulty.put({ traineeUid, d: nextD, lastScore: session.score });
+      const now = Date.now();
+      for (const [metric, ema] of Object.entries(updatedProfile)) {
+        await db.traineeProfile.put({
+          traineeUid,
+          metric,
+          ema,
+          n: currentProfile ? 2 : 1,
+          updatedAt: now,
+        });
+      }
+
+      await db.progressionLog.put({
+        sessionUid,
+        traineeUid,
+        appliedAt: now,
+        dBefore: currentD,
+        dAfter: nextD,
+        score: session.score,
+      });
+
+      if (storedSession) {
+        storedSession.progressionApplied = true;
+        await db.sessions.put(storedSession);
+      }
+      session.progressionApplied = true;
+
+      return { d: nextD, profile: updatedProfile };
+    }
+  );
 }
 
 export function resetTraineeProgressionForTest(traineeUid?: string): void {
   if (traineeUid) {
     inMemoryDifficulties.delete(traineeUid);
     inMemoryProfiles.delete(traineeUid);
+    for (const [k, v] of inMemoryProgressionLog.entries()) {
+      if (v.traineeUid === traineeUid) {
+        inMemoryProgressionLog.delete(k);
+      }
+    }
   } else {
     inMemoryDifficulties.clear();
     inMemoryProfiles.clear();
-    processedProgressionSessions.clear();
+    inMemoryProgressionLog.clear();
   }
 }
 
@@ -662,6 +763,7 @@ export function clearSessionRepoForTest(): void {
   inMemorySessions.length = 0;
   inMemoryTrainees.length = 0;
   inMemoryUnits.length = 0;
+  resetTraineeProgressionForTest();
 }
 
 export function addTestSessions(

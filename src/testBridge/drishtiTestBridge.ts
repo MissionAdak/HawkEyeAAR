@@ -14,6 +14,7 @@ import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
 import { CONFIG_HASH } from '@/config';
 import { loadCatalogScenario } from '@/director/catalog';
 import { aggregateAARMetrics } from '@/sim/metrics';
+import { getTraineeDifficulty, getTraineeProfile } from '@/db/sessionRepo';
 
 export interface DrishtiPresentationRecord {
   trackNo: string;
@@ -143,6 +144,8 @@ export interface DrishtiTestBridge {
   closeDb: () => Promise<void>;
   openAar: () => void;
   setCallsign: (callsign: string) => void;
+  getDexieDifficulty: (traineeUidOrCallsign?: string) => Promise<number>;
+  getDexieProfile: (traineeUidOrCallsign?: string) => Promise<import('@/sim/types').WeaknessVector | null>;
   getDexieVersion: () => number;
   setMockPersistenceFailureMode: (mode: 'NONE' | 'EVENTS' | 'SESSION' | 'BOTH') => void;
   getPersistenceState: () => {
@@ -813,6 +816,14 @@ export function installDrishtiTestBridge(
 
     setCallsign(callsign: string): void {
       useSessionStore.getState().setCallsign(callsign);
+    },
+
+    async getDexieDifficulty(traineeUidOrCallsign?: string): Promise<number> {
+      return await getTraineeDifficulty(traineeUidOrCallsign ?? useSessionStore.getState().currentCallsign);
+    },
+
+    async getDexieProfile(traineeUidOrCallsign?: string): Promise<import('@/sim/types').WeaknessVector | null> {
+      return await getTraineeProfile(traineeUidOrCallsign ?? useSessionStore.getState().currentCallsign);
     },
 
     getDexieVersion(): number {

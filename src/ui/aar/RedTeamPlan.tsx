@@ -9,6 +9,7 @@ export interface RedTeamPlanProps {
   traineeId: string;
   callsign: string;
   currentDifficulty: number;
+  sessionStartDifficulty?: number;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   profile: WeaknessVector | null;
   lastScore?: number;
@@ -19,12 +20,15 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
   traineeId,
   callsign,
   currentDifficulty,
+  sessionStartDifficulty,
   mode,
   profile,
   lastScore,
   onSelectRecommendedScenario,
 }) => {
-  const plan = getAdaptivePlan(traineeId, profile, currentDifficulty, lastScore);
+  const plan = getAdaptivePlan(traineeId, profile, currentDifficulty, lastScore, {
+    sessionStartDifficulty,
+  });
   const isEval = mode === 'EVAL';
 
   const formatDimensionName = (dim: WeaknessDimension): string => {
@@ -109,9 +113,11 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
       {/* Difficulty & Score Adjustment Card */}
       <div className="grid grid-cols-4 gap-2 text-center" data-testid="difficulty-adaptation-strip">
         <div className="p-2 border border-line bg-carbon-900">
-          <div className="text-[9px] text-text-dim">CURRENT DIFFICULTY</div>
+          <div className="text-[9px] text-text-dim">
+            {typeof sessionStartDifficulty === 'number' ? 'STARTING DIFFICULTY' : 'CURRENT DIFFICULTY'}
+          </div>
           <div className="text-base font-bold text-text-main mt-0.5" data-testid="current-diff-display">
-            d = {currentDifficulty.toFixed(2)}
+            d = {plan.currentDifficulty.toFixed(2)}
           </div>
           <div className="text-[9px] text-text-dim mt-0.5">d ∈ [0.0, 1.0]</div>
         </div>
@@ -130,18 +136,18 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
             className={`text-base font-bold mt-0.5 ${
               isEval
                 ? 'text-text-dim'
-                : plan.nextDifficulty > currentDifficulty
+                : plan.nextDifficulty > plan.currentDifficulty
                   ? 'text-phosphor'
-                  : plan.nextDifficulty < currentDifficulty
+                  : plan.nextDifficulty < plan.currentDifficulty
                     ? 'text-amber'
                     : 'text-text-main'
             }`}
             data-testid="next-diff-display"
           >
-            {isEval ? `d = ${currentDifficulty.toFixed(2)} (LOCKED)` : `d = ${plan.nextDifficulty.toFixed(2)}`}
+            {isEval ? `d = ${plan.currentDifficulty.toFixed(2)} (LOCKED)` : `d = ${plan.nextDifficulty.toFixed(2)}`}
           </div>
           <div className="text-[9px] text-text-dim mt-0.5">
-            {isEval ? 'No Adaptation in EVAL' : `Δd = ${(plan.nextDifficulty - currentDifficulty).toFixed(3)}`}
+            {isEval ? 'No Adaptation in EVAL' : `Δd = ${(plan.nextDifficulty - plan.currentDifficulty).toFixed(3)}`}
           </div>
         </div>
 

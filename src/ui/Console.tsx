@@ -22,6 +22,7 @@ import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
 import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
+import { getTraineeDifficulty } from '@/db/sessionRepo';
 
 /**
  * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3, D-37 & Task 18 §2.C).
@@ -513,6 +514,26 @@ export const Console: React.FC = () => {
       renderer3dRef.current = null;
     };
   }, []);
+
+  // Sync persisted trainee difficulty across application reloads
+  const currentCallsign = useSessionStore((s) => s.currentCallsign);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const d = await getTraineeDifficulty(currentCallsign);
+        if (typeof d === 'number' && Number.isFinite(d)) {
+          useSessionStore.setState((s) => ({
+            ui: { ...s.ui, difficulty: d },
+          }));
+          if (engineInstance.spec && engineInstance.mode === 'TRAIN' && engineInstance.tickIndex === 0) {
+            engineInstance.spec.difficulty = d;
+          }
+        }
+      } catch {
+        // fail-safe
+      }
+    })();
+  }, [currentCallsign]);
 
   const initRenderer3D = async (): Promise<Renderer3D | null> => {
     if (renderer3dRef.current) {

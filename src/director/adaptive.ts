@@ -1,4 +1,5 @@
 import type { WeaknessVector, AARMetrics } from '@/sim/types';
+import { mulberry32 } from '@/sim/rng';
 
 export const DEFAULT_TRAIN_DIFFICULTY = 0.3;
 export const DEFAULT_METRIC_EMA = 50.0;
@@ -182,6 +183,61 @@ export function getWeakestDimension(ema: WeaknessVector): {
   };
 }
 
+/**
+ * Samples 1 or 2 distinct scenario levers according to softmax weakness probabilities:
+ * P(k) = e^{4 w_k} / \sum_j e^{4 w_j} (PRD.md §5.4).
+ * Uses deterministic PRNG seeded by seed/rng. Never uses Math.random().
+ */
+export function sampleAdaptiveLevers(
+  profile: WeaknessVector,
+  rngOrSeed: (() => number) | number,
+  count: 1 | 2 = 1
+): AdaptiveLeverInfo[] {
+  const rng = typeof rngOrSeed === 'number' ? mulberry32(rngOrSeed) : rngOrSeed;
+  const weights = computeWeaknessWeights(profile);
+  const dims: WeaknessDimension[] = ['d', 'c', 'econ', 'r', 'sal', 'sat'];
+
+  const selected: AdaptiveLeverInfo[] = [];
+
+  // 1. Sample first lever from full distribution
+  const draw1 = rng();
+  let cumulative1 = 0;
+  let chosenDim1: WeaknessDimension = dims[dims.length - 1];
+  for (const dim of dims) {
+    cumulative1 += weights[dim] ?? 0;
+    if (draw1 <= cumulative1) {
+      chosenDim1 = dim;
+      break;
+    }
+  }
+  selected.push(WEAKNESS_LEVER_MAP[chosenDim1]);
+
+  // 2. If count is 2, sample second lever without replacement by re-normalizing remaining 5
+  if (count === 2) {
+    const remainingDims = dims.filter((d) => d !== chosenDim1);
+    const sumRemaining = remainingDims.reduce((acc, d) => acc + (weights[d] ?? 0), 0);
+    const draw2 = rng();
+    let cumulative2 = 0;
+    let chosenDim2: WeaknessDimension = remainingDims[remainingDims.length - 1];
+    for (const dim of remainingDims) {
+      const prob = sumRemaining > 0 ? (weights[dim] ?? 0) / sumRemaining : 1 / remainingDims.length;
+      cumulative2 += prob;
+      if (draw2 <= cumulative2) {
+        chosenDim2 = dim;
+        break;
+      }
+    }
+    selected.push(WEAKNESS_LEVER_MAP[chosenDim2]);
+  }
+
+  return selected;
+}
+
+export interface AdaptivePlanOptions {
+  seed?: number;
+  sessionStartDifficulty?: number;
+}
+
 export interface AdaptivePlan {
   traineeId: string;
   currentDifficulty: number;
@@ -200,7 +256,8 @@ export function getAdaptivePlan(
   traineeId: string,
   profile: WeaknessVector | null,
   currentDifficulty: number = DEFAULT_TRAIN_DIFFICULTY,
-  lastScore?: number
+  lastScore?: number,
+  options?: AdaptivePlanOptions
 ): AdaptivePlan {
   const effectiveProfile = profile ?? {
     d: DEFAULT_METRIC_EMA,
@@ -211,23 +268,41 @@ export function getAdaptivePlan(
     sat: DEFAULT_METRIC_EMA,
   };
 
-  const nextD = typeof lastScore === 'number'
-    ? computeNextDifficulty(currentDifficulty, lastScore)
-    : currentDifficulty;
+  // Prevent double difficulty adjustment (Fix 6):
+  // If sessionStartDifficulty is explicitly provided, currentDifficulty is already d_{n+1}.
+  // If not provided, and lastScore is given, compute nextDifficulty from currentDifficulty.
+  let startingD = currentDifficulty;
+  let nextD = currentDifficulty;
+
+  if (typeof options?.sessionStartDifficulty === 'number') {
+    startingD = options.sessionStartDifficulty;
+    nextD = typeof lastScore === 'number'
+      ? computeNextDifficulty(startingD, lastScore)
+      : currentDifficulty;
+  } else if (typeof lastScore === 'number') {
+    nextD = computeNextDifficulty(currentDifficulty, lastScore);
+  }
 
   const weakest = getWeakestDimension(effectiveProfile);
   const weights = computeWeaknessWeights(effectiveProfile);
 
+  // If seed provided, use softmax sampling; otherwise select primary weakness lever
+  const sampledLevers = typeof options?.seed === 'number'
+    ? sampleAdaptiveLevers(effectiveProfile, options.seed, 1)
+    : [weakest.lever];
+
+  const targetLeverInfo = sampledLevers[0];
+
   return {
     traineeId,
-    currentDifficulty,
+    currentDifficulty: startingD,
     nextDifficulty: nextD,
     weakestDimension: weakest.dimension,
     weakestEma: weakest.emaValue,
-    targetLever: weakest.lever.leverId,
-    leverName: weakest.lever.name,
-    rationale: weakest.lever.reason,
-    recommendedScenarioId: 'PROCEDURAL-1',
+    targetLever: targetLeverInfo.leverId,
+    leverName: targetLeverInfo.name,
+    rationale: targetLeverInfo.reason,
+    recommendedScenarioId: `ADAPTIVE-${targetLeverInfo.leverId}`,
     profile: effectiveProfile,
     weights,
   };

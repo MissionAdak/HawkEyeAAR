@@ -23,7 +23,17 @@ import {
 import { validate } from '@/director/validate';
 import { type OperatorFeedback, createOperatorFeedback } from '@/sim/operatorFeedback';
 import { aggregateAARMetrics } from '@/sim/metrics';
-import { callsignToUid, saveCompletedSession, seedDemoSessionsIfEmpty } from '@/db/sessionRepo';
+import {
+  callsignToUid,
+  saveCompletedSession,
+  seedDemoSessionsIfEmpty,
+  getTraineeDifficulty,
+  getTraineeProfile,
+  getTraineeSessions,
+} from '@/db/sessionRepo';
+import { generateScenario } from '@/director/generator';
+import { sampleAdaptiveLevers, DEFAULT_METRIC_EMA } from '@/director/adaptive';
+import type { WeaknessVector } from '@/sim/types';
 import type { SessionRow } from '@/db/dexie';
 
 // Global singleton instances of SimEngine and SimClock
@@ -173,6 +183,11 @@ export interface SessionState {
   loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
   restartSession: (options?: { freshSeed?: boolean }) => Promise<boolean>;
   rerunExactSeedSession: () => Promise<boolean>;
+  startAdaptedTrainingSession: (options?: {
+    seed?: number;
+    difficultyOverride?: number;
+    targetLever?: string;
+  }) => Promise<boolean>;
   setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
 
@@ -243,7 +258,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return false;
     }
   },
-  setCallsign: (callsign: string) => set({ currentCallsign: callsign }),
+  setCallsign: (callsign: string) => {
+    set({ currentCallsign: callsign });
+    void (async () => {
+      try {
+        const d = await getTraineeDifficulty(callsign);
+        if (typeof d === 'number' && Number.isFinite(d)) {
+          set((s) => ({ ui: { ...s.ui, difficulty: d } }));
+        }
+      } catch {
+        // fail-safe
+      }
+    })();
+  },
   feedbackList: [],
   activeFeedback: null,
 
@@ -689,6 +716,81 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const exactSeed = engineInstance.spec?.seed;
 
     return await get().startSession(currentId, exactSeed);
+  },
+
+  startAdaptedTrainingSession: async (options?: {
+    seed?: number;
+    difficultyOverride?: number;
+    targetLever?: string;
+  }): Promise<boolean> => {
+    void seedDemoSessionsIfEmpty();
+
+    const state = get();
+    if (state.sessionStatus === 'STARTING' || isFinalizingSession) {
+      console.warn('[SessionStore] Session is already starting.');
+      return false;
+    }
+
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
+      return false;
+    }
+
+    const traineeUid = callsignToUid(state.currentCallsign);
+    const persistedD = await getTraineeDifficulty(traineeUid);
+    const targetDifficulty = typeof options?.difficultyOverride === 'number'
+      ? options.difficultyOverride
+      : persistedD;
+
+    const profile = await getTraineeProfile(traineeUid);
+    const effectiveProfile: WeaknessVector = profile ?? {
+      d: DEFAULT_METRIC_EMA,
+      c: DEFAULT_METRIC_EMA,
+      econ: DEFAULT_METRIC_EMA,
+      r: DEFAULT_METRIC_EMA,
+      sal: DEFAULT_METRIC_EMA,
+      sat: DEFAULT_METRIC_EMA,
+    };
+
+    const seed = typeof options?.seed === 'number' ? options.seed : generateLocalSeed();
+
+    let targetLever = options?.targetLever;
+    if (!targetLever) {
+      const sampled = sampleAdaptiveLevers(effectiveProfile, seed, 1);
+      targetLever = sampled[0].leverId;
+    }
+
+    // Historical features for novelty filter
+    const historySessions = await getTraineeSessions(state.currentCallsign, 'asc', 'ALL');
+    const historyFeatures = historySessions
+      .map((s) => s.scenarioSpecSnapshot?.features)
+      .filter((f): f is number[] => Array.isArray(f) && f.length === 33);
+
+    const sessionIdx = historySessions.length + 1;
+    const spec = generateScenario(
+      traineeUid,
+      sessionIdx,
+      targetDifficulty,
+      historyFeatures,
+      seed,
+      {
+        weaknessVector: effectiveProfile,
+        targetLever,
+      }
+    );
+
+    spec.id = `ADAPTIVE-${targetLever}-${seed}`;
+    spec.mode = 'TRAIN';
+    spec.seed = seed;
+    spec.difficulty = targetDifficulty;
+
+    if (!validate(spec)) {
+      console.error(`[SessionStore] Adapted scenario failed validation: ${spec.id}`);
+      return false;
+    }
+
+    await state.loadScenario(spec);
+    return true;
   },
 
   setSpeed: (speed: number) => {

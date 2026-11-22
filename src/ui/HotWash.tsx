@@ -45,6 +45,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const latestSavedSessionUid = useSessionStore((s) => s.latestSavedSessionUid);
   const sessionPersistenceStatus = useSessionStore((s) => s.sessionPersistenceStatus);
   const retrySaveSession = useSessionStore((s) => s.retrySaveSession);
+  const startAdaptedTrainingSession = useSessionStore((s) => s.startAdaptedTrainingSession);
 
   const [traineeSessions, setTraineeSessions] = useState<SessionRow[]>([]);
   const [unitSummaries, setUnitSummaries] = useState<UnitTraineeSummary[]>([]);
@@ -587,12 +588,15 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             traineeId={callsignToUid(currentCallsign)}
             callsign={currentCallsign}
             currentDifficulty={traineeDifficulty}
+            sessionStartDifficulty={engineInstance.spec?.difficulty ?? 0.3}
             mode={engineInstance.mode}
             profile={traineeProfile}
             lastScore={metrics.score}
-            onSelectRecommendedScenario={(_scenId, _targetDiff) => {
+            onSelectRecommendedScenario={(_scenId, targetDiff) => {
               onClose();
-              void restartSession();
+              void startAdaptedTrainingSession({
+                difficultyOverride: targetDiff,
+              });
             }}
           />
         </>
@@ -614,12 +618,15 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             traineeId={callsignToUid(currentCallsign)}
             callsign={currentCallsign}
             currentDifficulty={traineeDifficulty}
+            sessionStartDifficulty={engineInstance.spec?.difficulty ?? 0.3}
             mode={engineInstance.mode}
             profile={traineeProfile}
             lastScore={metrics.score}
-            onSelectRecommendedScenario={(_scenId, _targetDiff) => {
+            onSelectRecommendedScenario={(_scenId, targetDiff) => {
               onClose();
-              void restartSession();
+              void startAdaptedTrainingSession({
+                difficultyOverride: targetDiff,
+              });
             }}
           />
           <TrendChart
