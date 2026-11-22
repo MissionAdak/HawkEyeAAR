@@ -4,11 +4,31 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 
 /**
- * Validates that a captured PNG screenshot contains non-blank (non-zero/varied) pixel data,
- * preventing silent black-screen or unrendered viewport regressions.
+ * Validates that a captured PNG screenshot contains authentic tactical scene data,
+ * verifying format, dimensions, decompression, and pixel variance to prevent black-screen
+ * or unrendered viewport regressions.
  */
-function assertNonBlankPng(pngBuffer: Buffer): void {
-  let pos = 8;
+function assertValidTacticalScreenshot(
+  pngBuffer: Buffer,
+  expectedWidth: number = 1774,
+  expectedHeight: number = 850
+): void {
+  // 1. Magic number check
+  expect(pngBuffer.length).toBeGreaterThan(15000); // Substantial image file
+  const signature = pngBuffer.subarray(0, 8);
+  expect(signature.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
+
+  // 2. IHDR chunk dimensions check
+  const ihdrLen = pngBuffer.readUInt32BE(8);
+  const ihdrType = pngBuffer.toString('ascii', 12, 16);
+  expect(ihdrType).toBe('IHDR');
+  const width = pngBuffer.readUInt32BE(16);
+  const height = pngBuffer.readUInt32BE(20);
+  expect(width).toBe(expectedWidth);
+  expect(height).toBe(expectedHeight);
+
+  // 3. IDAT chunks extraction and decompression
+  let pos = 8 + 12 + ihdrLen;
   const idatChunks: Buffer[] = [];
   while (pos < pngBuffer.length) {
     const len = pngBuffer.readUInt32BE(pos);
@@ -20,16 +40,19 @@ function assertNonBlankPng(pngBuffer: Buffer): void {
   }
   expect(idatChunks.length).toBeGreaterThan(0);
   const decompressed = zlib.inflateSync(Buffer.concat(idatChunks));
+  expect(decompressed.length).toBeGreaterThan(50000);
+
+  // 4. Color variance check: tactical radar canvas must contain diverse scanline values
+  // (not blank black, white, or corrupted single-tone block)
+  const distinctValues = new Set<number>();
   let nonZeroCount = 0;
-  for (let i = 0; i < decompressed.length; i++) {
-    if (decompressed[i] !== 0) {
-      nonZeroCount++;
-      if (nonZeroCount > 500) {
-        break;
-      }
-    }
+  for (let i = 0; i < decompressed.length; i += 7) {
+    const b = decompressed[i];
+    distinctValues.add(b);
+    if (b !== 0) nonZeroCount++;
   }
-  expect(nonZeroCount).toBeGreaterThan(500);
+  expect(distinctValues.size).toBeGreaterThanOrEqual(15);
+  expect(nonZeroCount).toBeGreaterThan(5000);
 }
 
 test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion & Environmental Realism', () => {
@@ -45,7 +68,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
   const saveShot = async (page: Page, filename: string): Promise<Buffer> => {
     const filePath = path.join(outDir, filename);
     const shotBuffer = await page.screenshot({ path: filePath });
-    assertNonBlankPng(shotBuffer);
+    assertValidTacticalScreenshot(shotBuffer, 1774, 850);
 
     if (fs.existsSync(artifactDir)) {
       fs.copyFileSync(filePath, path.join(artifactDir, filename));
@@ -148,6 +171,74 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       await obliqueBtn.click();
       await page.waitForTimeout(500);
 
+      // Helper to query and assert scene state via test bridge
+      const assertSceneCheck = async (expected: {
+        activeSensor: 'RADAR' | 'EOIR' | 'RF';
+        resolution?: 'FULL' | 'UNRESOLVED';
+        observedSignature?: string;
+        resolvedCategory?: string;
+        modelName?: string;
+        targetTrackNo?: string;
+      }) => {
+        const status = await page.evaluate((exp) => {
+          const bridge = window.__DRISHTI_TEST__;
+          if (!bridge) return { ok: false, error: 'No test bridge' };
+
+          // 1. Assert zero ground-truth leaks
+          const leaks = bridge.inspectOperatorFacingData();
+          if (leaks.hasLeaks) {
+            return { ok: false, error: `Ground-truth leaked: ${leaks.leakedProperties.join(', ')}` };
+          }
+
+          // 2. Assert sensor health and active sensor
+          const health = bridge.getSensorHealth();
+          if (!health[exp.activeSensor] || health[exp.activeSensor] === 'OUT') {
+            return { ok: false, error: `Sensor ${exp.activeSensor} not OK` };
+          }
+
+          // 3. Assert target category, signature, and model name in 3D scene
+          if (exp.modelName || exp.observedSignature || exp.resolvedCategory) {
+            const models = bridge.getSceneTrackModels?.() || [];
+            const trackModel = exp.targetTrackNo
+              ? models.find((m) => m.trackNo === exp.targetTrackNo)
+              : models[0];
+
+            if (!trackModel) {
+              return { ok: false, error: `No model found for track ${exp.targetTrackNo}` };
+            }
+            if (exp.modelName && trackModel.modelName !== exp.modelName) {
+              return { ok: false, error: `Model mismatch: expected ${exp.modelName}, got ${trackModel.modelName}` };
+            }
+            if (exp.resolvedCategory && trackModel.category !== exp.resolvedCategory) {
+              return { ok: false, error: `Category mismatch: expected ${exp.resolvedCategory}, got ${trackModel.category}` };
+            }
+            if (exp.observedSignature && trackModel.signature !== exp.observedSignature) {
+              return { ok: false, error: `Signature mismatch: expected ${exp.observedSignature}, got ${trackModel.signature}` };
+            }
+          }
+
+          // 4. Assert observation resolution
+          if (exp.resolution && exp.targetTrackNo) {
+            const pres = bridge.getPresentationState(exp.targetTrackNo);
+            const t = pres.tracks.find((tr) => tr.trackNo === exp.targetTrackNo);
+            if (t?.observation?.resolutionLevel !== exp.resolution) {
+              return { ok: false, error: `Resolution mismatch: expected ${exp.resolution}, got ${t?.observation?.resolutionLevel}` };
+            }
+          }
+
+          return { ok: true };
+        }, expected);
+
+        expect(status.ok, status.error).toBe(true);
+      };
+
+      // Retrieve primary selected track number
+      const primaryTrackNo = await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        const tracks = bridge?.getTrackList() || [];
+        return tracks[0]?.trackNo || 'T-01';
+      });
+
       // ==========================================
       // STATE 1: Radar-only contact display (amber diamonds)
       // Active sensor = RADAR, Display = TGT:RADAR
@@ -156,6 +247,12 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       await radarBtn.click();
       await setTgtMode('RADAR');
       await page.waitForTimeout(500);
+
+      const radarSymbolsState = await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        return bridge?.getPresentationState()?.allAreRadarSymbols ?? false;
+      });
+      expect(radarSymbolsState).toBe(true);
       await saveShot(page, '01_radar_only_symbols.png');
 
       // ==========================================
@@ -164,54 +261,193 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
       await eoirBtn.click();
       await setTgtMode('AIR');
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
 
       // ==========================================
       // STATE 2: EO/IR-observed multirotor (compact FPV attack quad)
-      // Focus on Track 1 (FPV_ATTACK in DEMO-1)
+      // Focus on Track 1 (FPV_ATTACK in DEMO-1 -> MULTIROTOR_COMPACT -> Target_FPV_Attack)
       // ==========================================
       await trackRow.click();
       await page.keyboard.press('f'); // Focus camera on selected track
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(600);
+
+      // Position target within full optical range (800m) and inject full EO/IR resolution
+      await page.evaluate((tNo) => {
+        window.__DRISHTI_TEST__?.positionTrack(tNo, { x: 800, y: 800, z: 80 });
+        window.__DRISHTI_TEST__?.injectObservationOverride(tNo, {
+          signature: 'MULTIROTOR_COMPACT',
+          observedSignature: 'MULTIROTOR_COMPACT',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
+      }, primaryTrackNo);
+      await page.waitForTimeout(400);
+
+      await assertSceneCheck({
+        activeSensor: 'EOIR',
+        targetTrackNo: primaryTrackNo,
+        resolution: 'FULL',
+        observedSignature: 'MULTIROTOR_COMPACT',
+        resolvedCategory: 'OBSERVED_MULTIROTOR',
+        modelName: 'Target_FPV_Attack',
+      });
       await saveShot(page, '02_eoir_observed_multirotor.png');
 
       // ==========================================
-      // STATE 3: Reconnaissance drone & STATE 4: Fixed-wing UAV
-      // Open C-UAS Target Recognition Guide to demonstrate authoritative 3D airframe morphology
+      // STATE 3: Reconnaissance drone (Target_Recon_Quad) in actual live 3D viewport
+      // Demonstrates multirotor with camera gimbal turret pod
       // ==========================================
-      const recogGuideBtn = page.getByRole('button', { name: /RECOG GUIDE/i });
-      await recogGuideBtn.click();
-      await page.waitForTimeout(500);
-      await expect(page.getByText(/C-UAS TARGET RECOGNITION GUIDE/i)).toBeVisible();
+      await page.evaluate((tNo) => {
+        window.__DRISHTI_TEST__?.injectObservationOverride(tNo, {
+          signature: 'MULTIROTOR_WITH_CAMERA_POD',
+          observedSignature: 'MULTIROTOR_WITH_CAMERA_POD',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
+      }, primaryTrackNo);
+      await page.waitForTimeout(400);
 
-      // Capture Target Recognition Guide showing Recon Quad and Loitering Munition specs
+      await assertSceneCheck({
+        activeSensor: 'EOIR',
+        targetTrackNo: primaryTrackNo,
+        resolution: 'FULL',
+        observedSignature: 'MULTIROTOR_WITH_CAMERA_POD',
+        resolvedCategory: 'OBSERVED_MULTIROTOR',
+        modelName: 'Target_Recon_Quad',
+      });
       await saveShot(page, '03_reconnaissance_drone.png');
+
+      // ==========================================
+      // STATE 4: Fixed-wing UAV (Target_Loitering_Munition) in actual live 3D viewport
+      // Demonstrates loitering munition with delta wings and pusher propeller
+      // ==========================================
+      await page.evaluate((tNo) => {
+        window.__DRISHTI_TEST__?.injectObservationOverride(tNo, {
+          signature: 'FIXED_WING_DELTA',
+          observedSignature: 'FIXED_WING_DELTA',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
+      }, primaryTrackNo);
+      await page.waitForTimeout(400);
+
+      await assertSceneCheck({
+        activeSensor: 'EOIR',
+        targetTrackNo: primaryTrackNo,
+        resolution: 'FULL',
+        observedSignature: 'FIXED_WING_DELTA',
+        resolvedCategory: 'OBSERVED_FIXED_WING',
+        modelName: 'Target_Loitering_Munition',
+      });
       await saveShot(page, '04_fixed_wing_uav.png');
 
-      // Close Recognition Guide modal
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
+      // ==========================================
+      // STATE 5: Bird-like contact (Target_Bird) in actual live 3D viewport
+      // Demonstrates biological wing geometry with zero rotors
+      // ==========================================
+      await page.evaluate((tNo) => {
+        window.__DRISHTI_TEST__?.injectObservationOverride(tNo, {
+          signature: 'BIRD_LIKE',
+          observedSignature: 'BIRD_LIKE',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.95,
+          resolutionLevel: 'FULL',
+          resolution: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorAvailability: true,
+          sensorHealth: 'OK',
+          sensorHealthOk: true,
+          estimatedRangeM: 800,
+        });
+      }, primaryTrackNo);
+      await page.waitForTimeout(400);
 
-      // ==========================================
-      // STATE 5: Bird-like contact (organic winged aspect ratio, zero rotors)
-      // Select bird decoy (B-1) from Track Table
-      // ==========================================
-      const trackRows = page.locator('aside').first().locator('.cursor-pointer');
-      const count = await trackRows.count();
-      if (count > 1) {
-        await trackRows.nth(count - 1).click();
-        await page.keyboard.press('f');
-        await page.waitForTimeout(800);
-      }
+      await assertSceneCheck({
+        activeSensor: 'EOIR',
+        targetTrackNo: primaryTrackNo,
+        resolution: 'FULL',
+        observedSignature: 'BIRD_LIKE',
+        resolvedCategory: 'BIRD',
+        modelName: 'Target_Bird',
+      });
       await saveShot(page, '05_bird_like_contact.png');
 
       // ==========================================
-      // STATE 6: Multiple different target models together
+      // STATE 6: Multiple different target models simultaneously rendered
       // Switch to TOP camera to view tactical air picture with varied tracks
       // ==========================================
+      // Configure distinct signatures on multiple tracks
+      await page.evaluate(() => {
+        const bridge = window.__DRISHTI_TEST__;
+        const tracks = bridge?.getTrackList() || [];
+        if (tracks[0]) {
+          bridge?.injectObservationOverride(tracks[0].trackNo, {
+            signature: 'MULTIROTOR_COMPACT',
+            observedSignature: 'MULTIROTOR_COMPACT',
+            sensorSource: 'EOIR',
+            activeSensor: 'EOIR',
+            confidence: 0.95,
+            resolutionLevel: 'FULL',
+            resolution: 'FULL',
+            visibilityState: 'CLEAR',
+            sensorAvailability: true,
+            sensorHealth: 'OK',
+            sensorHealthOk: true,
+            estimatedRangeM: 800,
+          });
+        }
+        if (tracks[1]) {
+          bridge?.injectObservationOverride(tracks[1].trackNo, {
+            signature: 'FIXED_WING_DELTA',
+            observedSignature: 'FIXED_WING_DELTA',
+            sensorSource: 'EOIR',
+            activeSensor: 'EOIR',
+            confidence: 0.95,
+            resolutionLevel: 'FULL',
+            resolution: 'FULL',
+            visibilityState: 'CLEAR',
+            sensorAvailability: true,
+            sensorHealth: 'OK',
+            sensorHealthOk: true,
+            estimatedRangeM: 800,
+          });
+        }
+      });
+
       const topBtn = page.getByRole('button', { name: /\[T\] TOP/i });
       await topBtn.click();
       await page.waitForTimeout(800);
+
+      const sceneModels = await page.evaluate(() => {
+        return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
+      });
+      expect(sceneModels.length).toBeGreaterThanOrEqual(1);
+
       await saveShot(page, '06_multiple_target_models.png');
 
       // ==========================================
@@ -256,29 +492,53 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
 
       // ==========================================
       // STATE 10: Missile and gun engagement effects
-      // Select track, classify HA, activate Gun or Missile effector
+      // Position target within kinetic effector range, classify HA, arm and fire kinetic effector
+      // Assert ENGAGE event and activeEffectsCount > 0 before capture
       // ==========================================
+      // Position target within gun range (1200m)
+      await page.evaluate((tNo) => {
+        const bridge = window.__DRISHTI_TEST__;
+        bridge?.clearOverrides();
+        bridge?.positionTrack(tNo, { x: 1200, y: 1200, z: 80 });
+      }, primaryTrackNo);
+
       await trackRow.click();
       const haBtn = page.getByRole('button', { name: /\[HA\]/i });
       if (await haBtn.isVisible()) {
         await haBtn.click();
       }
 
-      const gunCard = page.getByText(/30mm|35mm|Gun|Kinetic/i).first();
+      const gunCard = page.getByText(/Gun Burst|Interceptor Drone|30mm|Kinetic/i).first();
       if (await gunCard.isVisible().catch(() => false)) {
-        await gunCard.click();
+        await gunCard.click({ force: true });
       } else {
         const anyEffector = page.locator('.effector-card, [data-testid^="effector"]').first();
         if (await anyEffector.isVisible().catch(() => false)) {
-          await anyEffector.click();
+          await anyEffector.click({ force: true });
         }
       }
 
-      const fireBtn = page.getByRole('button', { name: /RELEASE|ACTIVATE|FIRE/i });
-      if (await fireBtn.isEnabled().catch(() => false)) {
-        await fireBtn.click();
-        await page.waitForTimeout(300);
-      }
+      // Fire weapon: use force click, keyboard 'f', and test-bridge fireTrack to guarantee engagement without DOM detachment
+      await page.keyboard.press('f');
+      await page.evaluate((tNo) => {
+        window.__DRISHTI_TEST__?.fireTrack?.(tNo);
+      }, primaryTrackNo);
+
+      // Verify ENGAGE event was emitted in engine
+      await expect.poll(async () => {
+        return page.evaluate(() => {
+          const events = window.__DRISHTI_TEST__?.getRecordedEvents() || [];
+          return events.some((e) => e.type === 'ENGAGE');
+        });
+      }, { timeout: 4000 }).toBe(true);
+
+      // Verify active 3D engagement effects exist in scene
+      await expect.poll(async () => {
+        return page.evaluate(() => {
+          return (window.__DRISHTI_TEST__?.getActiveEffectsCount?.() ?? 0) > 0;
+        });
+      }, { timeout: 4000 }).toBe(true);
+
       await saveShot(page, '10_engagement_effects.png');
     });
   });

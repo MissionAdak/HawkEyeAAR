@@ -6,7 +6,13 @@ import {
   type SensorObservationContext,
 } from '@/render3d/targets/targetObservation';
 import { mapDroneTypeToAirframeSignature } from '@/sim/sensorObservation';
-import { buildProceduralBuildings } from '@/render3d/environment/buildings';
+import {
+  buildProceduralBuildings,
+  getRotatedFootprintCorners,
+  isFootprintFullyContained,
+  segmentsIntersect,
+  pointInPolygon,
+} from '@/render3d/environment/buildings';
 import { getTerrainElevation } from '@/render3d/environment/terrain';
 import { findNearestTrackNo } from '@/ui/Console';
 import type { SafeTrackView } from '@/render3d/types';
@@ -266,6 +272,169 @@ describe('TASK 23.1 — Tactical 3D Airframe Morphology, Expanded Viewport & Env
       for (const bld of mountainBuildings) {
         expect(bld.position.z).toBeCloseTo(getTerrainElevation(bld.position.x, bld.position.y, 'MOUNTAIN_RIDGE'), 2);
       }
+    });
+
+    it('enforces full rotated footprint containment inside irregular concave polygons across multiple seeds', () => {
+      // Concave L-shaped urban polygon
+      const concavePolygon: [number, number][] = [
+        [1000, 1000],
+        [2800, 1000],
+        [2800, 1800],
+        [1900, 1800],
+        [1900, 2800],
+        [1000, 2800],
+      ];
+
+      const concaveDescriptor = (seed: number): EnvironmentDescriptor => ({
+        preset: 'URBAN_DENSE',
+        name: 'Concave City',
+        description: 'L-Shaped Urban Zone',
+        terrainType: 'TACTICAL_GRID',
+        seed,
+        weather: 'CLEAR',
+        dayNight: 'DAY',
+        mapRadiusM: 5000,
+        rMinM: 500,
+        zones: [
+          {
+            id: 'U-CONCAVE',
+            type: 'URBAN',
+            heightM: 50,
+            shadowM: 600,
+            rho: 0.8,
+            polygon: concavePolygon,
+          },
+        ],
+      });
+
+      const seedsToTest = [101, 202, 303, 404, 505];
+      for (const s of seedsToTest) {
+        const res = buildProceduralBuildings(concaveDescriptor(s));
+        const zoneBuildings = res.objects.filter((o) => o.id.startsWith('BLD-U-CONCAVE'));
+        expect(zoneBuildings.length).toBeGreaterThan(0);
+
+        for (const bld of zoneBuildings) {
+          // Center inside concave polygon
+          expect(pointInPolygon(bld.position.x, bld.position.y, concavePolygon)).toBe(true);
+
+          // All 4 rotated corners inside concave polygon
+          const bldMesh = res.selectableMeshes.find((m) => m.userData?.envObjectId === bld.id) as THREE.Mesh;
+          expect(bldMesh).toBeDefined();
+
+          const yaw = bldMesh.rotation.y;
+          // Approximate size from bounding box
+          const bbox = new THREE.Box3().setFromObject(bldMesh);
+          const sizeX = bbox.max.x - bbox.min.x;
+          const sizeZ = bbox.max.z - bbox.min.z;
+          const corners = getRotatedFootprintCorners(bld.position.x, bld.position.y, sizeX * 0.7, sizeZ * 0.7, yaw);
+
+          for (const [cx, cy] of corners) {
+            expect(pointInPolygon(cx, cy, concavePolygon)).toBe(true);
+            // Must strictly not encroach into rMinM (500m)
+            expect(Math.hypot(cx, cy)).toBeGreaterThanOrEqual(500);
+          }
+        }
+      }
+    });
+
+    it('generates all 5 architectural archetypes with distinct heights, footprints and equipment', () => {
+      const archetypesFound = new Set<string>();
+
+      // Sample across seeds to verify diversity of archetypes
+      for (const s of [100, 200, 300, 400, 500]) {
+        const res = buildProceduralBuildings(testDescriptor(s));
+        for (const obj of res.objects) {
+          if (obj.name.includes('Commercial Complex')) archetypesFound.add('COMMERCIAL');
+          if (obj.name.includes('Residential Apartment')) archetypesFound.add('RESIDENTIAL_MID');
+          if (obj.name.includes('Townhouse Cluster')) archetypesFound.add('RESIDENTIAL_LOW');
+          if (obj.name.includes('Logistics Warehouse')) archetypesFound.add('INDUSTRIAL');
+          if (obj.name.includes('Communications Mast')) archetypesFound.add('TOWER');
+        }
+      }
+
+      expect(archetypesFound.has('COMMERCIAL')).toBe(true);
+      expect(archetypesFound.has('RESIDENTIAL_MID')).toBe(true);
+      expect(archetypesFound.has('RESIDENTIAL_LOW')).toBe(true);
+      expect(archetypesFound.has('INDUSTRIAL')).toBe(true);
+      expect(archetypesFound.has('TOWER')).toBe(true);
+      expect(archetypesFound.size).toBe(5);
+    });
+
+    it('anchors building foundation bases exactly to the Three.js ground mesh surface (-1) on flat terrain using THREE.Box3 bounds', () => {
+      const res = buildProceduralBuildings(testDescriptor(7777, 'URBAN_DENSE'));
+      const zoneMeshes = res.selectableMeshes.filter((m) =>
+        m.userData?.envObjectId?.startsWith('BLD-U1')
+      );
+      expect(zoneMeshes.length).toBeGreaterThanOrEqual(6);
+
+      for (const mesh of zoneMeshes) {
+        const bbox = new THREE.Box3().setFromObject(mesh);
+        // On flat terrain, groundMesh is at Y = -1. Foundation base must coincide with Y = -1.
+        expect(bbox.min.y).toBeCloseTo(-1, 1);
+        expect(bbox.max.y).toBeGreaterThan(0);
+      }
+
+      // Check central bunker base
+      const c2Mesh = res.selectableMeshes.find((m) => m.userData?.envObjectId === 'FACILITY-CORE-C2');
+      expect(c2Mesh).toBeDefined();
+      if (c2Mesh) {
+        const c2Box = new THREE.Box3().setFromObject(c2Mesh);
+        expect(c2Box.min.y).toBeCloseTo(-1, 1);
+      }
+    });
+
+    it('anchors building foundations into sloped heightfield terrain (MOUNTAIN_RIDGE) without floating corners using THREE.Box3 bounds', () => {
+      const res = buildProceduralBuildings(testDescriptor(4242, 'MOUNTAIN_RIDGE'));
+      const zoneMeshes = res.selectableMeshes.filter((m) =>
+        m.userData?.envObjectId?.startsWith('BLD-U1')
+      );
+
+      for (const mesh of zoneMeshes) {
+        const obj = res.objects.find((o) => o.id === mesh.userData?.envObjectId);
+        expect(obj).toBeDefined();
+        if (!obj) continue;
+
+        const bbox = new THREE.Box3().setFromObject(mesh);
+        const centerElev = getTerrainElevation(obj.position.x, obj.position.y, 'MOUNTAIN_RIDGE');
+
+        // Three.js world ground elevation is (elevation - 1)
+        // Building foundation extends down to (minGroundElev - 1), so bbox.min.y <= centerElev - 1 + epsilon
+        expect(bbox.min.y).toBeLessThanOrEqual(centerElev - 1 + 0.1);
+        // Roof must reach at or above ground level
+        expect(bbox.max.y).toBeGreaterThan(centerElev - 1);
+      }
+    });
+
+    it('verifies geometry helper functions (pointInPolygon, segmentsIntersect, getRotatedFootprintCorners, isFootprintFullyContained)', () => {
+      const rectPoly: [number, number][] = [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ];
+
+      // pointInPolygon
+      expect(pointInPolygon(50, 50, rectPoly)).toBe(true);
+      expect(pointInPolygon(-5, 50, rectPoly)).toBe(false);
+      expect(pointInPolygon(150, 50, rectPoly)).toBe(false);
+
+      // segmentsIntersect
+      expect(segmentsIntersect(0, 0, 10, 10, 0, 10, 10, 0)).toBe(true);
+      expect(segmentsIntersect(0, 0, 10, 0, 0, 5, 10, 5)).toBe(false);
+
+      // getRotatedFootprintCorners
+      const corners0 = getRotatedFootprintCorners(50, 50, 20, 10, 0);
+      expect(corners0.length).toBe(4);
+      // At yaw 0: [-10, -5] -> (40, 55), [10, -5] -> (60, 55), [10, 5] -> (60, 45), [-10, 5] -> (40, 45)
+      expect(corners0[0][0]).toBeCloseTo(40, 1);
+      expect(corners0[0][1]).toBeCloseTo(55, 1);
+
+      // isFootprintFullyContained
+      expect(isFootprintFullyContained(50, 50, 20, 10, 0, rectPoly, 0)).toBe(true);
+      // Protruding outside boundary
+      expect(isFootprintFullyContained(95, 50, 20, 10, 0, rectPoly, 0)).toBe(false);
+      // Violating rMinM
+      expect(isFootprintFullyContained(50, 50, 20, 10, 0, rectPoly, 60)).toBe(false);
     });
 
     it('disposes all geometries and materials cleanly', () => {

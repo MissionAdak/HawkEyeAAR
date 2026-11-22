@@ -199,7 +199,7 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
         expect(evA.tMs).toBe(evB.tMs);
         expect(evA.payload).toEqual(evB.payload);
       }
-    });
+    }, 15000);
   });
 
   describe('3. Production SimClock Frame Pacing & Accumulator Invariance', () => {

@@ -692,6 +692,10 @@ export class Scene3D {
     return this.trackMeshMap.get(trackNo);
   }
 
+  public getAllTrackRecords(): TrackMeshRecord[] {
+    return Array.from(this.trackMeshMap.values());
+  }
+
   /**
    * Looks up the current world position of a track in Three.js coordinates.
    */

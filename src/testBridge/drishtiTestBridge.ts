@@ -171,6 +171,9 @@ export interface DrishtiTestBridge {
   getConfigHash?: () => string;
   loadCatalogScenario?: (id: string, seed?: number, difficulty?: number) => { spec: import('@/sim/types').ScenarioSpec };
   aggregateAARMetrics?: (events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) => import('@/sim/types').AARMetrics;
+  getActiveEffectsCount?: () => number;
+  getSceneTrackModels?: () => Array<{ trackNo: string; category?: string; signature?: string; modelName?: string }>;
+  fireTrack?: (trackNo: string) => void;
 }
 
 declare global {
@@ -232,21 +235,34 @@ export function installDrishtiTestBridge(
 
   engine.tracker.getOperatorTracks = () => {
     const tracks = origGetOperatorTracks.call(engine.tracker);
-    if (estimateOverrides.size === 0) return tracks;
+    if (estimateOverrides.size === 0 && observationOverrides.size === 0) return tracks;
     return tracks.map((t) => {
       const ovr = estimateOverrides.get(t.trackNo);
-      if (!ovr) return t;
-      return {
-        ...t,
-        estPos: ovr.estPos ? { ...ovr.estPos } : { ...t.estPos },
-        estVel: ovr.estVel ? { ...ovr.estVel } : { ...t.estVel },
-        prevEstPos: { ...t.prevEstPos },
-        estRangeM: ovr.estRangeM ?? t.estRangeM,
-        estBearingDeg: ovr.estBearingDeg ?? t.estBearingDeg,
-        estSpeedMps: ovr.estSpeedMps ?? t.estSpeedMps,
-        uncertaintyM: ovr.uncertaintyM ?? t.uncertaintyM,
-        isCoasting: ovr.isCoasting ?? t.isCoasting,
-      };
+      const base = ovr
+        ? {
+            ...t,
+            estPos: ovr.estPos ? { ...ovr.estPos } : { ...t.estPos },
+            estVel: ovr.estVel ? { ...ovr.estVel } : { ...t.estVel },
+            prevEstPos: { ...t.prevEstPos },
+            estRangeM: ovr.estRangeM ?? t.estRangeM,
+            estBearingDeg: ovr.estBearingDeg ?? t.estBearingDeg,
+            estSpeedMps: ovr.estSpeedMps ?? t.estSpeedMps,
+            uncertaintyM: ovr.uncertaintyM ?? t.uncertaintyM,
+            isCoasting: ovr.isCoasting ?? t.isCoasting,
+          }
+        : { ...t };
+
+      if (observationOverrides.has(t.trackNo)) {
+        const obsOvr = observationOverrides.get(t.trackNo);
+        base.sensorObservation = obsOvr
+          ? ({
+              ...(t.sensorObservation ?? {}),
+              ...obsOvr,
+              timestampMs: obsOvr.timestampMs ?? (engine.tickIndex * 50),
+            } as ApprovedSensorObservation)
+          : null;
+      }
+      return base;
     });
   };
 
@@ -399,6 +415,29 @@ export function installDrishtiTestBridge(
       } else {
         observationOverrides.set(trackNo, obs);
       }
+      const r3d = getRenderer3D();
+      if (r3d) {
+        const cur = r3d.getCurrentTracks();
+        if (cur) {
+          const patched = cur.tracks.map((t) => {
+            if (t.trackNo === trackNo) {
+              return {
+                ...t,
+                sensorObservation: obs
+                  ? ({
+                      ...(t.sensorObservation ?? {}),
+                      ...obs,
+                      timestampMs: obs.timestampMs ?? (engine.tickIndex * 50),
+                    } as ApprovedSensorObservation)
+                  : null,
+              };
+            }
+            return t;
+          });
+          r3d.update(patched, cur.selectedTrackNo);
+        }
+      }
+      useSessionStore.getState().setUiSnapshot(engine.buildUiSnapshot());
       return true;
     },
 
@@ -922,6 +961,26 @@ export function installDrishtiTestBridge(
 
     aggregateAARMetrics(events: import('@/sim/types').SimEvent[], spec: import('@/sim/types').ScenarioSpec) {
       return aggregateAARMetrics(events, spec);
+    },
+
+    getActiveEffectsCount(): number {
+      const r3d = getRenderer3D();
+      return r3d?.getScene3D()?.engagementEffectManager?.getActiveEffectsCount() ?? 0;
+    },
+
+    getSceneTrackModels(): Array<{ trackNo: string; category?: string; signature?: string; modelName?: string }> {
+      const r3d = getRenderer3D();
+      if (!r3d) return [];
+      return r3d.getScene3D().getAllTrackRecords().map((r) => ({
+        trackNo: r.trackNo,
+        category: r.currentCategory,
+        signature: r.currentSignature,
+        modelName: r.targetModelInstance?.group.name,
+      }));
+    },
+
+    fireTrack(trackNo: string): void {
+      useSessionStore.getState().fire(trackNo);
     },
   };
 
