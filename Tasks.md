@@ -920,3 +920,26 @@ Files: `src/sim/sensorObservation.ts`, `src/sim/serialization.ts`, `src/sim/snap
   - Executed `npm run deploy` publishing production build from release commit `91e8b6220e8563874bcdfd553a61cbee9f12fd0d` to `origin/gh-pages`.
   - Remote `gh-pages` branch successfully updated to commit `b9935052496b802fbc3d62e8bfdbd6da4307a228` (fast-forwarding pre-deployment baseline `b3740a1da38835b0b362d3966dbab7f6899e08c7`).
 - [x] TASK 27-E Live Production Website Verification: Verified live deployment on `https://missionadak.github.io/HawkEyeAAR/` confirming HTTP 200 responses across HTML document, CSS, entry JS (`index-B2Sp7vKy.js`), lazy Three.js vendor chunk (`render3d-DhcfiOHi.js`), and 3D index chunk (`render3d-index-7no2k7HM.js`).
+
+### TASK 27-R — Comprehensive Post-Release Code Audit, Critical Defect Remediation & Production Redeployment · P0 · A/C/D · 1.5 h
+Files: `tests/unit/snapshotHash.spec.ts`, `tests/unit/task25BundleAcceptance.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] TASK 27-R-A Repository & Lineage Preflight: Verified Git working directory clean, checked linear 6-commit lineage from feature freeze baseline `51c3f2e`, verified `origin/gh-pages` baseline at `b9935052496b802fbc3d62e8bfdbd6da4307a228`.
+- [x] TASK 27-R-B Repository-Wide Quality, Correctness, Security & Reliability Audit: Audited zero truth leakage, CSP `connect-src 'none'`, DOM / IndexedDB boundaries, and offline air-gap guarantees.
+- [x] TASK 27-R-C Dependency & Supply-Chain Audit: Verified all 26 top-level packages pinned. Confirmed `zod <4.6.6` advisory non-exploitable in synchronous offline configuration parsing.
+- [x] TASK 27-R-D SHA-256 Vector & Scenario Snapshot Verification Suite: Created `tests/unit/snapshotHash.spec.ts` adding 27 comprehensive test cases verifying NIST test vectors, boundary lengths, multi-byte UTF-8, emojis, null bytes, key permutation invariance via `stableJson`, and normalized hash verification.
+- [x] TASK 27-R-E Full Verification Gate Execution:
+  - TypeScript typecheck (`npx tsc --noEmit`): 0 errors.
+  - ESLint (`npm run lint`): 0 errors, 0 warnings.
+  - Vitest test suite (`npm test`): 52 test suites, 754 unit tests passing 100% green.
+  - Production build (`npm run build`): completed cleanly, bundle size 1.790 MB (< 2.0 MB budget).
+  - Test-instrumented build (`npm run build:e2e`): completed cleanly.
+  - Full Playwright E2E test suite (`npx playwright test`): 63 tests across all 13 spec files passing 100% green in 2.7m.
+- [x] TASK 27-R-F Production Bundle & Airgap Inspection:
+  - Total `dist/` bundle size: 1.790 MB (1,876,980 bytes < 2,097,152 bytes budget, 215.0 kB margin).
+  - Initial entry chunks: `index-BWZzAAB2.js` (688.36 kB raw, 209.78 kB gzip) and `index-h_odBfzX.css` (63.69 kB raw, 28.33 kB gzip). Zero Three.js code in entry chunks.
+  - Lazy Three.js chunk: `render3d-DhcfiOHi.js` (525.76 kB raw, 134.06 kB gzip).
+  - Content Security Policy: strictly enforced `connect-src 'none'`, `default-src 'self'`.
+- [x] TASK 27-R-G Safe GitHub Pages Deployment:
+  - Published production release to `origin/gh-pages` via `gh-pages -d dist`.
+  - Clean linear fast-forward commit: `7957eb16d32cac3c9515ec10abac7c6eebb07d1f` advancing previous baseline `b9935052496b802fbc3d62e8bfdbd6da4307a228`.
+- [x] TASK 27-R-H Live Production Verification: Verified live deployment on `https://missionadak.github.io/HawkEyeAAR/` confirming HTTP 200 responses across HTML, entry JS (`index-BWZzAAB2.js`), CSS (`index-h_odBfzX.css`), and lazy Three.js chunk (`render3d-DhcfiOHi.js`).
