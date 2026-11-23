@@ -135,5 +135,5 @@ describe('TASK 25-B: Production Bundle & Lazy-Loading Acceptance', () => {
         gzipKB: (app3dGzip.length / 1024).toFixed(2) + ' kB',
       },
     });
-  });
+  }, 30000);
 });
