@@ -662,15 +662,15 @@ export class Scene3D {
         const dx = threePos.x - record.group.position.x;
         const dz = threePos.z - record.group.position.z;
         const distSq = dx * dx + dz * dz;
-        if (distSq > 1000 * 1000) {
+        if (distSq > 500 * 500) {
           // Large step or teleport: snap immediately
           record.group.position.set(threePos.x, 0, threePos.z);
           record.modelAnchor.position.set(0, threePos.y, 0);
         } else {
-          // Smooth 60 FPS interpolation (factor 0.25) to eliminate tracker noise and stepped 20 Hz updates
-          record.group.position.x += dx * 0.25;
-          record.group.position.z += dz * 0.25;
-          record.modelAnchor.position.y += (threePos.y - record.modelAnchor.position.y) * 0.25;
+          // Strong exponential smoothing (factor 0.08) to completely filter out tracker measurement noise and 20 Hz step jitter
+          record.group.position.x += dx * 0.08;
+          record.group.position.z += dz * 0.08;
+          record.modelAnchor.position.y += (threePos.y - record.modelAnchor.position.y) * 0.08;
         }
       }
       record.stem.scale.set(1, Math.max(1, record.modelAnchor.position.y), 1);
@@ -688,23 +688,37 @@ export class Scene3D {
       const targetPixelSize = targetCategory === 'RADAR_SYMBOL' ? 34 : 48;
       const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, targetPixelSize, true);
 
-      // Derive orientation from safe velocity vector with stable fallback & shortest-arc angular smoothing
-      const { headingRad, pitchRad } = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
-      let dHeading = headingRad - record.lastHeadingRad;
+      // Derive orientation with deadband threshold: only turn if speed is significant (> 2.0 m/s)
+      // When hovering or slow loitering, keep previous stable heading to eliminate needle spinning
+      const speedH = Math.hypot(track.vel.x, track.vel.y);
+      let targetHeading = record.lastHeadingRad;
+      let targetPitch = 0;
+
+      if (speedH >= 2.0) {
+        const orient = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
+        targetHeading = orient.headingRad;
+        targetPitch = Math.max(-0.25, Math.min(0.25, orient.pitchRad)); // Clamp pitch to realistic level flight +/- 14 deg
+      }
+
+      // Gentle angular smoothing (0.05 per frame) across the -PI to +PI branch cut
+      let dHeading = targetHeading - record.lastHeadingRad;
       while (dHeading > Math.PI) dHeading -= 2 * Math.PI;
       while (dHeading < -Math.PI) dHeading += 2 * Math.PI;
-      const smoothedHeading = record.lastHeadingRad + dHeading * 0.20;
+      const smoothedHeading = record.lastHeadingRad + dHeading * 0.05;
       record.lastHeadingRad = smoothedHeading;
 
       const lastPitch = record.lastPitchRad ?? 0;
-      const smoothedPitch = lastPitch + (pitchRad - lastPitch) * 0.20;
+      const smoothedPitch = lastPitch + (targetPitch - lastPitch) * 0.05;
       record.lastPitchRad = smoothedPitch;
 
       record.aircraftGroup.rotation.set(smoothedPitch, -smoothedHeading, 0, 'YXZ');
 
-      // Smooth scale interpolation to prevent scale stepping on zoom
+      // Deadband scale filter: only adjust scale if change is > 2.5% to eliminate any scale pulsation/throbbing
       const currentScale = record.aircraftGroup.scale.x || scale;
-      const smoothedScale = currentScale + (scale - currentScale) * 0.25;
+      let smoothedScale = currentScale;
+      if (Math.abs(scale - currentScale) / currentScale > 0.025) {
+        smoothedScale = currentScale + (scale - currentScale) * 0.06;
+      }
       record.aircraftGroup.scale.set(smoothedScale, smoothedScale, smoothedScale);
 
       // Symbology on accent mesh & separate label badge
