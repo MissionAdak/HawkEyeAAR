@@ -303,7 +303,7 @@ describe('TASK 19 — Training Validation, Sensor Gating, Scoring & Persistence'
       expect(est34s!.uncertaintyM).toBeLessThan(uncert24s);
     });
 
-    it('evaluates dynamic sensor degradation and recovery during environmental chaos through engine lifecycle', () => {
+    it('evaluates dynamic sensor degradation and recovery via computeEnvironmentalSensorHealth helper', () => {
       const chaosSpec = [
         {
           type: 'FOG' as const,

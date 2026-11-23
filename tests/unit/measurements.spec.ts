@@ -212,6 +212,7 @@ describe('TASK 18 — Deterministic Sensor Measurements & Noise Bounds', () => {
 
     // Pure angle-of-arrival sensor: strictly no range or Cartesian coordinates
     expect(m).not.toHaveProperty('range');
+    expect(m).not.toHaveProperty('rangeM');
     expect(m).not.toHaveProperty('measuredRangeM');
     expect(m).not.toHaveProperty('pos');
     expect(m).not.toHaveProperty('x');

@@ -107,7 +107,10 @@ describe('TASK 18 — TrackEstimator & OperatorTrackView Decoupling', () => {
     const est = tracker.getTrackEstimate('T-01');
     expect(est).toBeDefined();
     expect(est?.isCoasting).toBe(true);
-    expect(est?.coastingSinceMs).toBeDefined();
+    expect(typeof est?.coastingSinceMs).toBe('number');
+    expect(Number.isFinite(est?.coastingSinceMs)).toBe(true);
+    expect(est!.coastingSinceMs!).toBeGreaterThanOrEqual(1000);
+    expect(est!.coastingSinceMs!).toBeLessThanOrEqual(4000);
     // Uncertainty grows beyond the initial 35m
     expect(est?.uncertaintyM).toBeGreaterThan(35.0);
   });

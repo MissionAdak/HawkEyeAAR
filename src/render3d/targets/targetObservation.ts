@@ -2,39 +2,41 @@ import type { SafeTrackView, ApprovedSensorObservation } from '../types';
 import type { SensorMode } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
 import type { WeatherType } from '../environment/types';
+import {
+  VALID_SENSOR_HEALTH_STATES,
+  type SensorHealthState,
+  VALID_SENSOR_MODES,
+  VALID_TARGET_DISPLAY_MODES,
+  type TargetDisplayMode,
+  VALID_OPTICAL_RESOLUTION_LEVELS,
+  type OpticalResolutionLevel,
+  VALID_OPTICAL_VISIBILITY_STATES,
+  type OpticalVisibilityState,
+  VALID_OBSERVED_AIRFRAME_SIGNATURES,
+  type ObservedAirframeSignature,
+  CLEAR_OPTICAL_RANGE_M,
+  MAX_OPTICAL_RANGE_M,
+  validateSensorHealthRecord,
+  type SensorHealthValidationResult,
+} from '@/sim/sensorObservation';
 
-export const VALID_SENSOR_HEALTH_STATES = ['OK', 'DEG', 'OUT'] as const;
-export type SensorHealthState = (typeof VALID_SENSOR_HEALTH_STATES)[number];
-
-export const VALID_SENSOR_MODES = ['RADAR', 'EOIR', 'RF'] as const;
-
-export const VALID_TARGET_DISPLAY_MODES = ['AUTO', 'RADAR', 'AIRFRAME'] as const;
-export type TargetDisplayMode = (typeof VALID_TARGET_DISPLAY_MODES)[number];
-
-export const VALID_OPTICAL_RESOLUTION_LEVELS = ['FULL', 'DEGRADED', 'UNRESOLVED'] as const;
-export type OpticalResolutionLevel = (typeof VALID_OPTICAL_RESOLUTION_LEVELS)[number];
-
-export const VALID_OPTICAL_VISIBILITY_STATES = [
-  'CLEAR',
-  'DEGRADED',
-  'DEGRADED_FOG',
-  'DEGRADED_RAIN',
-  'DEGRADED_NIGHT_THERMAL',
-  'MASKED',
-  'OUT_OF_RANGE',
-] as const;
-export type OpticalVisibilityState = (typeof VALID_OPTICAL_VISIBILITY_STATES)[number];
-
-export const VALID_OBSERVED_AIRFRAME_SIGNATURES = [
-  'MULTIROTOR_COMPACT',
-  'MULTIROTOR_WITH_CAMERA_POD',
-  'MULTIROTOR_STANDARD',
-  'MULTIROTOR_MICRO',
-  'FIXED_WING_DELTA',
-  'BIRD_LIKE',
-  'UNRESOLVED_AIRFRAME',
-] as const;
-export type ObservedAirframeSignature = (typeof VALID_OBSERVED_AIRFRAME_SIGNATURES)[number];
+export {
+  VALID_SENSOR_HEALTH_STATES,
+  type SensorHealthState,
+  VALID_SENSOR_MODES,
+  VALID_TARGET_DISPLAY_MODES,
+  type TargetDisplayMode,
+  VALID_OPTICAL_RESOLUTION_LEVELS,
+  type OpticalResolutionLevel,
+  VALID_OPTICAL_VISIBILITY_STATES,
+  type OpticalVisibilityState,
+  VALID_OBSERVED_AIRFRAME_SIGNATURES,
+  type ObservedAirframeSignature,
+  CLEAR_OPTICAL_RANGE_M,
+  MAX_OPTICAL_RANGE_M,
+  validateSensorHealthRecord,
+  type SensorHealthValidationResult,
+};
 
 /**
  * Authoritative Deterministic Simulation Timestamp Tolerances at 20 Hz (50 ms / tick):
@@ -49,8 +51,6 @@ export type ObservedAirframeSignature = (typeof VALID_OBSERVED_AIRFRAME_SIGNATUR
  */
 export const MAX_OBSERVATION_FUTURE_TOLERANCE_MS = 50;
 export const MAX_OBSERVATION_AGE_MS = 1000;
-export const CLEAR_OPTICAL_RANGE_M = 2400;
-export const MAX_OPTICAL_RANGE_M = 3800;
 
 export interface SensorObservationContext {
   activeSensor: SensorMode;
@@ -61,40 +61,6 @@ export interface SensorObservationContext {
   isNight?: boolean;
   mode?: 'TRAIN' | 'EVAL' | 'DEMO';
   sensorPos?: { x: number; y: number; z: number };
-}
-
-export type SensorHealthValidationResult =
-  | { isValid: true; health: Record<SensorMode, SensorHealthState> }
-  | { isValid: false; error: string };
-
-/**
- * Validates sensor health record fail-closed (Task 17.5.1 Part B1).
- * Requires all sensor modes (RADAR, EOIR, RF) to be explicitly present and valid.
- * Does not silently convert missing or malformed values to 'OK'.
- */
-export function validateSensorHealthRecord(raw: unknown): SensorHealthValidationResult {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { isValid: false, error: 'Sensor health record is missing or not an object' };
-  }
-  const record = raw as Record<string, unknown>;
-  for (const mode of VALID_SENSOR_MODES) {
-    if (!(mode in record) || record[mode] === undefined || record[mode] === null) {
-      return { isValid: false, error: `Missing sensor health key: ${mode}` };
-    }
-    const val = record[mode];
-    if (typeof val !== 'string' || !VALID_SENSOR_HEALTH_STATES.includes(val as SensorHealthState)) {
-      const valStr = typeof val === 'string' ? val : JSON.stringify(val);
-      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${valStr}` };
-    }
-  }
-  return {
-    isValid: true,
-    health: {
-      RADAR: record.RADAR as SensorHealthState,
-      EOIR: record.EOIR as SensorHealthState,
-      RF: record.RF as SensorHealthState,
-    },
-  };
 }
 
 /**

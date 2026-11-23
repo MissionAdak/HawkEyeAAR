@@ -259,6 +259,8 @@ export interface AARMetrics {
   trainingAidUsed?: boolean;
 }
 
+export type WeatherType = 'CLEAR' | 'FOG' | 'RAIN' | 'OVERCAST';
+
 export interface UserAction {
   tRawMs: number;
   applyTick: number;

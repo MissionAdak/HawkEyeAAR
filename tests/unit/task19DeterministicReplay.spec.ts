@@ -11,44 +11,41 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
   // Explicitly controlled scenario and seed
   const { spec } = loadCatalogScenario('DEMO-1', 2026);
 
+  const SCRIPTED_INPUTS = [
+    {
+      tRawMs: 10000,
+      applyTick: 200,
+      action: { type: 'DESIGNATE' as const, trackNo: 'T-01', via: 'KEY' as const },
+    },
+    {
+      tRawMs: 15000,
+      applyTick: 300,
+      action: { type: 'CLASSIFY' as const, trackNo: 'T-01', label: 'HOSTILE_ATTACK' as const },
+    },
+    {
+      tRawMs: 56900,
+      applyTick: 1138,
+      action: { type: 'SELECT_EFFECTOR' as const, effectorId: 'RF_SOFTKILL' as const },
+    },
+    {
+      tRawMs: 57000,
+      applyTick: 1140,
+      action: { type: 'FIRE' as const, trackNo: 'T-01' },
+    },
+    {
+      tRawMs: 58000,
+      applyTick: 1160,
+      action: { type: 'ASSESS' as const, trackNo: 'T-01', result: 'KILL' as const },
+    },
+  ];
+
   function runScriptedSimulation(scenarioSpec: ScenarioSpec) {
     const engine = new SimEngine();
     engine.load(scenarioSpec);
 
-    // Operator Action 1: T+10s (tick 200) - Designate T-01
-    engine.inputQueue.push({
-      tRawMs: 10000,
-      applyTick: 200,
-      action: { type: 'DESIGNATE', trackNo: 'T-01', via: 'KEY' },
-    });
-
-    // Operator Action 2: T+15s (tick 300) - Classify T-01 as HOSTILE_ATTACK
-    engine.inputQueue.push({
-      tRawMs: 15000,
-      applyTick: 300,
-      action: { type: 'CLASSIFY', trackNo: 'T-01', label: 'HOSTILE_ATTACK' },
-    });
-
-    // Operator Action 3: T+56.9s (tick 1138) - Select RF_SOFTKILL
-    engine.inputQueue.push({
-      tRawMs: 56900,
-      applyTick: 1138,
-      action: { type: 'SELECT_EFFECTOR', effectorId: 'RF_SOFTKILL' },
-    });
-
-    // Operator Action 4: T+57.0s (tick 1140) - Fire at T-01
-    engine.inputQueue.push({
-      tRawMs: 57000,
-      applyTick: 1140,
-      action: { type: 'FIRE', trackNo: 'T-01' },
-    });
-
-    // Operator Action 5: T+58.0s (tick 1160) - Assess kill
-    engine.inputQueue.push({
-      tRawMs: 58000,
-      applyTick: 1160,
-      action: { type: 'ASSESS', trackNo: 'T-01', result: 'KILL' },
-    });
+    for (const input of SCRIPTED_INPUTS) {
+      engine.inputQueue.push({ ...input, action: { ...input.action } });
+    }
 
     // Step 2400 ticks (120 seconds duration)
     for (let tick = 0; tick < 2400; tick++) {
@@ -148,31 +145,9 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       engineB.load(spec);
 
       // Same inputs as runScriptedSimulation
-      engineB.inputQueue.push({
-        tRawMs: 10000,
-        applyTick: 200,
-        action: { type: 'DESIGNATE', trackNo: 'T-01', via: 'KEY' },
-      });
-      engineB.inputQueue.push({
-        tRawMs: 15000,
-        applyTick: 300,
-        action: { type: 'CLASSIFY', trackNo: 'T-01', label: 'HOSTILE_ATTACK' },
-      });
-      engineB.inputQueue.push({
-        tRawMs: 56900,
-        applyTick: 1138,
-        action: { type: 'SELECT_EFFECTOR', effectorId: 'RF_SOFTKILL' },
-      });
-      engineB.inputQueue.push({
-        tRawMs: 57000,
-        applyTick: 1140,
-        action: { type: 'FIRE', trackNo: 'T-01' },
-      });
-      engineB.inputQueue.push({
-        tRawMs: 58000,
-        applyTick: 1160,
-        action: { type: 'ASSESS', trackNo: 'T-01', result: 'KILL' },
-      });
+      for (const input of SCRIPTED_INPUTS) {
+        engineB.inputQueue.push({ ...input, action: { ...input.action } });
+      }
 
       for (let tick = 0; tick < 2400; tick++) {
         engineB.step();
@@ -195,9 +170,7 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       for (let i = 0; i < engineB.events.length; i++) {
         const evA = runA.engine.events[i];
         const evB = engineB.events[i];
-        expect(evA.type).toBe(evB.type);
-        expect(evA.tMs).toBe(evB.tMs);
-        expect(evA.payload).toEqual(evB.payload);
+        expect(evA).toEqual(evB);
       }
     }, 15000);
   });

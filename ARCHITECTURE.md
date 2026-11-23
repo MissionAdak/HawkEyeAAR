@@ -342,7 +342,7 @@ export interface SimView {
 
 The renderer derives the continuous sweep angle from `tMs` plus the interpolation remainder (`alpha × 50 ms`); the sweep is cosmetic, detection uses the discrete tick interval (§4.1).
 
-The sim keeps a private `Map<trackIdx, truthIdx>` association. `TrackEntity` carries no truth reference, so a UI bug cannot leak ground truth.
+The sim maintains internal authoritative Domain A `TrackEntity` records while strictly exposing only Domain C `OperatorTrackView` / `SafeTrackView` projections to UI and render layers. `OperatorTrackView` carries no ground-truth reference, so a UI bug cannot leak ground truth.
 
 ### 3.3 Sensors and F2T2EA state machine
 
@@ -873,10 +873,10 @@ export interface OperatorTrackView {
   estRangeM: number;
   estBearingDeg: number;
   estSpeedMps: number;
-  estAltBand: 'LOW' | 'MED' | 'HIGH';
+  estAltBand: 'VLOW' | 'LOW' | 'MED' | 'HIGH';
   uncertaintyM: number;
   isCoasting: boolean;
-  coastingSinceMs: number | null;
+  coastingSinceMs?: number | null;
   lastMeasurementMs: number;
   sensorSources: ('RADAR' | 'EOIR' | 'RF')[];
   q: number;

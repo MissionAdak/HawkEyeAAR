@@ -27,6 +27,17 @@ import { CONFIG_HASH } from '@/config';
 import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
 
+function stepUntilSessionEnd(engine: SimEngine, scenarioId: string, durationMs: number): void {
+  const maxSteps = Math.ceil(durationMs / 50) + 200;
+  let steps = 0;
+  while (!engine.sessionEnded) {
+    if (++steps > maxSteps) {
+      throw new Error(`Simulation loop exceeded step budget (${maxSteps}) for scenario ${scenarioId}`);
+    }
+    engine.step();
+  }
+}
+
 describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenario Snapshot (Critical A, B, C, D)', () => {
   beforeEach(() => {
     clearSessionRepoForTest();
@@ -621,9 +632,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       engine.load(spec);
 
       // Step engine to session completion
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -665,9 +674,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec);
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -703,9 +710,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec);
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -748,9 +753,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec);
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -788,9 +791,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec);
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -828,9 +829,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec);
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -1368,9 +1367,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec, { snapshotHash, appConfigHash: CONFIG_HASH });
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -1420,9 +1417,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec, { snapshotHash, appConfigHash: CONFIG_HASH });
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);
@@ -1524,9 +1519,7 @@ describe('TASK 20-A3 — Trustworthy Historical G Reconstruction & Exact Scenari
       recorder.start();
       engine.load(spec);
 
-      while (!engine.sessionEnded) {
-        engine.step();
-      }
+      stepUntilSessionEnd(engine, spec.id, spec.durationMs);
       await recorder.stop();
 
       const events = await getRecordedEventsForSession(sessionUid);

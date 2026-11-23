@@ -874,10 +874,12 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
         expect(rng1.next()).toBe(rng2.next());
       }
 
+      // Independent seeded generator for point-sampling property tests
+      const pointSamplingRng = new LcgPrng(42);
       for (let i = 0; i < 100; i++) {
-        const x = (rng1.next() - 0.5) * 6000;
-        const y = (rng1.next() - 0.5) * 6000;
-        const z = 10 + rng1.next() * 150;
+        const x = (pointSamplingRng.next() - 0.5) * 6000;
+        const y = (pointSamplingRng.next() - 0.5) * 6000;
+        const z = 10 + pointSamplingRng.next() * 150;
         const target = { trackNo: `T-RND-${i}`, pos: { x, y, z } };
 
         const canonical = evaluateMasking(target.pos, zones);

@@ -3,7 +3,7 @@ import { TrackEstimator } from '@/sim/tracker';
 import type { Renderer3D } from '@/render3d';
 import type { SensorMode, TrackClass, ChaosSpec } from '@/sim/types';
 import type { TargetModelCategory } from '@/render3d/targets/targetModelTypes';
-import type { ApprovedSensorObservation } from '@/render3d/types';
+import type { ApprovedSensorObservation } from '@/sim/sensorObservation';
 import { evaluateSensorObservation } from '@/sim/sensorObservation';
 import { useSessionStore } from '@/store/sessionStore';
 import { db, DrishtiDatabase } from '@/db/dexie';
@@ -636,10 +636,13 @@ export function installDrishtiTestBridge(
         ? patchedTracks.filter((t) => t.trackNo === trackNo)
         : patchedTracks;
 
+      const opTracksSnapshot = engine.getOperatorTracks();
+      const opTracksLookup = new Map(opTracksSnapshot.map((ot) => [ot.trackNo, ot]));
+
       const records: DrishtiPresentationRecord[] = candidateTracks.map((t) => {
         const rec = scene3d.getTrackRecord(t.trackNo);
         const obs = t.sensorObservation;
-        const opTrack = engine.getOperatorTracks().find((ot) => ot.trackNo === t.trackNo);
+        const opTrack = opTracksLookup.get(t.trackNo);
         return {
           trackNo: t.trackNo,
           currentCategory: rec?.currentCategory ?? 'UNKNOWN',

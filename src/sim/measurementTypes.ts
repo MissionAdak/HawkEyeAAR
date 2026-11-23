@@ -1,5 +1,5 @@
 import type { SensorHealthStatus } from './engine';
-import type { ApprovedSensorObservation } from '@/render3d/types';
+import type { ApprovedSensorObservation } from './sensorObservation';
 
 /**
  * ============================================================================

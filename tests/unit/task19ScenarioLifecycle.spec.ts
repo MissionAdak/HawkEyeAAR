@@ -60,13 +60,15 @@ describe('TASK 19.1 — Complete Scenario Lifecycle & State Isolation', () => {
       const fixedSeed = 54321;
       const procedural1 = loadCatalogScenario('PROCEDURAL-1', fixedSeed);
       const procedural2 = loadCatalogScenario('PROCEDURAL-1', fixedSeed);
-      expect(procedural1.spec.threats.length).toBe(procedural2.spec.threats.length);
-      expect(procedural1.spec.seed).toBe(procedural2.spec.seed);
+      expect(procedural1.spec.seed).toBe(fixedSeed);
+      expect(procedural2.spec.seed).toBe(fixedSeed);
+      expect(procedural1.spec).toEqual(procedural2.spec);
 
       const formation1 = loadCatalogScenario('FORMATION-1', fixedSeed);
       const formation2 = loadCatalogScenario('FORMATION-1', fixedSeed);
-      expect(formation1.spec.threats.length).toBe(formation2.spec.threats.length);
-      expect(formation1.spec.seed).toBe(formation2.spec.seed);
+      expect(formation1.spec.seed).toBe(fixedSeed);
+      expect(formation2.spec.seed).toBe(fixedSeed);
+      expect(formation1.spec).toEqual(formation2.spec);
     });
   });
 

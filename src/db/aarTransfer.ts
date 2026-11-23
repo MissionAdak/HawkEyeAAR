@@ -2,65 +2,24 @@
 import { db, type StoredSimEvent } from './dexie';
 import { getRecordedEventsForSession, addFallbackEventsForTest } from './recorder';
 import type { SimEvent, SimEventType } from '@/sim/types';
+import {
+  AAR_FORMAT as FORMAT,
+  AAR_VERSION as VERSION,
+  AAR_EVENT_TYPES as EVENT_TYPES,
+  type AARTransferPayload,
+  stableJson,
+  sha256,
+  csvCell,
+} from '@/sim/serialization';
 
-const FORMAT = 'drishti-aar-events';
-const VERSION = 1;
+export { stableJson, sha256, type AARTransferPayload };
+
 const IMPORT_BATCH_SIZE = 500;
-
-const EVENT_TYPES = new Set<SimEventType>([
-  'SIM_START', 'SPAWN', 'DETECT', 'TRACK_INIT', 'MASKED',
-  'REACQUIRE', 'DESIGNATE', 'SENSOR_SWITCH', 'CLASSIFY',
-  'ENGAGE', 'ENGAGE_RESULT', 'ASSESS', 'CHAOS_ON', 'CHAOS_OFF',
-  'TRIGGER', 'ROE_VIOLATION', 'FLAG', 'LEAK', 'SNAPSHOT',
-  'SESSION_PAUSE', 'SESSION_RESUME', 'SESSION_END',
-]);
-
-export interface AARTransferPayload {
-  format: typeof FORMAT;
-  version: typeof VERSION;
-  sessionUid: string;
-  exportedAt: string;
-  eventCount: number;
-  events: SimEvent[];
-  sha256: string;
-}
 
 export interface AARImportResult {
   imported: number;
   duplicates: number;
   invalid: number;
-}
-
-export function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value);
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(',')}]`;
-  }
-
-  const object = value as Record<string, unknown>;
-  const keys = Object.keys(object).sort((a, b) => a.localeCompare(b));
-
-  return `{${keys.map(
-    (key) => `${JSON.stringify(key)}:${stableJson(object[key])}`,
-  ).join(',')}}`;
-}
-
-export async function sha256(value: string): Promise<string> {
-  if (!globalThis.crypto?.subtle) {
-    throw new Error(
-      'SHA-256 requires Web Crypto. Use HTTPS or localhost in a supported browser.',
-    );
-  }
-
-  const bytes = new TextEncoder().encode(value);
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 
@@ -164,20 +123,6 @@ export async function exportSessionJson(
     `aar-${sessionUid}.json`,
     'application/json;charset=utf-8',
   );
-}
-
-function csvCell(value: unknown): string {
-  let text = '';
-  if (value != null) {
-    text = typeof value === 'string' ? value : JSON.stringify(value);
-  }
-
-  // Prevent spreadsheet formula execution for untrusted imported strings.
-  if (/^[\t\r ]*[=+\-@]/.test(text)) {
-    text = `'${text}`;
-  }
-
-  return `"${text.replaceAll('"', '""')}"`;
 }
 
 export async function createSessionCsvString(

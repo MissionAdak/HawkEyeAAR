@@ -328,7 +328,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
       expect(result.observationState).toBe('MASKED');
     });
 
-    it('Fog and night alter observation resolution via genuine pipeline', () => {
+    it('Fog alters observation resolution via genuine pipeline', () => {
       // Entity at 1419m in CLEAR daylight: within 2400m -> FULL resolution
       const entity = makeSimEntity({ pos: { x: 1000, y: 1000, z: 120 } });
       const clearObs = evaluateSensorObservation(entity, {
@@ -594,7 +594,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
   });
 
   describe('10. Neutral Airframe Recognition & Morphology Diversity (Task 17.5 §5)', () => {
-    it('different threat classes with same physical signature display identical neutral category', () => {
+    it('different threat classes display identical neutral category', () => {
       // FPV Attack drone (threat class HOSTILE_ATTACK)
       const fpvEntity = makeSimEntity({ trueClass: 'HOSTILE_ATTACK', droneType: 'FPV_ATTACK' });
       const fpvObs = evaluateSensorObservation(fpvEntity, basePipelineContext);

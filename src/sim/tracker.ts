@@ -1,5 +1,5 @@
 import type { TrackClass, F2T2EAStep } from './types';
-import type { ApprovedSensorObservation } from '@/render3d/types';
+import type { ApprovedSensorObservation } from './sensorObservation';
 import {
   NOTIONAL_SENSOR_PARAMS,
   type RadarMeasurement,

@@ -555,6 +555,8 @@ describe('TASK 20 — Unit Performance Repository & Longitudinal Tracking (Rules
 
       const summaries = await getUnitTraineeSummaries('REAL');
       expect(summaries).toHaveLength(1);
+      expect(summaries[0].latestEvalMetrics).toBeDefined();
+      expect(summaries[0].latestEvalMetrics?.score).toBe(84);
       expect(summaries[0].latestEvalMetrics?.gScore).toBeUndefined();
       expect(summaries[0].latestEvalMetrics?.gScore).not.toBe(0);
     });

@@ -231,10 +231,7 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
       const specA = generateScenario('TRAINEE-VIPER', 3, 0.45, [], 99);
       const specB = generateScenario('TRAINEE-VIPER', 3, 0.45, [], 99);
 
-      expect(specA.id).toBe(specB.id);
-      expect(specA.seed).toBe(specB.seed);
-      expect(specA.features).toEqual(specB.features);
-      expect(specA.threats).toHaveLength(specB.threats.length);
+      expect(specA).toEqual(specB);
     });
 
     it('enforces scenario novelty filter across consecutive generated sessions (cosine < 0.85)', () => {

@@ -83,6 +83,10 @@ describe('TASK 18-06A Phase B — Sanitized Live Operator Event Stream', () => {
     const opEvents = engine.getOperatorEvents();
     expect(opEvents).toHaveLength(8);
 
+    // Verify membership: designations T-08 through T-15 in order
+    const expectedDesignations = Array.from({ length: 8 }, (_, idx) => `T-${String(idx + 8).padStart(2, '0')}`);
+    expect(opEvents.map((e) => e.trackNo)).toEqual(expectedDesignations);
+
     // Verify strictly ascending sequence ordering
     for (let i = 1; i < opEvents.length; i++) {
       expect(opEvents[i].seq).toBeGreaterThan(opEvents[i - 1].seq);

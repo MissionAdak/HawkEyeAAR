@@ -54,8 +54,8 @@ describe('TASK 25-B: Production Bundle & Lazy-Loading Acceptance', () => {
     const entryJsFile = files.find((f) => /^index-[a-zA-Z0-9_-]+\.js$/.test(f));
     expect(entryJsFile, 'Main entry JavaScript chunk must exist').toBeDefined();
 
-    // Identify lazy 3D vendor chunk (three.js): render3d-[hash].js
-    const render3dVendorChunk = files.find((f) => /^render3d-[a-zA-Z0-9_-]+\.js$/.test(f));
+    // Identify lazy 3D vendor chunk (three.js): render3d-[hash].js (excluding render3d-index-*)
+    const render3dVendorChunk = files.find((f) => /^render3d-(?!index-)[a-zA-Z0-9_-]+\.js$/.test(f));
     expect(render3dVendorChunk, 'Three.js vendor chunk must exist').toBeDefined();
 
     // Identify lazy 3D application chunk: render3d-index-[hash].js

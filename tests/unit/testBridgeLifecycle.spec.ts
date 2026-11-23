@@ -8,8 +8,13 @@ import type { ScenarioSpec } from '@/sim/types';
 describe('DrishtiTestBridge Lifecycle & State Restoration', () => {
   let engine: SimEngine;
   let uninstall: (() => void) | null = null;
+  let priorE2eBuild: unknown;
+  let priorWindow: unknown;
 
   beforeEach(() => {
+    priorE2eBuild = (globalThis as unknown as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+    priorWindow = (globalThis as unknown as Record<string, unknown>).window;
+
     (globalThis as unknown as { __DRISHTI_E2E_BUILD__: boolean }).__DRISHTI_E2E_BUILD__ = true;
     (globalThis as unknown as { window: unknown }).window = globalThis;
 
@@ -20,12 +25,24 @@ describe('DrishtiTestBridge Lifecycle & State Restoration', () => {
   });
 
   afterEach(() => {
-    if (uninstall) {
-      uninstall();
+    try {
+      if (uninstall) {
+        uninstall();
+      }
+    } finally {
       uninstall = null;
+      if (priorE2eBuild === undefined) {
+        delete (globalThis as unknown as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+      } else {
+        (globalThis as unknown as Record<string, unknown>).__DRISHTI_E2E_BUILD__ = priorE2eBuild;
+      }
+      if (priorWindow === undefined) {
+        delete (globalThis as unknown as Record<string, unknown>).window;
+      } else {
+        (globalThis as unknown as Record<string, unknown>).window = priorWindow;
+      }
+      delete (globalThis as unknown as Record<string, unknown>).__DRISHTI_TEST__;
     }
-    delete (globalThis as unknown as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
-    delete (globalThis as unknown as Record<string, unknown>).__DRISHTI_TEST__;
   });
 
   it('guarantees pure overlay semantics, unmutated underlying estimator, clean clearOverrides restoration, prototype recovery upon uninstallation, and rejection of malformed inputs', () => {
@@ -106,6 +123,10 @@ describe('DrishtiTestBridge Lifecycle & State Restoration', () => {
     expect(restoredOpTrack!.estRangeM).toBe(origRange);
     expect(restoredOpTrack!.estRangeM).not.toBe(470.0);
 
+    // Apply fresh override to verify uninstallation clears it
+    bridge.overrideTrackEstimate(targetTrackNo, { estRangeM: 888.0 });
+    expect(engine.tracker.getTrackEstimate(targetTrackNo)?.estRangeM).toBe(888.0);
+
     // 7. Uninstall the bridge
     uninstall();
     uninstall = null;
@@ -121,15 +142,16 @@ describe('DrishtiTestBridge Lifecycle & State Restoration', () => {
     expect((globalThis as unknown as { __DRISHTI_TEST__?: unknown }).__DRISHTI_TEST__).toBeNull();
 
     // - Subsequent re-installation works cleanly without error or state bleed
-    const reinstallCleanup = installDrishtiTestBridge(engine, () => null);
+    uninstall = installDrishtiTestBridge(engine, () => null);
     const bridge2 = (globalThis as unknown as { __DRISHTI_TEST__: import('@/testBridge/drishtiTestBridge').DrishtiTestBridge }).__DRISHTI_TEST__;
     expect(bridge2).toBeDefined();
     expect(bridge2.getOperatorTracks().find((t) => t.trackNo === targetTrackNo)?.estRangeM).toBe(origRange);
-    reinstallCleanup();
+    uninstall();
+    uninstall = null;
     expect(Object.prototype.hasOwnProperty.call(engine.tracker, 'getTrackEstimate')).toBe(false);
 
     // 9. Malformed input rejection tests
-    const reinstallForValidation = installDrishtiTestBridge(engine, () => null);
+    uninstall = installDrishtiTestBridge(engine, () => null);
     const bridge3 = (globalThis as unknown as { __DRISHTI_TEST__: import('@/testBridge/drishtiTestBridge').DrishtiTestBridge }).__DRISHTI_TEST__;
 
     // Non-string or empty trackNo
@@ -169,6 +191,7 @@ describe('DrishtiTestBridge Lifecycle & State Restoration', () => {
     // Non-object override
     expect((bridge3.overrideTrackEstimate as (t: string, o: unknown) => boolean)(targetTrackNo, 'invalid')).toBe(false);
 
-    reinstallForValidation();
+    uninstall();
+    uninstall = null;
   });
 });

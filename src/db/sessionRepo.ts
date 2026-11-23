@@ -513,8 +513,18 @@ export async function getUnitTraineeSummaries(
 
   const summaries: UnitTraineeSummary[] = [];
 
+  const sessionsByTrainee = new Map<string, SessionRow[]>();
+  for (const s of allSessions) {
+    const list = sessionsByTrainee.get(s.traineeUid);
+    if (list) {
+      list.push(s);
+    } else {
+      sessionsByTrainee.set(s.traineeUid, [s]);
+    }
+  }
+
   for (const [traineeUid, trainee] of traineeMap.entries()) {
-    const traineeSessions = allSessions.filter((s) => s.traineeUid === traineeUid);
+    const traineeSessions = sessionsByTrainee.get(traineeUid) ?? [];
     const totalSessions = traineeSessions.length;
     if (totalSessions === 0) {
       continue;

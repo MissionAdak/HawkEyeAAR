@@ -6,7 +6,13 @@ import {
   VALID_OPTICAL_RESOLUTION_LEVELS,
   VALID_OPTICAL_VISIBILITY_STATES,
   VALID_OBSERVED_AIRFRAME_SIGNATURES,
-} from './targets/targetObservation';
+  type TargetDisplayMode,
+  type ObservedAirframeSignature,
+  type SensorHealthState,
+  type OpticalResolutionLevel,
+  type OpticalVisibilityState,
+  type ApprovedSensorObservation,
+} from '@/sim/sensorObservation';
 
 export {
   VALID_SENSOR_HEALTH_STATES,
@@ -14,47 +20,13 @@ export {
   VALID_OPTICAL_RESOLUTION_LEVELS,
   VALID_OPTICAL_VISIBILITY_STATES,
   VALID_OBSERVED_AIRFRAME_SIGNATURES,
+  type TargetDisplayMode,
+  type ObservedAirframeSignature,
+  type SensorHealthState,
+  type OpticalResolutionLevel,
+  type OpticalVisibilityState,
+  type ApprovedSensorObservation,
 };
-
-export type TargetDisplayMode = (typeof VALID_TARGET_DISPLAY_MODES)[number];
-
-/**
- * Legitimate physical appearance signatures observable by optical/EO sensors.
- *
- * Invariant (Task 17.3 §3 & Rule R10.3):
- * These are physical airframe geometry signatures, NOT tactical threat classes.
- * An airframe shape (e.g. MULTIROTOR_COMPACT) does NOT prove hostile intent.
- */
-export type ObservedAirframeSignature = (typeof VALID_OBSERVED_AIRFRAME_SIGNATURES)[number];
-
-export type SensorHealthState = (typeof VALID_SENSOR_HEALTH_STATES)[number];
-
-export type OpticalResolutionLevel = (typeof VALID_OPTICAL_RESOLUTION_LEVELS)[number];
-export type OpticalVisibilityState = (typeof VALID_OPTICAL_VISIBILITY_STATES)[number];
-
-/**
- * Approved Sensor Observation Output.
- *
- * Invariant (Task 17.3 §3, Task 17.4 §1, §3):
- * Produced by the authoritative simulation sensor subsystem only when physical
- * conditions (active sensor, sensor health, LOS/masking, range, weather) permit.
- * Never populated simply because an underlying TrackEntity exists.
- */
-export interface ApprovedSensorObservation {
-  signature: ObservedAirframeSignature;
-  observedSignature?: ObservedAirframeSignature;
-  timestampMs: number;
-  sensorSource: 'EOIR' | 'RADAR' | 'RF';
-  activeSensor?: 'EOIR' | 'RADAR' | 'RF';
-  confidence: number;
-  resolutionLevel: OpticalResolutionLevel;
-  resolution?: OpticalResolutionLevel;
-  visibilityState: OpticalVisibilityState;
-  sensorAvailability: boolean;
-  sensorHealth: SensorHealthState;
-  sensorHealthOk?: boolean;
-  estimatedRangeM?: number;
-}
 
 /**
  * Safe Operator-Visible Track Projection for 3D Rendering.

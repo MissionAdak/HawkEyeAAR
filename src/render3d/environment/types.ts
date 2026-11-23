@@ -1,4 +1,6 @@
-import type { ZoneSpec } from '@/sim/types';
+import type { ZoneSpec, WeatherType } from '@/sim/types';
+
+export type { WeatherType };
 
 export type EnvironmentPreset =
   | 'URBAN_DENSE'
@@ -7,8 +9,6 @@ export type EnvironmentPreset =
   | 'FOREST_VALLEY'
   | 'COASTAL_AIRFIELD'
   | 'OPEN_RURAL';
-
-export type WeatherType = 'CLEAR' | 'FOG' | 'RAIN' | 'OVERCAST';
 
 export type EnvironmentCategory =
   | 'BUILDING'

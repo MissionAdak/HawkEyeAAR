@@ -1,11 +1,64 @@
-import type { TrackEntity, SensorMode, DroneType } from './types';
-import type {
-  ApprovedSensorObservation,
-  ObservedAirframeSignature,
-  OpticalVisibilityState,
-} from '@/render3d/types';
-import type { WeatherType } from '@/render3d/environment/types';
+import type { TrackEntity, SensorMode, DroneType, WeatherType } from './types';
 import type { SensorHealthStatus } from './engine';
+
+export const VALID_SENSOR_HEALTH_STATES = ['OK', 'DEG', 'OUT'] as const;
+export type SensorHealthState = (typeof VALID_SENSOR_HEALTH_STATES)[number];
+
+export const VALID_SENSOR_MODES = ['RADAR', 'EOIR', 'RF'] as const;
+
+export const VALID_TARGET_DISPLAY_MODES = ['AUTO', 'RADAR', 'AIRFRAME'] as const;
+export type TargetDisplayMode = (typeof VALID_TARGET_DISPLAY_MODES)[number];
+
+export const VALID_OPTICAL_RESOLUTION_LEVELS = ['FULL', 'DEGRADED', 'UNRESOLVED'] as const;
+export type OpticalResolutionLevel = (typeof VALID_OPTICAL_RESOLUTION_LEVELS)[number];
+
+export const VALID_OPTICAL_VISIBILITY_STATES = [
+  'CLEAR',
+  'DEGRADED',
+  'DEGRADED_FOG',
+  'DEGRADED_RAIN',
+  'DEGRADED_NIGHT_THERMAL',
+  'MASKED',
+  'OUT_OF_RANGE',
+] as const;
+export type OpticalVisibilityState = (typeof VALID_OPTICAL_VISIBILITY_STATES)[number];
+
+export const VALID_OBSERVED_AIRFRAME_SIGNATURES = [
+  'MULTIROTOR_COMPACT',
+  'MULTIROTOR_WITH_CAMERA_POD',
+  'MULTIROTOR_STANDARD',
+  'MULTIROTOR_MICRO',
+  'FIXED_WING_DELTA',
+  'BIRD_LIKE',
+  'UNRESOLVED_AIRFRAME',
+] as const;
+export type ObservedAirframeSignature = (typeof VALID_OBSERVED_AIRFRAME_SIGNATURES)[number];
+
+export { WeatherType };
+
+/**
+ * Approved Sensor Observation Output.
+ *
+ * Invariant (Task 17.3 §3, Task 17.4 §1, §3):
+ * Produced by the authoritative simulation sensor subsystem only when physical
+ * conditions (active sensor, sensor health, LOS/masking, range, weather) permit.
+ * Never populated simply because an underlying TrackEntity exists.
+ */
+export interface ApprovedSensorObservation {
+  signature: ObservedAirframeSignature;
+  observedSignature?: ObservedAirframeSignature;
+  timestampMs: number;
+  sensorSource: 'EOIR' | 'RADAR' | 'RF';
+  activeSensor?: 'EOIR' | 'RADAR' | 'RF';
+  confidence: number;
+  resolutionLevel: OpticalResolutionLevel;
+  resolution?: OpticalResolutionLevel;
+  visibilityState: OpticalVisibilityState;
+  sensorAvailability: boolean;
+  sensorHealth: SensorHealthState;
+  sensorHealthOk?: boolean;
+  estimatedRangeM?: number;
+}
 
 /**
  * NOTIONAL TRAINING ASSUMPTIONS & VISIBILITY PARAMETERS (Task 17.3 §4, §8):
@@ -30,16 +83,18 @@ import type { SensorHealthStatus } from './engine';
  *
  * 5. Sensor Availability:
  *    - EO/IR 'OUT': sensor is offline/failed/destroyed. Zero optical observations generated.
- *    - EO/IR 'DEG': sensor optical lens is clouded or tracking jittered; produces degraded observations.
+ *      EO/IR 'DEG': sensor optical lens is clouded or tracking jittered; produces degraded observations.
  *
  * CAUTION: These parameters are synthetic training heuristics for simulation education,
  * NOT physically calibrated military sensor specifications.
  */
-export const NOMINAL_CLEAR_OPTICAL_RECOGNITION_M = 2400;
-export const NOMINAL_MAX_OPTICAL_DETECTION_M = 3800;
+export const CLEAR_OPTICAL_RANGE_M = 2400;
+export const MAX_OPTICAL_RANGE_M = 3800;
+export const NOMINAL_CLEAR_OPTICAL_RECOGNITION_M = CLEAR_OPTICAL_RANGE_M;
+export const NOMINAL_MAX_OPTICAL_DETECTION_M = MAX_OPTICAL_RANGE_M;
 
-export const VALID_PRODUCER_SENSOR_MODES: readonly SensorMode[] = ['RADAR', 'EOIR', 'RF'];
-export const VALID_PRODUCER_HEALTH_STATES: readonly SensorHealthStatus[] = ['OK', 'DEG', 'OUT'];
+export const VALID_PRODUCER_SENSOR_MODES: readonly SensorMode[] = VALID_SENSOR_MODES;
+export const VALID_PRODUCER_HEALTH_STATES: readonly SensorHealthStatus[] = VALID_SENSOR_HEALTH_STATES;
 
 export interface SensorObservationPipelineContext {
   activeSensor: SensorMode;
@@ -50,25 +105,27 @@ export interface SensorObservationPipelineContext {
   sensorPos?: { x: number; y: number; z: number };
 }
 
+export type SensorHealthValidationResult =
+  | { isValid: true; health: Record<SensorMode, SensorHealthStatus> }
+  | { isValid: false; error: string };
+
 /**
- * Validates sensor health record fail-closed at the producer boundary (Task 17.5.3 Fix B).
+ * Validates sensor health record fail-closed (Task 17.5.1 Part B1 & Task 17.5.3 Fix B).
  * Rejects missing records, non-objects, arrays, missing modes (RADAR, EOIR, RF),
  * null/undefined values, and non-conforming state strings.
  * Never silently defaults missing keys to 'OK'.
  */
-export function validateProducerSensorHealth(
-  raw: unknown
-): { isValid: true; health: Record<SensorMode, SensorHealthStatus> } | { isValid: false; error: string } {
+export function validateSensorHealthRecord(raw: unknown): SensorHealthValidationResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { isValid: false, error: 'Sensor health record is missing or not an object' };
   }
   const record = raw as Record<string, unknown>;
-  for (const mode of VALID_PRODUCER_SENSOR_MODES) {
+  for (const mode of VALID_SENSOR_MODES) {
     if (!(mode in record) || record[mode] === undefined || record[mode] === null) {
       return { isValid: false, error: `Missing sensor health key: ${mode}` };
     }
     const val = record[mode];
-    if (typeof val !== 'string' || !VALID_PRODUCER_HEALTH_STATES.includes(val as SensorHealthStatus)) {
+    if (typeof val !== 'string' || !VALID_SENSOR_HEALTH_STATES.includes(val as SensorHealthState)) {
       const valStr = typeof val === 'string' ? val : JSON.stringify(val);
       return { isValid: false, error: `Invalid sensor health state for ${mode}: ${valStr}` };
     }
@@ -82,6 +139,8 @@ export function validateProducerSensorHealth(
     },
   };
 }
+
+export const validateProducerSensorHealth = validateSensorHealthRecord;
 
 /**
  * Validates simulation clock at the producer boundary (Task 17.5.3 Fix B).

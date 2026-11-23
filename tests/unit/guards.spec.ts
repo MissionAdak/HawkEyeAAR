@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CLASSES, TRUE_CLASSES, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { applyTickFor } from '@/sim/inputQueue';
 import { SimEngine } from '@/sim/engine';
+import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
 import demo1Json from '@/director/bundled/demo1.json';
 import type { ScenarioSpec } from '@/sim/types';
 
@@ -207,6 +208,22 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
       const bridgeFile = path.resolve('src/testBridge/drishtiTestBridge.ts');
       const content = fs.readFileSync(bridgeFile, 'utf-8');
       expect(content).toContain("typeof __DRISHTI_E2E_BUILD__ === 'undefined' || !__DRISHTI_E2E_BUILD__");
+
+      const origE2E = (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+      try {
+        delete (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+        delete (globalThis as Record<string, unknown>).__DRISHTI_TEST__;
+        const dummyEngine = {} as unknown as SimEngine;
+        const cleanup = installDrishtiTestBridge(dummyEngine, () => null);
+        expect((globalThis as Record<string, unknown>).__DRISHTI_TEST__).toBeUndefined();
+        cleanup();
+      } finally {
+        if (origE2E === undefined) {
+          delete (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+        } else {
+          (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__ = origE2E;
+        }
+      }
     });
   });
 

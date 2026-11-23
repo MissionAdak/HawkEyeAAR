@@ -1,5 +1,5 @@
 import type { TrackClass, F2T2EAStep, SensorMode } from './types';
-import type { ApprovedSensorObservation } from '@/render3d/types';
+import type { ApprovedSensorObservation } from './sensorObservation';
 
 export type AltitudeBand = 'VLOW' | 'LOW' | 'MED' | 'HIGH';
 

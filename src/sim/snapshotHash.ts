@@ -1,5 +1,5 @@
 import type { ScenarioSpec } from './types';
-import { stableJson } from '@/db/aarTransfer';
+import { stableJson } from './serialization';
 
 /**
  * Standard pure-TypeScript SHA-256 implementation (FIPS 180-4).
