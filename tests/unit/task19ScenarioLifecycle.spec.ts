@@ -24,7 +24,7 @@ describe('TASK 19.1 — Complete Scenario Lifecycle & State Isolation', () => {
 
   describe('1. Scenario Catalog Validation & Configuration Integrity', () => {
     it('contains exactly 8 catalog scenarios, all satisfying fairness validation', () => {
-      expect(SCENARIO_CATALOG.length).toBe(8);
+      expect(SCENARIO_CATALOG).toHaveLength(8);
 
       const expectedIds = [
         'DEMO-1',
@@ -85,7 +85,7 @@ describe('TASK 19.1 — Complete Scenario Lifecycle & State Isolation', () => {
       expect(engine.sessionEnded).toBe(false);
 
       // Verify track entities are initialized
-      expect(engine.curr.length).toBe((spec.threats?.length || 0) + (spec.decoys?.length || 0));
+      expect(engine.curr).toHaveLength((spec.threats?.length || 0) + (spec.decoys?.length || 0));
       for (const entity of engine.curr) {
         expect(entity.trackNo).toMatch(/^T-\d{2}$/);
         expect(['UNDETECTED', 'FIND']).toContain(entity.step);
@@ -153,14 +153,14 @@ describe('TASK 19.1 — Complete Scenario Lifecycle & State Isolation', () => {
       // Verify threats are exclusively from SWARM-1, zero old tracks from DEMO-1 surviving
       const { spec: swarmSpec } = loadCatalogScenario('SWARM-1');
       const expectedSwarmThreats = (swarmSpec.threats?.length || 0) + (swarmSpec.decoys?.length || 0);
-      expect(engineInstance.curr.length).toBe(expectedSwarmThreats);
+      expect(engineInstance.curr).toHaveLength(expectedSwarmThreats);
       for (const e of engineInstance.curr) {
         expect(e.id).toMatch(/^(H-SWM|B-|C-)/);
       }
 
       // Verify events stream reset with new SIM_START
       const simStartEvents = engineInstance.events.filter((e) => e.type === 'SIM_START');
-      expect(simStartEvents.length).toBe(1);
+      expect(simStartEvents).toHaveLength(1);
       expect(simStartEvents[0].payload.scenarioId).toBe('SWARM-1');
     });
 
@@ -181,15 +181,15 @@ describe('TASK 19.1 — Complete Scenario Lifecycle & State Isolation', () => {
       expect(state.sessionStatus).toBe('READY');
       expect(state.isSimRunning).toBe(false);
       expect(state.isBriefingOpen).toBe(true);
-      expect(state.ui.trackRows.length).toBe(0);
+      expect(state.ui.trackRows).toHaveLength(0);
       expect(state.ui.selectedTrackNo).toBeNull();
 
       expect(engineInstance.spec).toBeNull();
-      expect(engineInstance.curr.length).toBe(0);
-      expect(engineInstance.prev.length).toBe(0);
-      expect(engineInstance.events.length).toBe(0);
-      expect(engineInstance.tracker.getAllEstimates().length).toBe(0);
-      expect(engineInstance.rfMeasurements.length).toBe(0);
+      expect(engineInstance.curr).toHaveLength(0);
+      expect(engineInstance.prev).toHaveLength(0);
+      expect(engineInstance.events).toHaveLength(0);
+      expect(engineInstance.tracker.getAllEstimates()).toHaveLength(0);
+      expect(engineInstance.rfMeasurements).toHaveLength(0);
       expect(engineInstance.tickIndex).toBe(0);
       expect(getActiveRecorder()).toBeNull();
     });

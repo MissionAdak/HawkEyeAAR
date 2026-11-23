@@ -67,7 +67,7 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
     const tick1 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? -1);
     expect(tick1).toBeGreaterThanOrEqual(0);
 
-    await page.waitForTimeout(500); // 500 ms ~ 10 ticks
+    await page.waitForTimeout(500); // NOSONAR typescript:S2925 - calibrated 500ms wall-clock duration to measure 20 Hz tick cadence
 
     const tick2 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? -1);
     const tickDelta = tick2 - tick1;
@@ -97,7 +97,7 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
 
     // 7. Verify simulation tick rate remains strictly 20 Hz under 3D presentation
     const tick3 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? -1);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(500); // NOSONAR typescript:S2925 - calibrated 500ms wall-clock duration to measure 20 Hz tick cadence
     const tick4 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? -1);
     const tickDelta3D = tick4 - tick3;
     expect(tickDelta3D).toBeGreaterThanOrEqual(7);
@@ -202,10 +202,10 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
     await expect(startBtn).toBeVisible({ timeout: 5000 });
     await startBtn.click();
 
-    await page.waitForTimeout(1000);
+    await expect(page.locator('.radar-frame canvas.cursor-crosshair')).toBeVisible({ timeout: 5000 });
 
     // Verify 0 render3d chunks loaded during 2D operation
-    expect(chunkRequests.length).toBe(0);
+    expect(chunkRequests).toHaveLength(0);
 
     // 2. Switch to 3D mode: should dynamically load local render3d chunk
     const to3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
@@ -233,7 +233,7 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
     await to3DBtn.click();
     await expect(canvas3D).toBeVisible();
 
-    expect(chunkRequests.length).toBe(chunkRequestCountAfter3D);
+    expect(chunkRequests).toHaveLength(chunkRequestCountAfter3D);
 
     // 5. Offline optional 3D verification (TASK 26-B Requirement C):
     // Simulate complete network disconnection and verify switching between 2D and 3D
@@ -248,11 +248,15 @@ test.describe('TASK 25 — Performance, Bundle & Resource Acceptance', () => {
       await expect(canvas3D).toBeVisible();
 
       // Step C: Verify optional view works without external requests or new chunk retrieval
-      expect(chunkRequests.length).toBe(chunkRequestCountAfter3D);
+      expect(chunkRequests).toHaveLength(chunkRequestCountAfter3D);
 
       // Step D: Verify authoritative simulation continues advancing offline
       const offlineTick1 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? 0);
-      await page.waitForTimeout(500);
+      await page.waitForFunction(
+        (startTick) => (window.__DRISHTI_TEST__?.getSimTick?.() ?? 0) >= startTick + 5,
+        offlineTick1,
+        { timeout: 3000 }
+      );
       const offlineTick2 = await page.evaluate(() => window.__DRISHTI_TEST__?.getSimTick?.() ?? 0);
       expect(offlineTick2).toBeGreaterThan(offlineTick1);
     } finally {
