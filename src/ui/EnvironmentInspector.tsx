@@ -50,7 +50,7 @@ export const EnvironmentInspector: React.FC<EnvironmentInspectorProps> = ({
   return (
     <div
       data-testid="environment-inspector-panel"
-      className="absolute top-[56px] left-2 z-30 w-[280px] bg-carbon-900/95 border border-line p-3 font-mono text-[11px] text-text-main shadow-xl backdrop-blur-sm select-none"
+      className="absolute top-[92px] left-2 z-30 w-[280px] bg-carbon-900/95 border border-line p-3 font-mono text-[11px] text-text-main shadow-xl backdrop-blur-sm select-none max-h-[calc(100%-100px)] overflow-y-auto custom-scrollbar"
     >
       {/* Header */}
       <div className="flex items-center justify-between pb-1.5 border-b border-line mb-2">

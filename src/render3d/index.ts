@@ -112,8 +112,9 @@ export * from './targets';
 export * from './effects';
 export { RadarSweep3D } from './radarSweep3d';
 export type { RadarSweep3DOptions } from './radarSweep3d';
-
-
-
-
+export { RenderTrackMotionFilter } from './motion/RenderTrackMotionFilter';
+export type {
+  FilteredTrackTransform,
+  RenderTrackMotionFilterOptions,
+} from './motion/RenderTrackMotionFilter';
 

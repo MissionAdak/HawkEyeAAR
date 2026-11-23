@@ -9,8 +9,6 @@ import {
   createAircraftBodyGeometry,
   createAircraftAccentGeometry,
   createAircraftHitProxyGeometry,
-  calculateScreenSpaceScale,
-  calculateAircraftOrientation,
 } from './aircraftModel';
 import type { SafeTrackView, Scene3DOptions } from './types';
 import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent, OperatorEventView } from '@/sim/types';
@@ -21,6 +19,7 @@ import type { TargetModelCategory, BuiltTargetModel, SensorObservationContext } 
 import { EngagementEffectManager } from './effects';
 import type { EngagementEffectContext } from './effects';
 import { RadarSweep3D } from './radarSweep3d';
+import { RenderTrackMotionFilter } from './motion/RenderTrackMotionFilter';
 
 // Tactical Color Tokens adhering to DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -112,6 +111,7 @@ export class Scene3D {
 
   // Track marker pool & meshes
   private readonly trackMeshMap: Map<string, TrackMeshRecord> = new Map();
+  private readonly motionFilter = new RenderTrackMotionFilter();
 
   // Shared reusable geometries and materials
   private readonly sharedGeometries: {
@@ -598,6 +598,7 @@ export class Scene3D {
   }
 
   private pruneInactiveTracks(activeTrackNos: Set<string>): void {
+    this.motionFilter.prune(activeTrackNos);
     for (const [trackNo, record] of this.trackMeshMap.entries()) {
       if (!activeTrackNos.has(trackNo)) {
         this.tracksGroup.remove(record.group);
@@ -652,74 +653,20 @@ export class Scene3D {
         record.targetModelInstance = newModel;
       }
 
-      // Compute Three.js position from estimated coordinates
-      const threePos = toThree(track.pos.x, track.pos.y, track.pos.z);
-      if (!record.isInitialized) {
-        record.group.position.set(threePos.x, 0, threePos.z);
-        record.modelAnchor.position.set(0, threePos.y, 0);
-        record.isInitialized = true;
-      } else {
-        const dx = threePos.x - record.group.position.x;
-        const dz = threePos.z - record.group.position.z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq > 500 * 500) {
-          // Large step or teleport: snap immediately
-          record.group.position.set(threePos.x, 0, threePos.z);
-          record.modelAnchor.position.set(0, threePos.y, 0);
-        } else {
-          // Strong exponential smoothing (factor 0.08) to completely filter out tracker measurement noise and 20 Hz step jitter
-          record.group.position.x += dx * 0.08;
-          record.group.position.z += dz * 0.08;
-          record.modelAnchor.position.y += (threePos.y - record.modelAnchor.position.y) * 0.08;
-        }
-      }
-      record.stem.scale.set(1, Math.max(1, record.modelAnchor.position.y), 1);
-
-      // Calculate distance-dependent screen-space scale
-      let distanceM = 7500;
-      let fovDeg = 45;
-      if (camera instanceof THREE.PerspectiveCamera) {
-        fovDeg = camera.fov;
-        distanceM = camera.position.distanceTo(new THREE.Vector3(record.group.position.x, record.modelAnchor.position.y, record.group.position.z));
-      } else if (camera) {
-        distanceM = camera.position.distanceTo(new THREE.Vector3(record.group.position.x, record.modelAnchor.position.y, record.group.position.z));
-      }
       // Distinct readable scale: 34px for radar contact symbols, 48px for resolved optical airframes
       const targetPixelSize = targetCategory === 'RADAR_SYMBOL' ? 34 : 48;
-      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, targetPixelSize, true);
 
-      // Derive orientation with deadband threshold: only turn if speed is significant (> 2.0 m/s)
-      // When hovering or slow loitering, keep previous stable heading to eliminate needle spinning
-      const speedH = Math.hypot(track.vel.x, track.vel.y);
-      let targetHeading = record.lastHeadingRad;
-      let targetPitch = 0;
+      // Update dedicated time-normalized motion filter (Task 29)
+      const xform = this.motionFilter.updateTrack(track, camera, viewportHeight, targetPixelSize);
 
-      if (speedH >= 2.0) {
-        const orient = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
-        targetHeading = orient.headingRad;
-        targetPitch = Math.max(-0.25, Math.min(0.25, orient.pitchRad)); // Clamp pitch to realistic level flight +/- 14 deg
-      }
+      record.group.position.set(xform.position.x, 0, xform.position.z);
+      record.modelAnchor.position.set(0, xform.altitudeM, 0);
+      record.stem.scale.set(1, Math.max(1, xform.altitudeM), 1);
 
-      // Gentle angular smoothing (0.05 per frame) across the -PI to +PI branch cut
-      let dHeading = targetHeading - record.lastHeadingRad;
-      while (dHeading > Math.PI) dHeading -= 2 * Math.PI;
-      while (dHeading < -Math.PI) dHeading += 2 * Math.PI;
-      const smoothedHeading = record.lastHeadingRad + dHeading * 0.05;
-      record.lastHeadingRad = smoothedHeading;
-
-      const lastPitch = record.lastPitchRad ?? 0;
-      const smoothedPitch = lastPitch + (targetPitch - lastPitch) * 0.05;
-      record.lastPitchRad = smoothedPitch;
-
-      record.aircraftGroup.rotation.set(smoothedPitch, -smoothedHeading, 0, 'YXZ');
-
-      // Deadband scale filter: only adjust scale if change is > 2.5% to eliminate any scale pulsation/throbbing
-      const currentScale = record.aircraftGroup.scale.x || scale;
-      let smoothedScale = currentScale;
-      if (Math.abs(scale - currentScale) / currentScale > 0.025) {
-        smoothedScale = currentScale + (scale - currentScale) * 0.06;
-      }
-      record.aircraftGroup.scale.set(smoothedScale, smoothedScale, smoothedScale);
+      record.lastHeadingRad = xform.headingRad;
+      record.lastPitchRad = xform.pitchRad;
+      record.aircraftGroup.rotation.set(xform.pitchRad, -xform.headingRad, 0, 'YXZ');
+      record.aircraftGroup.scale.set(xform.scale, xform.scale, xform.scale);
 
       // Symbology on accent mesh & separate label badge
       this.applyTrackSymbology(record, track.traineeLabel);
@@ -728,14 +675,14 @@ export class Scene3D {
       const isSelected = track.trackNo === selectedTrackNo || track.isSelected;
       if (record.selectionBox) {
         record.selectionBox.visible = isSelected;
-        record.selectionBox.scale.set(smoothedScale, smoothedScale, smoothedScale);
+        record.selectionBox.scale.set(xform.scale, xform.scale, xform.scale);
       }
       record.stem.material = isSelected
         ? this.sharedMaterials.stemSelected
         : this.sharedMaterials.stem;
 
       // Position label sprite above the aircraft
-      record.labelSprite.position.set(0, record.modelAnchor.position.y + Math.max(35, smoothedScale * 1.5), 0);
+      record.labelSprite.position.set(0, xform.altitudeM + Math.max(35, xform.scale * 1.5), 0);
 
       this.updateGhostRing(record, track);
     }
@@ -872,6 +819,10 @@ export class Scene3D {
     this.environmentManager.setLowFidelity(lowFi);
   }
 
+  public getMotionFilter(): RenderTrackMotionFilter {
+    return this.motionFilter;
+  }
+
   /**
    * Complete scene teardown and memory cleanup.
    */
@@ -889,7 +840,8 @@ export class Scene3D {
     this.engagementEffectManager.dispose();
     this.targetModelFactory.dispose();
 
-    // 2. Dispose track resources
+    // 2. Dispose track resources & motion filter
+    this.motionFilter.reset();
     for (const record of this.trackMeshMap.values()) {
       if (record.labelSprite.material.map) {
         record.labelSprite.material.map.dispose();

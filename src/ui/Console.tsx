@@ -146,7 +146,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           key={preset}
           onClick={() => onCameraPreset(preset)}
-          className={`px-2 py-0.5 border transition-colors ${
+          className={`px-1.5 py-0.5 text-[8.5px] border transition-colors ${
             cameraPreset === preset
               ? 'border-friend text-friend bg-friend/20 font-bold'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -161,7 +161,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
           key={dm}
           onClick={() => onTargetDisplayMode(dm)}
           title={getTargetDisplayTitle(dm)}
-          className={`px-2 py-0.5 border transition-colors ${
+          className={`px-1.5 py-0.5 text-[8.5px] border transition-colors ${
             targetDisplayMode === dm
               ? 'border-amber text-amber bg-amber/20 font-bold'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -175,7 +175,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           disabled
           title="Target Recognition Guide locked during EVALUATION exercise (Rule F5)"
-          className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+          className="px-1.5 py-0.5 text-[8.5px] border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed"
         >
           RECOG (EVAL LOCK)
         </button>
@@ -183,7 +183,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           onClick={onOpenRecogModal}
           title="Open C-UAS Target Recognition Manual & Threat Taxonomy [M]"
-          className="px-2 py-0.5 border border-amber/70 text-amber bg-carbon-900/80 hover:bg-amber hover:text-carbon-950 font-bold transition-colors"
+          className="px-1.5 py-0.5 text-[8.5px] border border-amber/70 text-amber bg-carbon-900/80 hover:bg-amber hover:text-carbon-950 font-bold transition-colors"
         >
           RECOG GUIDE
         </button>
@@ -192,7 +192,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
       <button
         onClick={onToggleEnvelopes}
         title="Toggle 3D Effector Envelopes [E]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
+        className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
           showEnvelopes
             ? 'border-amber text-amber bg-amber/20'
             : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -204,7 +204,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
       <button
         onClick={onToggleLos}
         title="Toggle Modelled Line-of-Sight / Masking [K]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
+        className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
           showLos
             ? 'border-friend text-friend bg-friend/20'
             : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -216,7 +216,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
       <button
         onClick={onToggleClusters}
         title="Toggle Operator-Visible 3D Clusters [U]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
+        className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
           showClusters
             ? 'border-phosphor text-phosphor bg-phosphor/20'
             : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -229,7 +229,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           disabled
           title="Training Aid locked and unavailable in EVALUATION mode (Rule F5)"
-          className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+          className="px-1.5 py-0.5 text-[8.5px] border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed"
         >
           [X] AID (LOCKED IN EVAL)
         </button>
@@ -238,7 +238,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
           <button
             onClick={onToggleTrainingAid}
             title="Toggle 3D Training Aid (Modelled Shadows & Ref-RCS Shells) [X]"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
+            className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
               showTrainingAid
                 ? 'border-amber text-amber bg-amber/20'
                 : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -249,7 +249,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
           <button
             onClick={onToggleCrossSection}
             title="Open 2D Elevation Cross-Section Along Bearing"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
+            className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
               showCrossSection
                 ? 'border-amber text-amber bg-amber/20'
                 : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -991,18 +991,18 @@ let toastCounter = 0;
       <div className="console-center bg-carbon-950">
         <div className="flex items-center justify-between w-full h-full relative px-1">
           {/* Left Gutter: Range Rings Legend (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[9px] font-mono text-text-dim pr-1 select-none shrink-0 w-[108px]">
-            <div className="border-l border-phosphorDim pl-1.5">
+          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pr-1 select-none shrink-0 w-[92px] overflow-hidden">
+            <div className="border-l border-phosphorDim pl-1">
               <span className="text-phosphor block font-bold whitespace-nowrap">5.0 km</span>
-              <span className="whitespace-nowrap">MAX RADAR</span>
+              <span className="whitespace-nowrap tracking-tighter">MAX RADAR</span>
             </div>
-            <div className="border-l border-phosphorDim pl-1.5">
+            <div className="border-l border-phosphorDim pl-1">
               <span className="text-text-main block whitespace-nowrap">3.0 km</span>
-              <span className="whitespace-nowrap">NOMINAL REF</span>
+              <span className="whitespace-nowrap tracking-tighter">NOMINAL REF</span>
             </div>
-            <div className="border-l border-amber pl-1.5">
+            <div className="border-l border-amber pl-1">
               <span className="text-amber block font-bold whitespace-nowrap">0.5 km</span>
-              <span className="whitespace-nowrap">POINT OF NO RETURN</span>
+              <span className="whitespace-nowrap tracking-tighter">POINT OF NO RETURN</span>
             </div>
           </div>
 
@@ -1016,8 +1016,7 @@ let toastCounter = 0;
               viewMode === '3D'
                 ? {
                     width: 'var(--radar-w-3d, min(960px, max(var(--radar), calc(100vw - 778px))))',
-                    minWidth: 'var(--radar)',
-                    maxWidth: 'calc(100% - 228px)',
+                    maxWidth: 'calc(100% - 194px)',
                     height: 'var(--radar)',
                   }
                 : {
@@ -1080,15 +1079,15 @@ let toastCounter = 0;
 
             {/* 3D Model Scale & Control Hint */}
             {viewMode === '3D' && (
-              <div className="absolute bottom-1 inset-x-2 z-10 flex flex-col items-center gap-0.5 pointer-events-none select-none font-mono text-text-dim text-[8px]">
+              <div className="absolute bottom-1 inset-x-2 z-10 flex flex-col items-center gap-0.5 pointer-events-none select-none font-mono text-text-dim text-[7.5px] tracking-tight">
                 <div
                   title="Aircraft models are enlarged for tactical visual identification. Underlying world positions and radar ranges are authoritative and unchanged."
-                  className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm"
+                  className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm max-w-[96%] overflow-hidden text-ellipsis"
                 >
                   AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
                 </div>
-                <div className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm">
-                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [G] | RESET: [HOME]
+                <div className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm max-w-[96%] overflow-hidden text-ellipsis">
+                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB | FOCUS: DBLCLICK / [G] | RESET: [HOME]
                 </div>
               </div>
             )}
@@ -1157,18 +1156,18 @@ let toastCounter = 0;
           </div>
 
           {/* Right Gutter: Active Mode Telemetry (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[9px] font-mono text-text-dim pl-1 select-none shrink-0 w-[108px] text-right">
-            <div className="border-r border-line pr-1.5 text-right">
+          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pl-1 select-none shrink-0 w-[92px] text-right overflow-hidden">
+            <div className="border-r border-line pr-1 text-right">
               <span className="text-text-main block font-bold whitespace-nowrap">30 RPM</span>
-              <span className="whitespace-nowrap">SWEEP RATE</span>
+              <span className="whitespace-nowrap tracking-tighter">SWEEP RATE</span>
             </div>
-            <div className="border-r border-line pr-1.5 text-right">
+            <div className="border-r border-line pr-1 text-right">
               <span className="text-text-main block font-bold whitespace-nowrap">20 Hz</span>
-              <span className="whitespace-nowrap">DETERMINISTIC SIM</span>
+              <span className="whitespace-nowrap tracking-tighter">DETERMINISTIC SIM</span>
             </div>
-            <div className="border-r border-line pr-1.5 text-right">
+            <div className="border-r border-line pr-1 text-right">
               <span className="text-phosphor block font-bold whitespace-nowrap">60 FPS</span>
-              <span className="whitespace-nowrap">RENDER TARGET</span>
+              <span className="whitespace-nowrap tracking-tighter">RENDER TARGET</span>
             </div>
           </div>
         </div>

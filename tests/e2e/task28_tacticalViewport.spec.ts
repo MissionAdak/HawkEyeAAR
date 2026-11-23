@@ -116,6 +116,49 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
     await page.screenshot({ path: shotPath, fullPage: true });
   });
 
+  test('Fix C & E: 3D viewport at 1280x720 has strictly zero gutter overlap or clipping', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto('/');
+
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    const radarFrame = page.locator('.radar-frame');
+    const toggle3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DBtn).toBeVisible();
+    await toggle3DBtn.click();
+
+    const box3D = await radarFrame.boundingBox();
+    expect(box3D).not.toBeNull();
+
+    const leftGutter = page.getByText('5.0 km', { exact: true });
+    await expect(leftGutter).toBeVisible();
+    const rightGutter = page.getByText('30 RPM', { exact: true });
+    await expect(rightGutter).toBeVisible();
+    const pnrText = page.getByText('POINT OF NO RETURN', { exact: true });
+    await expect(pnrText).toBeVisible();
+    const simText = page.getByText('DETERMINISTIC SIM', { exact: true });
+    await expect(simText).toBeVisible();
+
+    const leftBox = await leftGutter.boundingBox();
+    const rightBox = await rightGutter.boundingBox();
+    const pnrBox = await pnrText.boundingBox();
+    const simBox = await simText.boundingBox();
+    expect(leftBox).not.toBeNull();
+    expect(rightBox).not.toBeNull();
+    expect(pnrBox).not.toBeNull();
+    expect(simBox).not.toBeNull();
+
+    expect(leftBox!.x).toBeGreaterThanOrEqual(240); // To the right of left rail (240px)
+    expect(leftBox!.x + leftBox!.width).toBeLessThanOrEqual(box3D!.x + 1); // Left of 3D canvas
+    expect(pnrBox!.x + pnrBox!.width).toBeLessThanOrEqual(box3D!.x + 1); // Longest left string left of 3D canvas
+    expect(box3D!.x + box3D!.width).toBeLessThanOrEqual(rightBox!.x + 1); // 3D canvas left of right gutter
+    expect(box3D!.x + box3D!.width).toBeLessThanOrEqual(simBox!.x + 1); // 3D canvas left of longest right string
+    expect(rightBox!.x + rightBox!.width).toBeLessThanOrEqual(1280 - 320); // To the left of right rail (320px)
+    expect(simBox!.x + simBox!.width).toBeLessThanOrEqual(1280 - 320); // Longest right string inside right rail
+  });
+
   test('Fix A: Toast feedback when choosing TGT:AIR under non-EO/IR sensor mode', async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/');
@@ -126,6 +169,9 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
 
     // Switch to 3D View
     await page.getByRole('button', { name: /\[V\] 3D VIEW/i }).click();
+
+    // Ensure RADAR mode is active (since 3D view defaults to EO/IR)
+    await page.getByRole('button', { name: /\[1\] RADAR/i }).click();
 
     // While RADAR is active, click TGT:AIR
     const airframeBtn = page.getByRole('button', { name: /TGT:AIR/i });
