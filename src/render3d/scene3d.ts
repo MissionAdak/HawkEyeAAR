@@ -47,6 +47,8 @@ export interface TrackMeshRecord {
   labelSprite: THREE.Sprite;
   selectionBox: THREE.LineSegments | null;
   lastHeadingRad: number;
+  lastPitchRad?: number;
+  isInitialized?: boolean;
   currentCategory?: TargetModelCategory;
   currentSignature?: string;
   targetModelInstance?: BuiltTargetModel;
@@ -652,28 +654,58 @@ export class Scene3D {
 
       // Compute Three.js position from estimated coordinates
       const threePos = toThree(track.pos.x, track.pos.y, track.pos.z);
-      record.group.position.set(threePos.x, 0, threePos.z);
-      record.modelAnchor.position.set(0, threePos.y, 0);
-      record.stem.scale.set(1, Math.max(1, threePos.y), 1);
+      if (!record.isInitialized) {
+        record.group.position.set(threePos.x, 0, threePos.z);
+        record.modelAnchor.position.set(0, threePos.y, 0);
+        record.isInitialized = true;
+      } else {
+        const dx = threePos.x - record.group.position.x;
+        const dz = threePos.z - record.group.position.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq > 1000 * 1000) {
+          // Large step or teleport: snap immediately
+          record.group.position.set(threePos.x, 0, threePos.z);
+          record.modelAnchor.position.set(0, threePos.y, 0);
+        } else {
+          // Smooth 60 FPS interpolation (factor 0.25) to eliminate tracker noise and stepped 20 Hz updates
+          record.group.position.x += dx * 0.25;
+          record.group.position.z += dz * 0.25;
+          record.modelAnchor.position.y += (threePos.y - record.modelAnchor.position.y) * 0.25;
+        }
+      }
+      record.stem.scale.set(1, Math.max(1, record.modelAnchor.position.y), 1);
 
       // Calculate distance-dependent screen-space scale
       let distanceM = 7500;
       let fovDeg = 45;
       if (camera instanceof THREE.PerspectiveCamera) {
         fovDeg = camera.fov;
-        distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
+        distanceM = camera.position.distanceTo(new THREE.Vector3(record.group.position.x, record.modelAnchor.position.y, record.group.position.z));
       } else if (camera) {
-        distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
+        distanceM = camera.position.distanceTo(new THREE.Vector3(record.group.position.x, record.modelAnchor.position.y, record.group.position.z));
       }
       // Distinct readable scale: 34px for radar contact symbols, 48px for resolved optical airframes
       const targetPixelSize = targetCategory === 'RADAR_SYMBOL' ? 34 : 48;
       const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, targetPixelSize, true);
 
-      // Derive orientation from safe velocity vector with stable fallback
+      // Derive orientation from safe velocity vector with stable fallback & shortest-arc angular smoothing
       const { headingRad, pitchRad } = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
-      record.lastHeadingRad = headingRad;
-      record.aircraftGroup.rotation.set(pitchRad, -headingRad, 0, 'YXZ');
-      record.aircraftGroup.scale.set(scale, scale, scale);
+      let dHeading = headingRad - record.lastHeadingRad;
+      while (dHeading > Math.PI) dHeading -= 2 * Math.PI;
+      while (dHeading < -Math.PI) dHeading += 2 * Math.PI;
+      const smoothedHeading = record.lastHeadingRad + dHeading * 0.20;
+      record.lastHeadingRad = smoothedHeading;
+
+      const lastPitch = record.lastPitchRad ?? 0;
+      const smoothedPitch = lastPitch + (pitchRad - lastPitch) * 0.20;
+      record.lastPitchRad = smoothedPitch;
+
+      record.aircraftGroup.rotation.set(smoothedPitch, -smoothedHeading, 0, 'YXZ');
+
+      // Smooth scale interpolation to prevent scale stepping on zoom
+      const currentScale = record.aircraftGroup.scale.x || scale;
+      const smoothedScale = currentScale + (scale - currentScale) * 0.25;
+      record.aircraftGroup.scale.set(smoothedScale, smoothedScale, smoothedScale);
 
       // Symbology on accent mesh & separate label badge
       this.applyTrackSymbology(record, track.traineeLabel);
@@ -682,14 +714,14 @@ export class Scene3D {
       const isSelected = track.trackNo === selectedTrackNo || track.isSelected;
       if (record.selectionBox) {
         record.selectionBox.visible = isSelected;
-        record.selectionBox.scale.set(scale, scale, scale);
+        record.selectionBox.scale.set(smoothedScale, smoothedScale, smoothedScale);
       }
       record.stem.material = isSelected
         ? this.sharedMaterials.stemSelected
         : this.sharedMaterials.stem;
 
       // Position label sprite above the aircraft
-      record.labelSprite.position.set(0, threePos.y + Math.max(35, scale * 1.5), 0);
+      record.labelSprite.position.set(0, record.modelAnchor.position.y + Math.max(35, smoothedScale * 1.5), 0);
 
       this.updateGhostRing(record, track);
     }

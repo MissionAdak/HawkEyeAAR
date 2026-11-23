@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { BuiltTargetModel, TargetModelPalette } from './targetModelTypes';
 import { createBirdBodyGeometry, createUnknownContactGeometry } from './targetGeometry';
+import { createAircraftBodyGeometry } from '../aircraftModel';
 
 /**
  * 1. Friendly Tactical UAV (FRIENDLY).
@@ -200,8 +201,19 @@ export function buildRadarContactSymbolModel(palette: TargetModelPalette): Built
   const bodyMesh = new THREE.LineSegments(diamondGeom, palette.accent);
   group.add(bodyMesh);
 
+  // Realistic 3D tactical aircraft airframe in center of radar reticle (real object instead of pure yellow blip)
+  const airframeMat = new THREE.MeshLambertMaterial({
+    color: 0x22272e,
+  });
+  materials.push(airframeMat);
+  const airframeGeom = createAircraftBodyGeometry();
+  geometries.push(airframeGeom);
+  const airframeMesh = new THREE.Mesh(airframeGeom, airframeMat);
+  airframeMesh.scale.set(0.65, 0.65, 0.65);
+  group.add(airframeMesh);
+
   // Center radar return blip / pip
-  const pipGeom = new THREE.SphereGeometry(0.42, 8, 6);
+  const pipGeom = new THREE.SphereGeometry(0.35, 8, 6);
   geometries.push(pipGeom);
   const accentMesh = new THREE.Mesh(pipGeom, palette.accent);
   group.add(accentMesh);

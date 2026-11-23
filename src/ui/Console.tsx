@@ -315,14 +315,14 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   onEnterVr,
 }) => {
   return (
-    <div className="absolute top-2 left-2 z-20 flex flex-col gap-1 font-display text-[10px] max-w-[calc(100%-140px)] pointer-events-auto select-none">
+    <div className="absolute top-2 left-2 z-20 flex flex-col gap-1 font-display text-[9px] max-w-[calc(100%-140px)] pointer-events-auto select-none bg-carbon-950/80 border border-line/60 p-1 backdrop-blur-[2px]">
       {/* Primary Row: Sensors & Core Navigation */}
       <div className="flex items-center gap-1 flex-wrap">
         {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
           <button
             key={m}
             onClick={() => onSetSensor(m)}
-            className={`px-2 py-0.5 border transition-colors ${
+            className={`px-1.5 py-0.5 border transition-colors ${
               activeSensor === m
                 ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
                 : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -335,7 +335,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
         <button
           onClick={onToggleViewMode}
           title="Toggle 2D/3D Tactical View [V]"
-          className={`px-2 py-0.5 border font-bold transition-colors ${
+          className={`px-1.5 py-0.5 border font-bold transition-colors ${
             viewMode === '3D'
               ? 'border-friend text-friend bg-friend/20'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -347,7 +347,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
         <button
           onClick={onEnterVr}
           title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
-          className="px-2 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
+          className="px-1.5 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
         >
           [VR] EXPERIMENTAL
         </button>
@@ -356,7 +356,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
           onClick={onOpenScenarioModal}
           disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
           title="Open Mission / Exercise Scenario Selector [S]"
-          className={`px-2 py-0.5 border font-bold transition-colors ${
+          className={`px-1.5 py-0.5 border font-bold transition-colors ${
             mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
               ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
               : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
@@ -364,11 +364,21 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
         >
           [S] {currentScenarioId}
         </button>
+
+        {viewMode === '3D' && activeSensor === 'RADAR' && (
+          <button
+            onClick={() => onSetSensor('EOIR')}
+            title="Switch to EO/IR sensor to resolve 3D drone & aircraft models [2]"
+            className="px-1.5 py-0.5 border border-amber/70 text-amber bg-amber/15 hover:bg-amber hover:text-carbon-950 font-bold transition-colors animate-pulse"
+          >
+            → [2] VIEW 3D DRONES
+          </button>
+        )}
       </div>
 
       {/* Secondary Row: 3D Tactical Tools (Only visible in 3D view) */}
       {viewMode === '3D' && (
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap pt-0.5 border-t border-line/40">
           <ThreeDViewportControls
             cameraPreset={cameraPreset}
             showEnvelopes={showEnvelopes}
@@ -800,6 +810,8 @@ let toastCounter = 0;
 
       r3d.start();
       setViewMode('3D');
+      // Operator requirement: Default to EO/IR sensor in 3D view so 3D airframes are immediately visible
+      setSensor('EOIR');
       setWebGlError(null);
     } catch (err) {
       if (renderer3dRef.current) {
@@ -979,16 +991,16 @@ let toastCounter = 0;
       <div className="console-center bg-carbon-950">
         <div className="flex items-center justify-between w-full h-full relative px-1">
           {/* Left Gutter: Range Rings Legend (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-1 select-none shrink-0 w-24">
-            <div className="border-l border-phosphorDim pl-2">
+          <div className="flex flex-col justify-center space-y-3 text-[9px] font-mono text-text-dim pr-1 select-none shrink-0 w-[108px]">
+            <div className="border-l border-phosphorDim pl-1.5">
               <span className="text-phosphor block font-bold whitespace-nowrap">5.0 km</span>
               <span className="whitespace-nowrap">MAX RADAR</span>
             </div>
-            <div className="border-l border-phosphorDim pl-2">
+            <div className="border-l border-phosphorDim pl-1.5">
               <span className="text-text-main block whitespace-nowrap">3.0 km</span>
               <span className="whitespace-nowrap">NOMINAL REF</span>
             </div>
-            <div className="border-l border-amber pl-2">
+            <div className="border-l border-amber pl-1.5">
               <span className="text-amber block font-bold whitespace-nowrap">0.5 km</span>
               <span className="whitespace-nowrap">POINT OF NO RETURN</span>
             </div>
@@ -1005,7 +1017,7 @@ let toastCounter = 0;
                 ? {
                     width: 'var(--radar-w-3d, min(960px, max(var(--radar), calc(100vw - 778px))))',
                     minWidth: 'var(--radar)',
-                    maxWidth: 'calc(100% - 196px)',
+                    maxWidth: 'calc(100% - 228px)',
                     height: 'var(--radar)',
                   }
                 : {
@@ -1068,14 +1080,14 @@ let toastCounter = 0;
 
             {/* 3D Model Scale & Control Hint */}
             {viewMode === '3D' && (
-              <div className="absolute bottom-1.5 inset-x-2 z-10 flex items-center justify-between pointer-events-none select-none gap-2 font-mono text-text-dim">
+              <div className="absolute bottom-1 inset-x-2 z-10 flex flex-col items-center gap-0.5 pointer-events-none select-none font-mono text-text-dim text-[8px]">
                 <div
                   title="Aircraft models are enlarged for tactical visual identification. Underlying world positions and radar ranges are authoritative and unchanged."
-                  className="bg-carbon-900/90 border border-line px-1.5 py-0.5 text-[8px] truncate shrink-0 max-w-[270px]"
+                  className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm"
                 >
                   AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
                 </div>
-                <div className="bg-carbon-900/90 border border-line px-1.5 py-0.5 text-[9px] truncate text-right">
+                <div className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm">
                   DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [G] | RESET: [HOME]
                 </div>
               </div>
@@ -1145,16 +1157,16 @@ let toastCounter = 0;
           </div>
 
           {/* Right Gutter: Active Mode Telemetry (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-1 select-none shrink-0 w-24 text-right">
-            <div className="border-r border-line pr-2 text-right">
+          <div className="flex flex-col justify-center space-y-3 text-[9px] font-mono text-text-dim pl-1 select-none shrink-0 w-[108px] text-right">
+            <div className="border-r border-line pr-1.5 text-right">
               <span className="text-text-main block font-bold whitespace-nowrap">30 RPM</span>
               <span className="whitespace-nowrap">SWEEP RATE</span>
             </div>
-            <div className="border-r border-line pr-2 text-right">
+            <div className="border-r border-line pr-1.5 text-right">
               <span className="text-text-main block font-bold whitespace-nowrap">20 Hz</span>
               <span className="whitespace-nowrap">DETERMINISTIC SIM</span>
             </div>
-            <div className="border-r border-line pr-2 text-right">
+            <div className="border-r border-line pr-1.5 text-right">
               <span className="text-phosphor block font-bold whitespace-nowrap">60 FPS</span>
               <span className="whitespace-nowrap">RENDER TARGET</span>
             </div>

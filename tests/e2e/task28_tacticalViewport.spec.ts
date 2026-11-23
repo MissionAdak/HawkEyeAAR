@@ -85,17 +85,28 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
     await expect(leftGutter).toBeVisible();
     const rightGutter = page.getByText('30 RPM', { exact: true });
     await expect(rightGutter).toBeVisible();
+    const pnrText = page.getByText('POINT OF NO RETURN', { exact: true });
+    await expect(pnrText).toBeVisible();
+    const simText = page.getByText('DETERMINISTIC SIM', { exact: true });
+    await expect(simText).toBeVisible();
 
     // Assert strictly zero overlap: left gutter is left of radar frame, right gutter is right of radar frame
     const leftBox = await leftGutter.boundingBox();
     const rightBox = await rightGutter.boundingBox();
+    const pnrBox = await pnrText.boundingBox();
+    const simBox = await simText.boundingBox();
     expect(leftBox).not.toBeNull();
     expect(rightBox).not.toBeNull();
+    expect(pnrBox).not.toBeNull();
+    expect(simBox).not.toBeNull();
 
     expect(leftBox!.x).toBeGreaterThanOrEqual(240); // To the right of left rail (240px)
     expect(leftBox!.x + leftBox!.width).toBeLessThanOrEqual(box3D!.x + 1); // Left of 3D canvas
+    expect(pnrBox!.x + pnrBox!.width).toBeLessThanOrEqual(box3D!.x + 1); // Longest left string left of 3D canvas
     expect(box3D!.x + box3D!.width).toBeLessThanOrEqual(rightBox!.x + 1); // 3D canvas left of right gutter
+    expect(box3D!.x + box3D!.width).toBeLessThanOrEqual(simBox!.x + 1); // 3D canvas left of longest right string
     expect(rightBox!.x + rightBox!.width).toBeLessThanOrEqual(1366 - 320); // To the left of right rail (320px)
+    expect(simBox!.x + simBox!.width).toBeLessThanOrEqual(1366 - 320); // Longest right string inside right rail
 
     // Verify 3D footer hint uses [G] for focus
     await expect(page.getByText(/FOCUS: DBLCLICK \/ \[G\]/i)).toBeVisible();

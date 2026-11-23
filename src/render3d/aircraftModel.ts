@@ -230,7 +230,8 @@ export function calculateScreenSpaceScale(
       maxScale = 75;
     } else {
       minScale = 25;
-      maxScale = 130;
+      // Allow scale to expand gracefully beyond 4800m so aircraft maintain similar readable screen size when zooming out
+      maxScale = Math.max(130, (targetDistanceM / 4800) * 130);
     }
 
     return Math.max(minScale, Math.min(maxScale, rawScale));
