@@ -943,3 +943,43 @@ Files: `tests/unit/snapshotHash.spec.ts`, `tests/unit/task25BundleAcceptance.spe
   - Published production release to `origin/gh-pages` via `gh-pages -d dist`.
   - Clean linear fast-forward commit: `7957eb16d32cac3c9515ec10abac7c6eebb07d1f` advancing previous baseline `b9935052496b802fbc3d62e8bfdbd6da4307a228`.
 - [x] TASK 27-R-H Live Production Verification: Verified live deployment on `https://missionadak.github.io/HawkEyeAAR/` confirming HTTP 200 responses across HTML, entry JS (`index-BWZzAAB2.js`), CSS (`index-h_odBfzX.css`), and lazy Three.js chunk (`render3d-DhcfiOHi.js`).
+
+### TASK 28 — Tactical Viewport, Distinct Aircraft Presentation, Automatic Target Focus & UI Acceptance Remediation · P0 · A/C/D · 1.5 h
+Files: `src/render3d/targets/targetModelFactory.ts`, `src/render3d/scene3d.ts`, `src/render3d/renderer3d.ts`, `src/ui/Console.tsx`, `src/ui/EngagementPanel.tsx`, `src/ui/EnvironmentInspector.tsx`, `src/ui/QuickGuide.tsx`, `src/ui/TopBar.tsx`, `src/ui/TrackTable.tsx`, `src/ui/useConsoleKeyboard.ts`, `src/index.css`, `tests/unit/task28UiAcceptance.spec.ts`, `tests/e2e/task28_tacticalViewport.spec.ts`, `tests/e2e/task23_visualRealism.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] TASK 28-A Distinct Observable Aircraft Morphology & Sensor Feedback:
+  - Enhanced `createTargetMesh` in `targetModelFactory.ts` with distinct geometry and signature-specific palettes for multirotors and friendly airframes in optical EO/IR observation mode (`MULTIROTOR_COMPACT`: matte dark graphite `0x1d2127` with red snout `0xff3b30`; `MULTIROTOR_MICRO`: deep charcoal `0x181a1e` with amber fin `0xff9500`; `MULTIROTOR_STANDARD`: technical light grey `0xe6edf5` with green accent `0x00ff88`; `FRIENDLY_UAS`: tactical dark slate `0x2b3b48` with cyan transponder accent `0x00f0ff`).
+  - Added secondary directional fill lighting in `scene3d.ts` and tuned optical target pixel scaling for crisp model clarity.
+  - Implemented typed `SYSTEM_WARNING` toast in `Console.tsx` when the operator clicks `TGT:AIR` while the sensor is not in `EOIR` mode (`AIRFRAME VIEW REQUIRES CLEAR EO/IR OBSERVATION; RADAR/RF SHOW SYNTHETIC BLIP`), guiding trainee back to radar blip view.
+- [x] TASK 28-B Restored Radar Information Panels (Left & Right Gutters):
+  - Removed restrictive `hidden 2xl:flex` breakpoints in `Console.tsx`, restoring permanent visibility of Left Information Panel (`5.0 km MAX RADAR`, `3.0 km NOMINAL REF`, `0.5 km POINT OF NO RETURN`) and Right Technical Specification Panel (`30 RPM SWEEP RATE`, `20 Hz DETERMINISTIC SIM`, `60 FPS RENDER TARGET`) across all standard evaluation laptop viewports ($\ge 1280\text{px}$).
+- [x] TASK 28-C Horizontal 3D Tactical Viewport Utilization:
+  - Added CSS rule `--radar-w-3d: min(960px, calc(100vw - 720px))` in `src/index.css` allowing the 3D tactical viewport to expand horizontally on wide and medium landscape screens, while strictly preserving 1:1 circular geometry on the 2D PPI radar without oval distortion.
+  - Connected responsive resize handler in `Console.tsx` via `ResizeObserver` dynamically syncing canvas aspect ratio and camera projection matrix.
+- [x] TASK 28-D Automatic Smooth Target Focus & Framing:
+  - Implemented single-shot camera re-centering and smooth framing in `renderer3d.ts` upon target selection or designation changes (`lastFocusedTrackNo` / `pendingFocusTrackNo`).
+  - Automatically frames newly designated threats (including `LOCK NEXT THREAT` and priority targets) without repetitive camera jumps or re-focusing on ordinary periodic simulation ticks.
+- [x] TASK 28-E Separation of Effector Fire and Camera Focus Shortcuts:
+  - Completely resolved keyboard conflict between effector firing and 3D camera target focus: `[F]` key reserved strictly and exclusively for weapons suite firing (`triggerFire`).
+  - Camera target focus rebound to `[G]` or canvas double-click. Updated 3D hint overlay, Quick Guide, Environment Inspector button tooltip, and keyboard hook listeners.
+- [x] TASK 28-F Completed Kill-Chain Display & Status Correction:
+  - Corrected `getStepIndex` in `EngagementPanel.tsx` so that `CLOSED` status returns `-1` (instead of clamping to 0, which falsely highlighted `FIND`).
+  - Rendered explicit neutralized status banner `✓ THREAT NEUTRALISED (CLOSED)` with `🎯 LOCK NEXT THREAT` shortcut and no active kill-chain stage highlight.
+- [x] TASK 28-G Read-Only Engagement Controls Upon Session Completion:
+  - When session transitions to `COMPLETED` or `ABORTED`, `EngagementPanel.tsx` renders read-only guidance with `[OPEN AAR SCORECARD]`.
+  - Displays `SECURED (COMPLETED)` on weapons suite header; disables classification buttons, weapon firing controls, and BDA buttons to prevent post-session state mutations.
+- [x] TASK 28-H ROE Banner Tooltip & Accurate Track Directory Counts:
+  - Added `title={roeText}` tooltip on ROE banner container and label in `TopBar.tsx`, allowing trainees to inspect the complete engagement rules.
+  - Added `shrink-0` to badges in `TopBar.tsx` preventing text wrapping.
+  - Updated `TrackTable.tsx` to compute active unclosed tracks (`activeCount = trackRows.filter(t => t.step !== 'CLOSED').length`); displays `TRACKS: {total}` when session ended or `ACTIVE: {active}/{total}` during session, eliminating misleading `LIVE: 3` claims.
+- [x] TASK 28-I Full Verification Gate Execution:
+  - TypeScript typecheck (`npx tsc --noEmit`): 0 errors.
+  - ESLint (`npm run lint`): 0 errors, 0 warnings.
+  - Vitest test suite (`npm test`): 53 test suites, 759 unit tests passing 100% green.
+  - Production build (`npm run build`): completed cleanly in 8.3s, generating 1.794 MB bundle (< 2.0 MB budget).
+  - Test-instrumented build (`npm run build:e2e`): completed cleanly.
+  - Playwright E2E test suites (`task28_tacticalViewport.spec.ts`, `task23_visualRealism.spec.ts`, `render3dViewport.spec.ts`, `interaction.spec.ts`, `layout.spec.ts`): 100% green across all tested viewports (1280x720 up to 1920x1080).
+- [x] TASK 28-J Safe GitHub Pages Production Deployment & Live Site Verification:
+  - Committed code changes to `feature/optional-threejs-3d` at commit `87bb460` and pushed to origin.
+  - Published production release via `npm run deploy` (`gh-pages -d dist`) to `origin/gh-pages`.
+  - Remote `gh-pages` updated to commit `bff561df6f948311599d88bbbbe6b3a2027478ed` advancing baseline `7957eb16d32cac3c9515ec10abac7c6eebb07d1f`.
+  - Verified live deployment at `https://missionadak.github.io/HawkEyeAAR/` confirming HTTP 200 responses across HTML, CSS (`index-C_EXybUl.css`), entry JS (`index-DfOyRTzS.js`), and lazy Three.js chunk (`render3d-DhcfiOHi.js`).
