@@ -711,32 +711,38 @@ export function installDrishtiTestBridge(
         'plannedSpawns',
       ];
 
+      function auditRenderer3DTracks(tracks: import('@/render3d/types').SafeTrackView[]): void {
+        for (const t of tracks) {
+          auditObjectForForbiddenProps(t, `SafeTrackView.${t.trackNo}`, forbiddenProps, leaked);
+          const rawEntity = engine.curr.find((e) => e.trackNo === t.trackNo);
+          if (rawEntity) {
+            if (t.pos === rawEntity.pos) leaked.push(`SafeTrackView.${t.trackNo}.posReferenceIdentity`);
+            if (t.vel === rawEntity.vel) leaked.push(`SafeTrackView.${t.trackNo}.velReferenceIdentity`);
+          }
+        }
+      }
+
+      function auditRenderer3DEvents(events: Array<object & { id?: string; payload?: Record<string, unknown> }>): void {
+        for (const ev of events) {
+          const evId = ev.id ?? 'ev';
+          auditObjectForForbiddenProps(ev, `live3dEvents.${evId}`, forbiddenProps, leaked);
+          if (ev.payload) {
+            auditObjectForForbiddenProps(ev.payload, `live3dEvents.${evId}.payload`, forbiddenProps, leaked);
+          }
+        }
+      }
+
       function auditRenderer3DData(): void {
         const r3d = getRenderer3D();
         if (!r3d) return;
 
         const trackData = r3d.getCurrentTracks();
-        if (trackData) {
-          for (const t of trackData.tracks) {
-            auditObjectForForbiddenProps(t, `SafeTrackView.${t.trackNo}`, forbiddenProps, leaked);
-            const rawEntity = engine.curr.find((e) => e.trackNo === t.trackNo);
-            if (rawEntity) {
-              if (t.pos === rawEntity.pos) leaked.push(`SafeTrackView.${t.trackNo}.posReferenceIdentity`);
-              if (t.vel === rawEntity.vel) leaked.push(`SafeTrackView.${t.trackNo}.velReferenceIdentity`);
-            }
-          }
+        if (trackData?.tracks) {
+          auditRenderer3DTracks(trackData.tracks);
         }
 
         if (typeof r3d.getEventsProviderInput === 'function') {
-          const live3dEvents = r3d.getEventsProviderInput();
-          for (const ev of live3dEvents) {
-            const evId = (ev as { id?: string }).id ?? 'ev';
-            auditObjectForForbiddenProps(ev, `live3dEvents.${evId}`, forbiddenProps, leaked);
-            const p = (ev as { payload?: Record<string, unknown> }).payload;
-            if (p) {
-              auditObjectForForbiddenProps(p, `live3dEvents.${evId}.payload`, forbiddenProps, leaked);
-            }
-          }
+          auditRenderer3DEvents(r3d.getEventsProviderInput());
         }
       }
 
@@ -758,6 +764,28 @@ export function installDrishtiTestBridge(
         }
       }
 
+      function auditFeedbackTrackRangeLeak(
+        trackNo: string,
+        fbId: string,
+        explanation?: string,
+        measured?: { actual?: unknown }
+      ): void {
+        const raw = engine.curr.find((e) => e.trackNo === trackNo);
+        const est = engine.tracker.getTrackEstimate(trackNo);
+        if (!raw || !est) return;
+
+        const truthRange = Math.hypot(raw.pos.x, raw.pos.y);
+        if (Math.abs(est.estRangeM - truthRange) <= 15) return;
+
+        const rawKmStr = (truthRange / 1000).toFixed(2);
+        if (explanation?.includes(`${rawKmStr} km`)) {
+          leaked.push(`feedback.${fbId}.exactRangeInExplanation`);
+        }
+        if (measured && String(measured.actual).includes(`${rawKmStr} km`)) {
+          leaked.push(`feedback.${fbId}.exactRangeInMeasured`);
+        }
+      }
+
       function auditOperatorFeedbackData(): void {
         const store = useSessionStore.getState();
         const feedbacks = [
@@ -767,17 +795,7 @@ export function installDrishtiTestBridge(
         for (const fb of feedbacks) {
           auditObjectForForbiddenProps(fb, `feedback.${fb.id}`, forbiddenProps, leaked);
           if (fb.trackNo) {
-            const raw = engine.curr.find((e) => e.trackNo === fb.trackNo);
-            const est = engine.tracker.getTrackEstimate(fb.trackNo);
-            if (raw && est && Math.abs(est.estRangeM - Math.hypot(raw.pos.x, raw.pos.y)) > 15) {
-              const rawKmStr = (Math.hypot(raw.pos.x, raw.pos.y) / 1000).toFixed(2);
-              if (fb.explanation?.includes(`${rawKmStr} km`)) {
-                leaked.push(`feedback.${fb.id}.exactRangeInExplanation`);
-              }
-              if (fb.measured && String(fb.measured.actual).includes(`${rawKmStr} km`)) {
-                leaked.push(`feedback.${fb.id}.exactRangeInMeasured`);
-              }
-            }
+            auditFeedbackTrackRangeLeak(fb.trackNo, fb.id, fb.explanation, fb.measured);
           }
         }
       }

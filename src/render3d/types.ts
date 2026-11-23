@@ -1,17 +1,8 @@
 import type { TrackClass, F2T2EAStep, ZoneSpec } from '@/sim/types';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
-import {
-  VALID_SENSOR_HEALTH_STATES,
-  VALID_TARGET_DISPLAY_MODES,
-  VALID_OPTICAL_RESOLUTION_LEVELS,
-  VALID_OPTICAL_VISIBILITY_STATES,
-  VALID_OBSERVED_AIRFRAME_SIGNATURES,
-  type TargetDisplayMode,
-  type ObservedAirframeSignature,
-  type SensorHealthState,
-  type OpticalResolutionLevel,
-  type OpticalVisibilityState,
-  type ApprovedSensorObservation,
+import type {
+  TargetDisplayMode,
+  ApprovedSensorObservation,
 } from '@/sim/sensorObservation';
 
 export {
@@ -20,12 +11,15 @@ export {
   VALID_OPTICAL_RESOLUTION_LEVELS,
   VALID_OPTICAL_VISIBILITY_STATES,
   VALID_OBSERVED_AIRFRAME_SIGNATURES,
-  type TargetDisplayMode,
   type ObservedAirframeSignature,
   type SensorHealthState,
   type OpticalResolutionLevel,
   type OpticalVisibilityState,
-  type ApprovedSensorObservation,
+} from '@/sim/sensorObservation';
+
+export type {
+  TargetDisplayMode,
+  ApprovedSensorObservation,
 };
 
 /**

@@ -5,8 +5,6 @@ import type { WeatherType } from '../environment/types';
 import {
   VALID_SENSOR_HEALTH_STATES,
   type SensorHealthState,
-  VALID_SENSOR_MODES,
-  VALID_TARGET_DISPLAY_MODES,
   type TargetDisplayMode,
   VALID_OPTICAL_RESOLUTION_LEVELS,
   type OpticalResolutionLevel,
@@ -14,17 +12,20 @@ import {
   type OpticalVisibilityState,
   VALID_OBSERVED_AIRFRAME_SIGNATURES,
   type ObservedAirframeSignature,
+  validateSensorHealthRecord,
+} from '@/sim/sensorObservation';
+
+export {
+  VALID_SENSOR_MODES,
+  VALID_TARGET_DISPLAY_MODES,
   CLEAR_OPTICAL_RANGE_M,
   MAX_OPTICAL_RANGE_M,
-  validateSensorHealthRecord,
   type SensorHealthValidationResult,
 } from '@/sim/sensorObservation';
 
 export {
   VALID_SENSOR_HEALTH_STATES,
   type SensorHealthState,
-  VALID_SENSOR_MODES,
-  VALID_TARGET_DISPLAY_MODES,
   type TargetDisplayMode,
   VALID_OPTICAL_RESOLUTION_LEVELS,
   type OpticalResolutionLevel,
@@ -32,10 +33,7 @@ export {
   type OpticalVisibilityState,
   VALID_OBSERVED_AIRFRAME_SIGNATURES,
   type ObservedAirframeSignature,
-  CLEAR_OPTICAL_RANGE_M,
-  MAX_OPTICAL_RANGE_M,
   validateSensorHealthRecord,
-  type SensorHealthValidationResult,
 };
 
 /**
@@ -288,12 +286,26 @@ function validateObservationResolutionAndVisibility(o: Record<string, unknown>):
   return null;
 }
 
-function validateObservationCrossFieldConsistency(o: Record<string, unknown>): ObservationValidationResult | null {
-  const resLevel = o.resolutionLevel as string;
-  const visState = o.visibilityState as string;
-  const sig = (o.signature ?? o.observedSignature) as string;
+function validateEstimatedRangeField(estimatedRangeM: unknown): ObservationValidationResult | null {
+  if (estimatedRangeM === undefined || estimatedRangeM === null) return null;
+  if (typeof estimatedRangeM !== 'number' || !Number.isFinite(estimatedRangeM) || estimatedRangeM < 0) {
+    const rangeStr = JSON.stringify(estimatedRangeM);
+    return {
+      isValid: false,
+      error: `Invalid observation estimatedRangeM: ${rangeStr}`,
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+  return null;
+}
 
-  if (o.sensorHealth === 'OUT' && (resLevel === 'FULL' || resLevel === 'DEGRADED')) {
+function validateSensorHealthConsistency(
+  health: unknown,
+  resLevel: string,
+  visState: string,
+  available: unknown
+): ObservationValidationResult | null {
+  if (health === 'OUT' && (resLevel === 'FULL' || resLevel === 'DEGRADED')) {
     return {
       isValid: false,
       error: `Inconsistent observation: sensorHealth OUT cannot produce resolution ${resLevel}`,
@@ -301,7 +313,7 @@ function validateObservationCrossFieldConsistency(o: Record<string, unknown>): O
     };
   }
 
-  if (o.sensorHealth === 'DEG' && resLevel === 'FULL') {
+  if (health === 'DEG' && resLevel === 'FULL') {
     return {
       isValid: false,
       error: 'Inconsistent observation: sensorHealth DEG cannot produce resolution FULL',
@@ -309,13 +321,24 @@ function validateObservationCrossFieldConsistency(o: Record<string, unknown>): O
     };
   }
 
-  if (o.sensorAvailability === false && (resLevel === 'FULL' || visState === 'CLEAR')) {
+  if (available === false && (resLevel === 'FULL' || visState === 'CLEAR')) {
     return {
       isValid: false,
       error: 'Inconsistent observation: unavailable sensor cannot produce CLEAR or FULL observation',
       fallbackState: 'SENSOR_OFFLINE',
     };
   }
+
+  return null;
+}
+
+function validateObservationCrossFieldConsistency(o: Record<string, unknown>): ObservationValidationResult | null {
+  const resLevel = o.resolutionLevel as string;
+  const visState = o.visibilityState as string;
+  const sig = (o.signature ?? o.observedSignature) as string;
+
+  const healthErr = validateSensorHealthConsistency(o.sensorHealth, resLevel, visState, o.sensorAvailability);
+  if (healthErr) return healthErr;
 
   if (visState === 'MASKED' && resLevel !== 'UNRESOLVED') {
     return {
@@ -341,18 +364,7 @@ function validateObservationCrossFieldConsistency(o: Record<string, unknown>): O
     };
   }
 
-  if ('estimatedRangeM' in o && o.estimatedRangeM !== undefined && o.estimatedRangeM !== null) {
-    if (typeof o.estimatedRangeM !== 'number' || !Number.isFinite(o.estimatedRangeM) || o.estimatedRangeM < 0) {
-      const rangeStr = JSON.stringify(o.estimatedRangeM);
-      return {
-        isValid: false,
-        error: `Invalid observation estimatedRangeM: ${rangeStr}`,
-        fallbackState: 'OUT_OF_RANGE',
-      };
-    }
-  }
-
-  return null;
+  return validateEstimatedRangeField(o.estimatedRangeM);
 }
 
 export function validateObservationProvenance(
