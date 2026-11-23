@@ -983,3 +983,27 @@ Files: `src/render3d/targets/targetModelFactory.ts`, `src/render3d/scene3d.ts`, 
   - Published production release via `npm run deploy` (`gh-pages -d dist`) to `origin/gh-pages`.
   - Remote `gh-pages` updated to commit `bff561df6f948311599d88bbbbe6b3a2027478ed` advancing baseline `7957eb16d32cac3c9515ec10abac7c6eebb07d1f`.
   - Verified live deployment at `https://missionadak.github.io/HawkEyeAAR/` confirming HTTP 200 responses across HTML, CSS (`index-C_EXybUl.css`), entry JS (`index-DfOyRTzS.js`), and lazy Three.js chunk (`render3d-DhcfiOHi.js`).
+
+### TASK 28-R — Tactical Viewport 3D Overlap Remediation & Production Deployment · P0 · A/C/D · 1.0 h
+Files: `src/index.css`, `src/ui/Console.tsx`, `src/ui/EnvironmentInspector.tsx`, `tests/e2e/task28_tacticalViewport.spec.ts`, `MEMORY.md`, `Tasks.md`
+- [x] TASK 28-R-A Side Gutters Overlap & Clipping Elimination:
+  - Container updated to `flex items-center justify-between w-full h-full relative px-1` in `Console.tsx`.
+  - Left & Right information gutters constrained to `w-24` (96px) with `whitespace-nowrap`, completely preventing text clipping (`5.0 km MAX RADAR`, `30 RPM SWEEP RATE`, etc.).
+  - Radar frame bounded with `minWidth: var(--radar)`, `maxWidth: calc(100% - 196px)` and `--radar-w-3d: min(960px, max(var(--radar), calc(100vw - 778px)))` in `src/index.css`, ensuring zero overlap with side gutters across all viewports (from 1280x700 minimum up to 4K).
+- [x] TASK 28-R-B Viewport Top Toolbar Button Organization:
+  - Structured `TacticalViewportTabs` in `Console.tsx` into 2 clean, purposeful rows (Row 1: Sensors & Core Navigation; Row 2: 3D Tactical Tools) with `max-w-[calc(100%-140px)]`, completely eliminating the chaotic 4-row wrapping and preserving visibility of the top-right camera readout (`3D VIEW | CAM: OBLIQUE`).
+  - Adjusted button padding to `px-1.5 py-0.5` across toolbar buttons for optimal fit.
+- [x] TASK 28-R-C Floating Inspector & Overlay Collision Prevention:
+  - Moved `EnvironmentInspector` to `top-[56px] left-2 z-30` so it floats cleanly below the toolbar rows without occluding buttons.
+  - Re-anchored `webGlError` and `lowFi` indicators to `bottom-8 left-2`.
+- [x] TASK 28-R-D Bottom Status Strip Collision Elimination:
+  - Bound bottom hints inside a unified flex container spanning `bottom-1.5 inset-x-2` with `flex items-center justify-between gap-2` and `truncate`, permanently eliminating the horizontal text collision between model scale notices and camera control hints.
+  - Preserved canonical string `AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED`.
+- [x] TASK 28-R-E Rigorous Zero-Overlap E2E Validation:
+  - Added strict geometric zero-overlap assertions in `tests/e2e/task28_tacticalViewport.spec.ts` verifying left gutter, radar canvas, and right gutter bounding boxes at 1366x768.
+  - Verified 100% pass across all 9 tests in `task28_tacticalViewport.spec.ts`, 4 tests in `task23_visualRealism.spec.ts` (1280x700, 1366x768, 1774x850), 6 tests in `interaction.spec.ts`, and 3 tests in `layout.spec.ts`.
+- [x] TASK 28-R-F Full Verification Gate:
+  - TypeScript (`npx tsc --noEmit`): 0 errors.
+  - ESLint (`npm run lint`): 0 errors.
+  - Vitest (`npm test`): 53 test suites, 759 unit tests passed 100% green.
+  - Bundle size (`npm run build`): 1.794 MB (< 2.0 MB ceiling).

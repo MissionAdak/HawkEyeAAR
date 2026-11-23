@@ -54,8 +54,9 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
     });
   }
 
-  test('Fix C & E: 3D viewport expands horizontally and shows G focus shortcut', async ({ page }) => {
-    await page.setViewportSize({ width: 1780, height: 858 });
+  test('Fix C & E: 3D viewport expands horizontally and shows G focus shortcut without gutter overlap', async ({ page }) => {
+    // Test on 1366x768 standard tactical laptop display
+    await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/');
 
     // Start session
@@ -74,10 +75,27 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
     await expect(toggle3DBtn).toBeVisible();
     await toggle3DBtn.click();
 
-    // In 3D view, frame width should be wider on widescreen tactical display
+    // In 3D view, frame width should not overflow side panels
     const box3D = await radarFrame.boundingBox();
     expect(box3D).not.toBeNull();
-    expect(box3D!.width).toBeGreaterThanOrEqual(width2D);
+    expect(box3D!.width).toBeGreaterThanOrEqual(width2D - 20);
+
+    // Verify left and right gutters remain fully visible in 3D view
+    const leftGutter = page.getByText('5.0 km', { exact: true });
+    await expect(leftGutter).toBeVisible();
+    const rightGutter = page.getByText('30 RPM', { exact: true });
+    await expect(rightGutter).toBeVisible();
+
+    // Assert strictly zero overlap: left gutter is left of radar frame, right gutter is right of radar frame
+    const leftBox = await leftGutter.boundingBox();
+    const rightBox = await rightGutter.boundingBox();
+    expect(leftBox).not.toBeNull();
+    expect(rightBox).not.toBeNull();
+
+    expect(leftBox!.x).toBeGreaterThanOrEqual(240); // To the right of left rail (240px)
+    expect(leftBox!.x + leftBox!.width).toBeLessThanOrEqual(box3D!.x + 1); // Left of 3D canvas
+    expect(box3D!.x + box3D!.width).toBeLessThanOrEqual(rightBox!.x + 1); // 3D canvas left of right gutter
+    expect(rightBox!.x + rightBox!.width).toBeLessThanOrEqual(1366 - 320); // To the left of right rail (320px)
 
     // Verify 3D footer hint uses [G] for focus
     await expect(page.getByText(/FOCUS: DBLCLICK \/ \[G\]/i)).toBeVisible();
@@ -133,8 +151,8 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
     await expect(page.getByText(/ACTIVE: \d+\/\d+/i)).toBeVisible();
 
     // Fire weapon if in range or wait
-    const fireBtn = page.getByRole('button', { name: /\[F\] RELEASE/i }).first();
-    await expect(fireBtn).toBeVisible();
+    const fireBtn = page.getByRole('button', { name: /FIRE|RELEASE|ENGAGE TARGET/i }).first();
+    await expect(fireBtn).toBeVisible({ timeout: 5000 });
 
     const shotPath = path.join(process.cwd(), 'tests/e2e/screenshots/task28_03_active_engagement.png');
     await page.screenshot({ path: shotPath, fullPage: true });

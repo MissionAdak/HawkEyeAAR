@@ -315,74 +315,80 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   onEnterVr,
 }) => {
   return (
-    <div className="absolute top-2 left-2 z-20 flex flex-wrap gap-1 font-display text-[10px] max-w-[420px]">
-      {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+    <div className="absolute top-2 left-2 z-20 flex flex-col gap-1 font-display text-[10px] max-w-[calc(100%-140px)] pointer-events-auto select-none">
+      {/* Primary Row: Sensors & Core Navigation */}
+      <div className="flex items-center gap-1 flex-wrap">
+        {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+          <button
+            key={m}
+            onClick={() => onSetSensor(m)}
+            className={`px-2 py-0.5 border transition-colors ${
+              activeSensor === m
+                ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+          </button>
+        ))}
+
         <button
-          key={m}
-          onClick={() => onSetSensor(m)}
-          className={`px-2 py-0.5 border transition-colors ${
-            activeSensor === m
-              ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+          onClick={onToggleViewMode}
+          title="Toggle 2D/3D Tactical View [V]"
+          className={`px-2 py-0.5 border font-bold transition-colors ${
+            viewMode === '3D'
+              ? 'border-friend text-friend bg-friend/20'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
           }`}
         >
-          [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+          [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
         </button>
-      ))}
 
+        <button
+          onClick={onEnterVr}
+          title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
+          className="px-2 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
+        >
+          [VR] EXPERIMENTAL
+        </button>
+
+        <button
+          onClick={onOpenScenarioModal}
+          disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
+          title="Open Mission / Exercise Scenario Selector [S]"
+          className={`px-2 py-0.5 border font-bold transition-colors ${
+            mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
+              ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+              : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
+          }`}
+        >
+          [S] {currentScenarioId}
+        </button>
+      </div>
+
+      {/* Secondary Row: 3D Tactical Tools (Only visible in 3D view) */}
       {viewMode === '3D' && (
-        <ThreeDViewportControls
-          cameraPreset={cameraPreset}
-          showEnvelopes={showEnvelopes}
-          showLos={showLos}
-          showClusters={showClusters}
-          showTrainingAid={showTrainingAid}
-          showCrossSection={showCrossSection}
-          targetDisplayMode={targetDisplayMode}
-          mode={mode}
-          onCameraPreset={onCameraPreset}
-          onToggleEnvelopes={onToggleEnvelopes}
-          onToggleLos={onToggleLos}
-          onToggleClusters={onToggleClusters}
-          onToggleTrainingAid={onToggleTrainingAid}
-          onToggleCrossSection={onToggleCrossSection}
-          onTargetDisplayMode={onTargetDisplayMode}
-          onOpenRecogModal={onOpenRecogModal}
-        />
+        <div className="flex items-center gap-1 flex-wrap">
+          <ThreeDViewportControls
+            cameraPreset={cameraPreset}
+            showEnvelopes={showEnvelopes}
+            showLos={showLos}
+            showClusters={showClusters}
+            showTrainingAid={showTrainingAid}
+            showCrossSection={showCrossSection}
+            targetDisplayMode={targetDisplayMode}
+            mode={mode}
+            onCameraPreset={onCameraPreset}
+            onToggleEnvelopes={onToggleEnvelopes}
+            onToggleLos={onToggleLos}
+            onToggleClusters={onToggleClusters}
+            onToggleTrainingAid={onToggleTrainingAid}
+            onToggleCrossSection={onToggleCrossSection}
+            onTargetDisplayMode={onTargetDisplayMode}
+            onOpenRecogModal={onOpenRecogModal}
+          />
+        </div>
       )}
-
-      <button
-        onClick={onToggleViewMode}
-        title="Toggle 2D/3D Tactical View [V]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
-          viewMode === '3D'
-            ? 'border-friend text-friend bg-friend/20'
-            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-        }`}
-      >
-        [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
-      </button>
-
-      <button
-        onClick={onEnterVr}
-        title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
-        className="px-2 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
-      >
-        [VR] EXPERIMENTAL
-      </button>
-
-      <button
-        onClick={onOpenScenarioModal}
-        disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
-        title="Open Mission / Exercise Scenario Selector [S]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
-          mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
-            ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
-            : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
-        }`}
-      >
-        [S] {currentScenarioId}
-      </button>
     </div>
   );
 };
@@ -971,20 +977,20 @@ let toastCounter = 0;
 
       {/* 3. Center Radar Scope Viewport */}
       <div className="console-center bg-carbon-950">
-        <div className="flex items-center justify-center w-full h-full relative">
+        <div className="flex items-center justify-between w-full h-full relative px-1">
           {/* Left Gutter: Range Rings Legend (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-3 select-none shrink-0">
+          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-1 select-none shrink-0 w-24">
             <div className="border-l border-phosphorDim pl-2">
-              <span className="text-phosphor block font-bold">5.0 km</span>
-              <span>MAX RADAR</span>
+              <span className="text-phosphor block font-bold whitespace-nowrap">5.0 km</span>
+              <span className="whitespace-nowrap">MAX RADAR</span>
             </div>
             <div className="border-l border-phosphorDim pl-2">
-              <span className="text-text-main block">3.0 km</span>
-              <span>NOMINAL REF</span>
+              <span className="text-text-main block whitespace-nowrap">3.0 km</span>
+              <span className="whitespace-nowrap">NOMINAL REF</span>
             </div>
             <div className="border-l border-amber pl-2">
-              <span className="text-amber block font-bold">0.5 km</span>
-              <span>POINT OF NO RETURN</span>
+              <span className="text-amber block font-bold whitespace-nowrap">0.5 km</span>
+              <span className="whitespace-nowrap">POINT OF NO RETURN</span>
             </div>
           </div>
 
@@ -997,7 +1003,9 @@ let toastCounter = 0;
             style={
               viewMode === '3D'
                 ? {
-                    width: 'var(--radar-w-3d, min(960px, calc(100vw - 720px)))',
+                    width: 'var(--radar-w-3d, min(960px, max(var(--radar), calc(100vw - 778px))))',
+                    minWidth: 'var(--radar)',
+                    maxWidth: 'calc(100% - 196px)',
                     height: 'var(--radar)',
                   }
                 : {
@@ -1060,17 +1068,17 @@ let toastCounter = 0;
 
             {/* 3D Model Scale & Control Hint */}
             {viewMode === '3D' && (
-              <>
+              <div className="absolute bottom-1.5 inset-x-2 z-10 flex items-center justify-between pointer-events-none select-none gap-2 font-mono text-text-dim">
                 <div
                   title="Aircraft models are enlarged for tactical visual identification. Underlying world positions and radar ranges are authoritative and unchanged."
-                  className="absolute bottom-2 left-2 z-10 text-[8px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none max-w-[270px] truncate"
+                  className="bg-carbon-900/90 border border-line px-1.5 py-0.5 text-[8px] truncate shrink-0 max-w-[270px]"
                 >
                   AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
                 </div>
-                <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
+                <div className="bg-carbon-900/90 border border-line px-1.5 py-0.5 text-[9px] truncate text-right">
                   DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [G] | RESET: [HOME]
                 </div>
-              </>
+              </div>
             )}
 
             {/* 3D Environment Object Inspector */}
@@ -1084,7 +1092,7 @@ let toastCounter = 0;
 
             {/* WebGL Error / Context Loss Fallback Banner */}
             {webGlError && (
-              <div className="absolute bottom-2 left-2 z-20 text-[9px] font-mono text-amber border border-amber px-2 py-1 bg-carbon-950/95 flex items-center gap-2">
+              <div className="absolute bottom-8 left-2 z-20 text-[9px] font-mono text-amber border border-amber px-2 py-1 bg-carbon-950/95 flex items-center gap-2">
                 <span>⚠ {webGlError}</span>
                 <button
                   onClick={() => setWebGlError(null)}
@@ -1097,7 +1105,7 @@ let toastCounter = 0;
 
             {/* Low-Fidelity Indicator */}
             {lowFi && (
-              <div className="absolute bottom-2 left-2 z-10 text-[9px] font-mono text-amber border border-amber px-1.5 py-0.5 bg-carbon-900/80">
+              <div className="absolute bottom-8 left-2 z-10 text-[9px] font-mono text-amber border border-amber px-1.5 py-0.5 bg-carbon-900/80">
                 LOW-FIDELITY MODE [L]
               </div>
             )}
@@ -1137,18 +1145,18 @@ let toastCounter = 0;
           </div>
 
           {/* Right Gutter: Active Mode Telemetry (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-3 select-none shrink-0">
+          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-1 select-none shrink-0 w-24 text-right">
             <div className="border-r border-line pr-2 text-right">
-              <span className="text-text-main block font-bold">30 RPM</span>
-              <span>SWEEP RATE</span>
+              <span className="text-text-main block font-bold whitespace-nowrap">30 RPM</span>
+              <span className="whitespace-nowrap">SWEEP RATE</span>
             </div>
             <div className="border-r border-line pr-2 text-right">
-              <span className="text-text-main block font-bold">20 Hz</span>
-              <span>DETERMINISTIC SIM</span>
+              <span className="text-text-main block font-bold whitespace-nowrap">20 Hz</span>
+              <span className="whitespace-nowrap">DETERMINISTIC SIM</span>
             </div>
             <div className="border-r border-line pr-2 text-right">
-              <span className="text-phosphor block font-bold">60 FPS</span>
-              <span>RENDER TARGET</span>
+              <span className="text-phosphor block font-bold whitespace-nowrap">60 FPS</span>
+              <span className="whitespace-nowrap">RENDER TARGET</span>
             </div>
           </div>
         </div>
