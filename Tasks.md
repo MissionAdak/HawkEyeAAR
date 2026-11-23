@@ -894,3 +894,29 @@ Files: `tests/e2e/task25_performanceResourceAcceptance.spec.ts`, `tests/unit/tas
 - [x] TASK 26-E Master Evidence Package: Created `docs/EVIDENCE_INDEX.md` mapping all 13 core capabilities to production sources, verification specs, and verified outcomes without altering historical screenshots.
 - [x] TASK 26-F Feature Freeze Declaration: All feature development is formally stopped. The codebase is locked for presentation and demonstration. Only critical correctness or evidence corrections are permitted.
 - [x] Full Verification Gate: `tsc --noEmit` clean, ESLint clean, 51 Vitest test files (727 unit tests passing 100%), production and test-instrumented builds clean, full Playwright E2E suite (63 tests across 13 spec files) passing 100%. Protected deployment branch `gh-pages` strictly untouched at `b3740a1da38835b0b362d3966dbab7f6899e08c7`.
+
+### TASK 27 — Final Release Candidate Verification, SonarLint Maintenance Closeout & GitHub Pages Deployment · P0 · A/C/D · 1.5 h
+Files: `src/sim/sensorObservation.ts`, `src/sim/serialization.ts`, `src/sim/snapshotHash.ts`, `src/render3d/types.ts`, `src/testBridge/drishtiTestBridge.ts`, `src/db/sessionRepo.ts`, `src/db/aarTransfer.ts`, `playwright.config.ts`, `Tasks.md`, `MEMORY.md`
+- [x] TASK 27-A Post-Freeze SonarLint Maintenance & Code Quality Closeout: Reconciled and approved code quality maintenance items following the Task 26 feature freeze. Formally decoupled pure simulation models from presentation layers:
+  - Established canonical `src/sim/sensorObservation.ts` for `ApprovedSensorObservation`, sensor health constants, and optical visibility enums, eliminating sim dependencies on `render3d`.
+  - Extracted pure simulation payload serialisation and hashing helpers into `src/sim/serialization.ts`, isolating `snapshotHash.ts` from DOM/DB dependencies.
+  - Optimized `drishtiTestBridge.ts` track lookups to $O(1)$ and `sessionRepo.ts` trainee session groupings to $O(N + M)$.
+  - Hardened test lifecycles across unit and E2E suites with guaranteed state restoration and bounded loop execution.
+  - Staged, validated, and pushed all maintenance updates to development branch `feature/optional-threejs-3d` at commit `91e8b6220e8563874bcdfd553a61cbee9f12fd0d`.
+- [x] TASK 27-B Complete Verification Suite Execution:
+  - TypeScript typecheck (`npx tsc --noEmit`): 0 errors.
+  - ESLint (`npm run lint`): 0 errors, 0 warnings.
+  - Vitest test suite (`npm test`): 51 test suites, 727 unit tests passing 100% green.
+  - Production build (`npm run build`): completed cleanly in 8.3s, generating 1.790 MB bundle under the 2.0 MB budget.
+  - Test-instrumented build (`npm run build:e2e`): completed cleanly in 8.8s.
+  - Full Playwright E2E test suite (`npm run test:e2e`): 63 tests across all 13 test files passing 100% green in 2.6m.
+- [x] TASK 27-C Clean Production Build & Bundle Inspection:
+  - Total `dist/` bundle size: 1.790 MB (1,876,637 bytes), preserving a 215.3 kB margin below the strict 2.0 MB budget.
+  - Initial application entry: `dist/index.html` referencing `index-B2Sp7vKy.js` (671.85 kB raw, 204.79 kB gzip) and `index-h_odBfzX.css` (63.69 kB raw, 28.33 kB gzip) with zero references to Three.js or 3D modules.
+  - Lazy-loaded Three.js vendor chunk: isolated in `render3d-DhcfiOHi.js` (513.44 kB raw, 130.92 kB gzip), loaded strictly on demand when entering 3D view.
+  - CSP meta tag intact enforcing `default-src 'self'`, `connect-src 'none'`, and offline air-gap operation.
+  - Reverted build script timestamp churn, preserving canonical `CONFIG_HASH` and `config.generated.ts` baseline timestamp.
+- [x] TASK 27-D GitHub Pages Production Deployment:
+  - Executed `npm run deploy` publishing production build from release commit `91e8b6220e8563874bcdfd553a61cbee9f12fd0d` to `origin/gh-pages`.
+  - Remote `gh-pages` branch successfully updated to commit `b9935052496b802fbc3d62e8bfdbd6da4307a228` (fast-forwarding pre-deployment baseline `b3740a1da38835b0b362d3966dbab7f6899e08c7`).
+- [x] TASK 27-E Live Production Website Verification: Verified live deployment on `https://missionadak.github.io/HawkEyeAAR/` confirming HTTP 200 responses across HTML document, CSS, entry JS (`index-B2Sp7vKy.js`), lazy Three.js vendor chunk (`render3d-DhcfiOHi.js`), and 3D index chunk (`render3d-index-7no2k7HM.js`).
