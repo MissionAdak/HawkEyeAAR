@@ -1435,7 +1435,7 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       const bldA = buildProceduralBuildings(descA);
       const bldB = buildProceduralBuildings(descB);
 
-      expect(bldA.objects.length).toBe(bldB.objects.length);
+      expect(bldA.objects).toHaveLength(bldB.objects.length);
       expect(bldA.objects[0].id).toBe(bldB.objects[0].id);
       expect(bldA.objects[0].position.x).toBe(bldB.objects[0].position.x);
       expect(bldA.objects[0].position.y).toBe(bldB.objects[0].position.y);

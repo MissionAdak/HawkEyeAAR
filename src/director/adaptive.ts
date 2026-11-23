@@ -202,7 +202,7 @@ export function sampleAdaptiveLevers(
   // 1. Sample first lever from full distribution
   const draw1 = rng();
   let cumulative1 = 0;
-  let chosenDim1: WeaknessDimension = dims[dims.length - 1];
+  let chosenDim1: WeaknessDimension = dims.at(-1)!;
   for (const dim of dims) {
     cumulative1 += weights[dim] ?? 0;
     if (draw1 <= cumulative1) {
@@ -218,7 +218,7 @@ export function sampleAdaptiveLevers(
     const sumRemaining = remainingDims.reduce((acc, d) => acc + (weights[d] ?? 0), 0);
     const draw2 = rng();
     let cumulative2 = 0;
-    let chosenDim2: WeaknessDimension = remainingDims[remainingDims.length - 1];
+    let chosenDim2: WeaknessDimension = remainingDims.at(-1)!;
     for (const dim of remainingDims) {
       const prob = sumRemaining > 0 ? (weights[dim] ?? 0) / sumRemaining : 1 / remainingDims.length;
       cumulative2 += prob;

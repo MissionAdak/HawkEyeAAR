@@ -219,8 +219,8 @@ export function calculateScreenSpaceScale(
   const rawScale = targetWorldSize / BASE_WINGSPAN_M;
 
   if (tiered) {
-    let minScale = MIN_AIRCRAFT_SCALE;
-    let maxScale = MAX_AIRCRAFT_SCALE;
+    let minScale: number;
+    let maxScale: number;
 
     if (targetDistanceM < 600) {
       minScale = 2.5;

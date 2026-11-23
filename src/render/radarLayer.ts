@@ -17,6 +17,15 @@ function getAzimuthTickLength(deg: number): number {
   return 3;
 }
 
+interface TrackDrawContext {
+  cx: number;
+  cy: number;
+  scale: number;
+  radius: number;
+  alpha: number;
+  selectedTrackNo?: string | null;
+}
+
 export class RadarLayer {
   private staticCanvas: HTMLCanvasElement | null = null;
   private readonly maxRangeM: number;
@@ -147,6 +156,99 @@ export class RadarLayer {
    * Dynamic frame rendering at 60 fps.
    * Performs zero object allocations during the loop to maintain 60 fps on Intel i3 GPUs.
    */
+  private drawRadarSweep(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    radius: number,
+    sweepAngleRad: number
+  ): void {
+    ctx.save();
+    const wedgeAngleRad = (60 * Math.PI) / 180;
+    const sweepStart = sweepAngleRad - wedgeAngleRad;
+
+    const grad = ctx.createRadialGradient(cx, cy, 10, cx, cy, radius);
+    grad.addColorStop(0, 'rgba(0, 255, 102, 0.05)');
+    grad.addColorStop(1, 'rgba(0, 255, 102, 0.25)');
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, sweepStart, sweepAngleRad, false);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Leading phosphor sweep line
+    ctx.strokeStyle = PALETTE.phosphor;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + radius * Math.cos(sweepAngleRad), cy + radius * Math.sin(sweepAngleRad));
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private drawTrackEstimates(
+    ctx: CanvasRenderingContext2D,
+    tracks: OperatorTrackView[],
+    drawCtx: TrackDrawContext
+  ): void {
+    const { cx, cy, scale, radius, alpha, selectedTrackNo } = drawCtx;
+    for (const track of tracks) {
+      if (
+        track.lifecycle !== 'ACTIVE' &&
+        track.lifecycle !== 'LEAKED' &&
+        track.lifecycle !== 'NEUTRALISED'
+      ) {
+        continue;
+      }
+      if (track.step === 'UNDETECTED') {
+        continue;
+      }
+
+      const prevPos = track.prevEstPos ?? track.estPos;
+      const lerpedX = prevPos.x * (1 - alpha) + track.estPos.x * alpha;
+      const lerpedY = prevPos.y * (1 - alpha) + track.estPos.y * alpha;
+
+      const sx = cx + lerpedX * scale;
+      const sy = cy - lerpedY * scale;
+
+      const distFromCenter = Math.hypot(sx - cx, sy - cy);
+      if (distFromCenter > radius) {
+        continue;
+      }
+
+      const isSelected = track.trackNo === selectedTrackNo;
+      const ghostSigmaPx = track.uncertaintyM * scale;
+
+      drawTrackSymbol(ctx, sx, sy, {
+        label: track.traineeLabel,
+        isSelected,
+        isCoasting: track.isCoasting,
+        ghostSigmaPx,
+        trackNo: track.trackNo,
+        step: track.step,
+      });
+
+      const speedSq = track.estVel.x * track.estVel.x + track.estVel.y * track.estVel.y;
+      if (track.lifecycle === 'ACTIVE' && speedSq > 0.25) {
+        const projX = lerpedX + track.estVel.x * 10;
+        const projY = lerpedY + track.estVel.y * 10;
+        const px = cx + projX * scale;
+        const py = cy - projY * scale;
+
+        ctx.save();
+        ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphorDim;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
   public renderDynamic(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -183,85 +285,18 @@ export class RadarLayer {
     }
 
     // 3. Render 30 RPM rotating radar sweep line with phosphor wedge
-    ctx.save();
-    const wedgeAngleRad = (60 * Math.PI) / 180;
-    const sweepStart = sweepAngleRad - wedgeAngleRad;
-
-    const grad = ctx.createRadialGradient(cx, cy, 10, cx, cy, radius);
-    grad.addColorStop(0, 'rgba(0, 255, 102, 0.05)');
-    grad.addColorStop(1, 'rgba(0, 255, 102, 0.25)');
-
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, radius, sweepStart, sweepAngleRad, false);
-    ctx.closePath();
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // Leading phosphor sweep line
-    ctx.strokeStyle = PALETTE.phosphor;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + radius * Math.cos(sweepAngleRad), cy + radius * Math.sin(sweepAngleRad));
-    ctx.stroke();
-    ctx.restore();
+    this.drawRadarSweep(ctx, cx, cy, radius, sweepAngleRad);
 
     // 4. If estimated tracks are supplied, render exclusively from operator track estimates
     if (opts.tracks) {
-      for (const track of opts.tracks) {
-        if (
-          track.lifecycle !== 'ACTIVE' &&
-          track.lifecycle !== 'LEAKED' &&
-          track.lifecycle !== 'NEUTRALISED'
-        ) {
-          continue;
-        }
-        if (track.step === 'UNDETECTED') {
-          continue;
-        }
-
-        const prevPos = track.prevEstPos ?? track.estPos;
-        const lerpedX = prevPos.x * (1 - alpha) + track.estPos.x * alpha;
-        const lerpedY = prevPos.y * (1 - alpha) + track.estPos.y * alpha;
-
-        const sx = cx + lerpedX * scale;
-        const sy = cy - lerpedY * scale;
-
-        const distFromCenter = Math.hypot(sx - cx, sy - cy);
-        if (distFromCenter > radius) {
-          continue;
-        }
-
-        const isSelected = track.trackNo === selectedTrackNo;
-        const ghostSigmaPx = track.uncertaintyM * scale;
-
-        drawTrackSymbol(ctx, sx, sy, {
-          label: track.traineeLabel,
-          isSelected,
-          isCoasting: track.isCoasting,
-          ghostSigmaPx,
-          trackNo: track.trackNo,
-          step: track.step,
-        });
-
-        const speedSq = track.estVel.x * track.estVel.x + track.estVel.y * track.estVel.y;
-        if (track.lifecycle === 'ACTIVE' && speedSq > 0.25) {
-          const projX = lerpedX + track.estVel.x * 10;
-          const projY = lerpedY + track.estVel.y * 10;
-          const px = cx + projX * scale;
-          const py = cy - projY * scale;
-
-          ctx.save();
-          ctx.strokeStyle = isSelected ? PALETTE.friend : PALETTE.phosphorDim;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(sx, sy);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
+      this.drawTrackEstimates(ctx, opts.tracks, {
+        cx,
+        cy,
+        scale,
+        radius,
+        alpha,
+        selectedTrackNo,
+      });
     }
   }
 }

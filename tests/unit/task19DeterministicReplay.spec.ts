@@ -93,9 +93,9 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       const snapshots2 = run2.engine.events.filter((e) => e.type === 'SNAPSHOT');
       const operational2 = run2.engine.events.filter((e) => e.type !== 'SNAPSHOT');
 
-      expect(run1.engine.events.length).toBe(run2.engine.events.length);
-      expect(snapshots1.length).toBe(snapshots2.length);
-      expect(operational1.length).toBe(operational2.length);
+      expect(run1.engine.events).toHaveLength(run2.engine.events.length);
+      expect(snapshots1).toHaveLength(snapshots2.length);
+      expect(operational1).toHaveLength(operational2.length);
       expect(operational1.length).toBeGreaterThan(10);
 
       // 6. Assert complete bit-identical event streams across both runs
@@ -113,7 +113,7 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       // 7. Check track estimates at simulation end
       const est1 = run1.engine.tracker.getAllEstimates();
       const est2 = run2.engine.tracker.getAllEstimates();
-      expect(est1.length).toBe(est2.length);
+      expect(est1).toHaveLength(est2.length);
       for (let i = 0; i < est1.length; i++) {
         expect(est1[i].trackNo).toBe(est2[i].trackNo);
         expect(est1[i].estPos.x).toBe(est2[i].estPos.x);
@@ -188,7 +188,7 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
       const metricsB = aggregateAARMetrics(engineB.events, spec);
 
       // Verify that continuous UI/3D queries caused ZERO simulation divergence
-      expect(engineB.events.length).toBe(runA.engine.events.length);
+      expect(engineB.events).toHaveLength(runA.engine.events.length);
       expect(metricsB.score).toBe(runA.metrics.score);
       expect(metricsB.grade).toBe(runA.metrics.grade);
 
@@ -325,7 +325,7 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
 
       // Convert to 2D ReplayCanvas entities
       const replayEntities10s = convertToReplayEntities(replayAt10s.tracks);
-      expect(replayEntities10s.length).toBe(replayAt10s.tracks.length);
+      expect(replayEntities10s).toHaveLength(replayAt10s.tracks.length);
 
       // 2. Reconstruct historical state at T+50s (50,000 ms)
       const replayAt50s = reconstructAarReplayState(storedEvents, 50000, spec);
@@ -352,7 +352,7 @@ describe('TASK 19.5 — Deterministic Replay Integrity & Simulation Invariance',
 
       // 4. Assert that replay reconstruction caused zero mutation to live engine
       expect(engine.tickIndex).toBe(2400);
-      expect(engine.events.length).toBe(storedEvents.length);
+      expect(engine.events).toHaveLength(storedEvents.length);
       expect(engine.sessionEnded).toBe(true);
     });
   });

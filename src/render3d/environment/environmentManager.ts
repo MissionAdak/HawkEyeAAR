@@ -167,7 +167,7 @@ export class EnvironmentManager {
     for (const hit of intersects) {
       let curr: THREE.Object3D | null = hit.object;
       while (curr) {
-        if (curr.userData && curr.userData.envObjectInfo) {
+        if (curr.userData?.envObjectInfo) {
           return curr.userData.envObjectInfo as EnvironmentObjectInfo;
         }
         curr = curr.parent;

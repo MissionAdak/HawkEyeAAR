@@ -21,6 +21,19 @@ export interface RedTeamPlanProps {
   ) => void;
 }
 
+function getDifficultyTextClass(isEval: boolean, nextDiff: number, currentDiff: number): string {
+  if (isEval) return 'text-text-dim';
+  if (nextDiff > currentDiff) return 'text-phosphor';
+  if (nextDiff < currentDiff) return 'text-amber';
+  return 'text-text-main';
+}
+
+function getEmaValueColorClass(isWeakest: boolean, val: number): string {
+  if (isWeakest) return 'text-threat';
+  if (val >= 70) return 'text-phosphor';
+  return 'text-amber';
+}
+
 export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
   traineeId,
   callsign,
@@ -140,15 +153,7 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
         <div className="p-2 border border-line bg-carbon-900">
           <div className="text-[9px] text-text-dim">NEXT DIFFICULTY</div>
           <div
-            className={`text-base font-bold mt-0.5 ${
-              isEval
-                ? 'text-text-dim'
-                : plan.nextDifficulty > plan.currentDifficulty
-                  ? 'text-phosphor'
-                  : plan.nextDifficulty < plan.currentDifficulty
-                    ? 'text-amber'
-                    : 'text-text-main'
-            }`}
+            className={`text-base font-bold mt-0.5 ${getDifficultyTextClass(isEval, plan.nextDifficulty, plan.currentDifficulty)}`}
             data-testid="next-diff-display"
           >
             {isEval ? `d = ${plan.currentDifficulty.toFixed(2)} (LOCKED)` : `d = ${plan.nextDifficulty.toFixed(2)}`}
@@ -197,9 +202,7 @@ export const RedTeamPlan: React.FC<RedTeamPlanProps> = ({
               >
                 <div className="text-[9px] text-text-dim truncate">{formatDimensionName(dim)}</div>
                 <div
-                  className={`text-base font-bold mt-0.5 ${
-                    isWeakest ? 'text-threat' : val >= 70 ? 'text-phosphor' : 'text-amber'
-                  }`}
+                  className={`text-base font-bold mt-0.5 ${getEmaValueColorClass(isWeakest, val)}`}
                   data-testid={`ema-val-${dim}`}
                 >
                   {val.toFixed(1)}

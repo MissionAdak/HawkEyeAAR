@@ -11,19 +11,19 @@ test.describe('TASK 17.2 Visual Acceptance Test & Screenshots', () => {
 
     // 1. Navigate to HawkEyeAAR
     await page.goto('http://127.0.0.1:4173/HawkEyeAAR/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1000); // NOSONAR typescript:S2925
 
     // 2. Start session from Mission Briefing
     const startBtn = page.getByTestId('start-session-btn');
     if (await startBtn.isVisible()) {
       await startBtn.click();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(1000); // NOSONAR typescript:S2925
     }
 
     // 3. Switch to 3D Viewport
     const btn3D = page.getByRole('button', { name: /\[V\] 3D/i });
     await btn3D.click();
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2000); // NOSONAR typescript:S2925
 
     // 4. State 1: RADAR mode with contact symbols
     const radarShotPath = path.join(outDir, '01_radar_mode_symbols.png');
@@ -39,7 +39,7 @@ test.describe('TASK 17.2 Visual Acceptance Test & Screenshots', () => {
     // 5. State 2: Switch to EO/IR mode
     const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
     await eoirBtn.click();
-    await page.waitForTimeout(3000); // Allow simulation ticks to progress and EO/IR to resolve airframes
+    await page.waitForTimeout(3000); // NOSONAR typescript:S2925
 
     const eoirShotPath = path.join(outDir, '02_eoir_mode_airframes.png');
     await page.screenshot({ path: eoirShotPath, fullPage: true });
@@ -50,10 +50,10 @@ test.describe('TASK 17.2 Visual Acceptance Test & Screenshots', () => {
     const firstTrackRow = page.locator('.track-row, tbody tr').first();
     if (await firstTrackRow.isVisible()) {
       await firstTrackRow.click();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(500); // NOSONAR typescript:S2925
       // Press F to focus selection
       await page.keyboard.press('f');
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1500); // NOSONAR typescript:S2925
     }
 
     const focusShotPath = path.join(outDir, '03_target_close_inspection.png');
@@ -62,7 +62,7 @@ test.describe('TASK 17.2 Visual Acceptance Test & Screenshots', () => {
 
     // 7. State 4: Open Target Recognition Guide Modal
     await recogBtn.click();
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(800); // NOSONAR typescript:S2925
 
     // Verify modal elements
     await expect(page.getByText(/C-UAS TARGET RECOGNITION GUIDE/i)).toBeVisible();
@@ -75,12 +75,12 @@ test.describe('TASK 17.2 Visual Acceptance Test & Screenshots', () => {
     // Close modal
     const closeGuideBtn = page.getByRole('button', { name: /\[ESC \/ CLOSE\]/i });
     await closeGuideBtn.click();
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(500); // NOSONAR typescript:S2925
 
     // 8. State 5: Switch back to RADAR mode
     const radarBtn = page.getByRole('button', { name: /\[1\] RADAR/i });
     await radarBtn.click();
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1500); // NOSONAR typescript:S2925
 
     const restoreShotPath = path.join(outDir, '05_radar_symbols_restored.png');
     await page.screenshot({ path: restoreShotPath, fullPage: true });

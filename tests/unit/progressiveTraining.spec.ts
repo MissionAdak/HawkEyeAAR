@@ -234,7 +234,7 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
       expect(specA.id).toBe(specB.id);
       expect(specA.seed).toBe(specB.seed);
       expect(specA.features).toEqual(specB.features);
-      expect(specA.threats.length).toBe(specB.threats.length);
+      expect(specA.threats).toHaveLength(specB.threats.length);
     });
 
     it('enforces scenario novelty filter across consecutive generated sessions (cosine < 0.85)', () => {
@@ -924,7 +924,7 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
 
       // Verify that exactly 6 distinct session records are persisted
       const allSessions = await getTraineeSessions(callsign, 'asc', 'ALL');
-      expect(allSessions.length).toBe(6);
+      expect(allSessions).toHaveLength(6);
       expect(allSessions.map((s) => s.uid)).toEqual([
         'seq-session-1-eval',
         'seq-session-2-train',
@@ -1174,7 +1174,7 @@ describe('TASK 21-PT — Progressive Training & Adaptive Progression Subsystem',
 
       for (let s = 1; s <= 20; s++) {
         const levers = sampleAdaptiveLevers(profile, s * 1000, 2);
-        expect(levers.length).toBe(2);
+        expect(levers).toHaveLength(2);
         expect(levers[0].leverId).not.toBe(levers[1].leverId);
       }
     });

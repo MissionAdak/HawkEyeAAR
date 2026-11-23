@@ -162,7 +162,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     if (!(await aarModal.isVisible())) {
       const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
       if (await aarBtn.isVisible()) {
-        await aarBtn.click({ force: true });
+        await aarBtn.click();
       }
     }
     await expect(aarModal).toBeVisible({ timeout: 5000 });
@@ -247,7 +247,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     const lines = csvContent.trim().split('\n').filter((l: string) => l.trim().length > 0);
     expect(lines[0]).toMatch(/sessionUid.*seq.*tMs.*type/i);
     const dataLines = lines.slice(1);
-    expect(dataLines.length).toBe(parsed.eventCount);
+    expect(dataLines).toHaveLength(parsed.eventCount);
     for (const row of dataLines) {
       expect(row).toContain(parsed.sessionUid);
     }
@@ -335,7 +335,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     // 1. Create export payload with unkeyed SHA-256 integrity checksum
     const validPayloadJson = await page.evaluate(async ({ uid, evs }) => {
       const win = window as unknown as WindowWithDrishti;
-      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
+      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as unknown as Parameters<NonNullable<WindowWithDrishti['__DRISHTI_TEST__']>['createSignedAarPayload']>[1]);
     }, { uid: testUid, evs: validEvents });
 
     // Ensure clean start in Dexie
@@ -374,7 +374,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     ];
     const conflictPayloadJson = await page.evaluate(async ({ uid, evs }) => {
       const win = window as unknown as WindowWithDrishti;
-      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
+      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as unknown as Parameters<NonNullable<WindowWithDrishti['__DRISHTI_TEST__']>['createSignedAarPayload']>[1]);
     }, { uid: testUid, evs: conflictEvents });
 
     const conflictError = await page.evaluate(async (json) => {
@@ -382,8 +382,8 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       try {
         await win.__DRISHTI_TEST__!.testDexieImport(json);
         return null;
-      } catch (err: any) {
-        return err.message;
+      } catch (err: unknown) {
+        return err instanceof Error ? err.message : String(err);
       }
     }, conflictPayloadJson);
 
@@ -399,8 +399,8 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       try {
         await win.__DRISHTI_TEST__!.testDexieImport(json);
         return null;
-      } catch (err: any) {
-        return err.message;
+      } catch (err: unknown) {
+        return err instanceof Error ? err.message : String(err);
       }
     }, tamperedPayloadJson);
 
@@ -414,7 +414,7 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
     const dupSeqUid = `${testUid}-dup-seq`;
     const dupSeqPayloadJson = await page.evaluate(async ({ uid, evs }) => {
       const win = window as unknown as WindowWithDrishti;
-      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as any);
+      return await win.__DRISHTI_TEST__!.createSignedAarPayload(uid, evs as unknown as Parameters<NonNullable<WindowWithDrishti['__DRISHTI_TEST__']>['createSignedAarPayload']>[1]);
     }, { uid: dupSeqUid, evs: dupSeqEvents });
 
     const dupSeqError = await page.evaluate(async (json) => {
@@ -422,8 +422,8 @@ test.describe('TASK 19 — End-to-End Scenario Integrity & Complete Training Wor
       try {
         await win.__DRISHTI_TEST__!.testDexieImport(json);
         return null;
-      } catch (err: any) {
-        return err.message;
+      } catch (err: unknown) {
+        return err instanceof Error ? err.message : String(err);
       }
     }, dupSeqPayloadJson);
 

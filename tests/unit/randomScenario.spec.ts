@@ -250,7 +250,7 @@ describe('RANDOM-1 — Dedicated Unpredictable Assessment (TASK 13)', () => {
       // Verify the old recorder has exactly one SESSION_END event with reason SCENARIO_SWITCH
       const oldEvents = await getRecordedEventsForSession(oldSessionUid);
       const endEvents = oldEvents.filter((e) => e.type === 'SESSION_END');
-      expect(endEvents.length).toBe(1);
+      expect(endEvents).toHaveLength(1);
       expect((endEvents[0].payload as { reason?: string })?.reason).toBe('SCENARIO_SWITCH');
     });
   });

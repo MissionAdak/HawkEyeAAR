@@ -1,5 +1,5 @@
 import type { SafeTrackView, ApprovedSensorObservation } from '../types';
-import type { SensorMode, DroneType } from '@/sim/types';
+import type { SensorMode } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
 import type { WeatherType } from '../environment/types';
 
@@ -83,7 +83,8 @@ export function validateSensorHealthRecord(raw: unknown): SensorHealthValidation
     }
     const val = record[mode];
     if (typeof val !== 'string' || !VALID_SENSOR_HEALTH_STATES.includes(val as SensorHealthState)) {
-      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${String(val)}` };
+      const valStr = typeof val === 'string' ? val : JSON.stringify(val);
+      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${valStr}` };
     }
   }
   return {
@@ -133,21 +134,7 @@ export type ObservationValidationResult =
  * Strictly validates the complete observation contract and timestamp provenance (Task 17.5.1 Part B2, B3).
  * Fails closed on any inconsistency, missing key, non-finite number, or contract violation.
  */
-export function validateObservationProvenance(
-  obs: unknown,
-  context: SensorObservationContext
-): ObservationValidationResult {
-  if (!obs || typeof obs !== 'object' || Array.isArray(obs)) {
-    return {
-      isValid: false,
-      error: 'Observation payload is missing or not an object',
-      fallbackState: 'OUT_OF_RANGE',
-    };
-  }
-
-  const o = obs as Record<string, unknown>;
-
-  // 1. Validate sensorSource
+function validateObservationSensors(o: Record<string, unknown>): ObservationValidationResult | null {
   if (o.sensorSource !== 'EOIR') {
     return {
       isValid: false,
@@ -155,19 +142,18 @@ export function validateObservationProvenance(
       fallbackState: 'RADAR_TRACK',
     };
   }
-
-  // 2. Validate activeSensor when present
-  if ('activeSensor' in o && o.activeSensor !== undefined && o.activeSensor !== null) {
-    if (o.activeSensor !== 'EOIR') {
-      return {
-        isValid: false,
-        error: `Inconsistent activeSensor: ${String(o.activeSensor)} (must match EOIR)`,
-        fallbackState: 'RADAR_TRACK',
-      };
-    }
+  if ('activeSensor' in o && o.activeSensor !== undefined && o.activeSensor !== null && o.activeSensor !== 'EOIR') {
+    const sensorStr = typeof o.activeSensor === 'string' ? o.activeSensor : JSON.stringify(o.activeSensor);
+    return {
+      isValid: false,
+      error: `Inconsistent activeSensor: ${sensorStr} (must match EOIR)`,
+      fallbackState: 'RADAR_TRACK',
+    };
   }
+  return null;
+}
 
-  // 3. Authoritative simulation timestamp check (Task 17.5.2)
+function validateObservationTimestamps(o: Record<string, unknown>, context: SensorObservationContext): ObservationValidationResult | null {
   if (
     context.currentSimMs === undefined ||
     context.currentSimMs === null ||
@@ -182,7 +168,6 @@ export function validateObservationProvenance(
     };
   }
 
-  // Validate observation timestampMs (Task 17.5.3: Mandatory epoch invariant timestampMs >= 0)
   if (
     o.timestampMs === undefined ||
     o.timestampMs === null ||
@@ -197,9 +182,6 @@ export function validateObservationProvenance(
     };
   }
 
-  // Exact boundary semantics (Task 17.5.2 Part C):
-  // observation timestamp <= currentSimMs + 50 -> ACCEPT
-  // observation timestamp > currentSimMs + 50  -> REJECT
   if (o.timestampMs > context.currentSimMs + MAX_OBSERVATION_FUTURE_TOLERANCE_MS) {
     return {
       isValid: false,
@@ -208,8 +190,6 @@ export function validateObservationProvenance(
     };
   }
 
-  // observation timestamp >= currentSimMs - 1000 -> ACCEPT
-  // observation timestamp < currentSimMs - 1000  -> REJECT
   if (o.timestampMs < context.currentSimMs - MAX_OBSERVATION_AGE_MS) {
     return {
       isValid: false,
@@ -218,7 +198,10 @@ export function validateObservationProvenance(
     };
   }
 
-  // 4. Validate confidence
+  return null;
+}
+
+function validateObservationConfidence(o: Record<string, unknown>): ObservationValidationResult | null {
   if (
     typeof o.confidence !== 'number' ||
     !Number.isFinite(o.confidence) ||
@@ -231,8 +214,10 @@ export function validateObservationProvenance(
       fallbackState: 'OUT_OF_RANGE',
     };
   }
+  return null;
+}
 
-  // 5. Validate sensorHealth within observation
+function validateObservationHealthAndAvailability(o: Record<string, unknown>): ObservationValidationResult | null {
   if (
     typeof o.sensorHealth !== 'string' ||
     !VALID_SENSOR_HEALTH_STATES.includes(o.sensorHealth as SensorHealthState)
@@ -244,7 +229,6 @@ export function validateObservationProvenance(
     };
   }
 
-  // 6. Validate sensorAvailability
   if (typeof o.sensorAvailability !== 'boolean') {
     return {
       isValid: false,
@@ -253,7 +237,6 @@ export function validateObservationProvenance(
     };
   }
 
-  // Inconsistency check between sensorHealth and sensorAvailability
   if (o.sensorHealth === 'OUT' && o.sensorAvailability === true) {
     return {
       isValid: false,
@@ -268,8 +251,10 @@ export function validateObservationProvenance(
       fallbackState: 'SENSOR_OFFLINE',
     };
   }
+  return null;
+}
 
-  // 7. Validate signature
+function validateObservationSignatures(o: Record<string, unknown>): ObservationValidationResult | null {
   const sig = (o.signature ?? o.observedSignature) as string;
   if (
     typeof sig !== 'string' ||
@@ -287,14 +272,18 @@ export function validateObservationProvenance(
     o.signature !== undefined &&
     o.signature !== o.observedSignature
   ) {
+    const sigStr = typeof o.signature === 'string' ? o.signature : JSON.stringify(o.signature);
+    const obsSigStr = typeof o.observedSignature === 'string' ? o.observedSignature : JSON.stringify(o.observedSignature);
     return {
       isValid: false,
-      error: `Inconsistent observation signatures: signature '${String(o.signature)}' !== observedSignature '${String(o.observedSignature)}'`,
+      error: `Inconsistent observation signatures: signature '${sigStr}' !== observedSignature '${obsSigStr}'`,
       fallbackState: 'OUT_OF_RANGE',
     };
   }
+  return null;
+}
 
-  // 8. Validate resolutionLevel and resolution
+function validateObservationResolutionAndVisibility(o: Record<string, unknown>): ObservationValidationResult | null {
   const resLevel = o.resolutionLevel as string;
   const res = o.resolution as string;
   if (
@@ -319,7 +308,6 @@ export function validateObservationProvenance(
     };
   }
 
-  // 9. Validate visibilityState
   const visState = o.visibilityState as string;
   if (
     typeof visState !== 'string' ||
@@ -331,8 +319,14 @@ export function validateObservationProvenance(
       fallbackState: 'OUT_OF_RANGE',
     };
   }
+  return null;
+}
 
-  // 10. Field consistency checks:
+function validateObservationCrossFieldConsistency(o: Record<string, unknown>): ObservationValidationResult | null {
+  const resLevel = o.resolutionLevel as string;
+  const visState = o.visibilityState as string;
+  const sig = (o.signature ?? o.observedSignature) as string;
+
   if (o.sensorHealth === 'OUT' && (resLevel === 'FULL' || resLevel === 'DEGRADED')) {
     return {
       isValid: false,
@@ -383,13 +377,52 @@ export function validateObservationProvenance(
 
   if ('estimatedRangeM' in o && o.estimatedRangeM !== undefined && o.estimatedRangeM !== null) {
     if (typeof o.estimatedRangeM !== 'number' || !Number.isFinite(o.estimatedRangeM) || o.estimatedRangeM < 0) {
+      const rangeStr = JSON.stringify(o.estimatedRangeM);
       return {
         isValid: false,
-        error: `Invalid observation estimatedRangeM: ${String(o.estimatedRangeM)}`,
+        error: `Invalid observation estimatedRangeM: ${rangeStr}`,
         fallbackState: 'OUT_OF_RANGE',
       };
     }
   }
+
+  return null;
+}
+
+export function validateObservationProvenance(
+  obs: unknown,
+  context: SensorObservationContext
+): ObservationValidationResult {
+  if (!obs || typeof obs !== 'object' || Array.isArray(obs)) {
+    return {
+      isValid: false,
+      error: 'Observation payload is missing or not an object',
+      fallbackState: 'OUT_OF_RANGE',
+    };
+  }
+
+  const o = obs as Record<string, unknown>;
+
+  const sensorErr = validateObservationSensors(o);
+  if (sensorErr) return sensorErr;
+
+  const timestampErr = validateObservationTimestamps(o, context);
+  if (timestampErr) return timestampErr;
+
+  const confidenceErr = validateObservationConfidence(o);
+  if (confidenceErr) return confidenceErr;
+
+  const healthErr = validateObservationHealthAndAvailability(o);
+  if (healthErr) return healthErr;
+
+  const sigErr = validateObservationSignatures(o);
+  if (sigErr) return sigErr;
+
+  const resVisErr = validateObservationResolutionAndVisibility(o);
+  if (resVisErr) return resVisErr;
+
+  const crossFieldErr = validateObservationCrossFieldConsistency(o);
+  if (crossFieldErr) return crossFieldErr;
 
   return {
     isValid: true,
@@ -403,7 +436,7 @@ export function validateObservationProvenance(
  * They do NOT represent threat intent or tactical classification.
  */
 export function mapSignatureToCategory(
-  signature?: ObservedAirframeSignature | DroneType | string
+  signature?: string
 ): TargetModelCategory {
   switch (signature) {
     case 'MULTIROTOR_COMPACT':
@@ -449,17 +482,10 @@ export const mapAirframeToCategory = mapSignatureToCategory;
  *    - If no observation is available: returns RADAR_SYMBOL.
  * 5. Operator classification (traineeLabel) does NOT alter physical airframe geometry.
  */
-export function resolveTargetPresentation(
-  track: SafeTrackView,
-  context: SensorObservationContext
-): TargetObservationResult {
-  const {
-    activeSensor,
-    displayMode = 'AUTO',
-    mode = 'TRAIN',
-  } = context;
-
-  // Validate authoritative simulation clock strictly (Fail-Closed: Task 17.5.2 Part B)
+function validateTargetPresentationContext(context: SensorObservationContext): {
+  isValid: boolean;
+  fallbackResult?: TargetObservationResult;
+} {
   if (
     context.currentSimMs === undefined ||
     context.currentSimMs === null ||
@@ -468,28 +494,40 @@ export function resolveTargetPresentation(
     context.currentSimMs < 0
   ) {
     return {
-      presentationCategory: 'RADAR_SYMBOL',
-      isVisuallyResolved: false,
-      observationState: 'OUT_OF_RANGE',
-      opticalConfidence: 0,
-      reason: `Simulation clock missing or invalid: ${String(context.currentSimMs)}`,
+      isValid: false,
+      fallbackResult: {
+        presentationCategory: 'RADAR_SYMBOL',
+        isVisuallyResolved: false,
+        observationState: 'OUT_OF_RANGE',
+        opticalConfidence: 0,
+        reason: `Simulation clock missing or invalid: ${String(context.currentSimMs)}`,
+      },
     };
   }
 
-  // Validate context sensorHealth strictly (Fail-Closed: Task 17.5.1 Part B1)
   const healthValidation = validateSensorHealthRecord(context.sensorHealth);
   if (!healthValidation.isValid) {
     return {
-      presentationCategory: 'RADAR_SYMBOL',
-      isVisuallyResolved: false,
-      observationState: 'SENSOR_OFFLINE',
-      opticalConfidence: 0,
-      reason: `Sensor health validation failed: ${healthValidation.error}`,
+      isValid: false,
+      fallbackResult: {
+        presentationCategory: 'RADAR_SYMBOL',
+        isVisuallyResolved: false,
+        observationState: 'SENSOR_OFFLINE',
+        opticalConfidence: 0,
+        reason: `Sensor health validation failed: ${healthValidation.error}`,
+      },
     };
   }
-  const sensorHealth = healthValidation.health;
 
-  // 1. Force RADAR symbols if display mode is explicitly RADAR
+  return { isValid: true };
+}
+
+function evaluatePreObservationConditions(
+  track: SafeTrackView,
+  context: SensorObservationContext
+): TargetObservationResult | null {
+  const { activeSensor, displayMode = 'AUTO', mode = 'TRAIN', sensorHealth } = context;
+
   if (displayMode === 'RADAR') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -500,7 +538,6 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 2. Active sensor is RADAR or RF (AIRFRAME preference cannot override RADAR or RF!)
   if (activeSensor === 'RADAR' || activeSensor === 'RF') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -511,8 +548,7 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 3. Sensor Health Check for EO/IR
-  if (activeSensor === 'EOIR' && sensorHealth.EOIR === 'OUT') {
+  if (activeSensor === 'EOIR' && sensorHealth?.EOIR === 'OUT') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
       isVisuallyResolved: false,
@@ -522,8 +558,6 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 4. Line-of-sight & terrain masking check
-  // Optical sensors cannot see through buildings or terrain!
   if (track.masked) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -534,7 +568,6 @@ export function resolveTargetPresentation(
     };
   }
 
-  // In EVAL mode, prevent omniscient truth override
   if (mode === 'EVAL' && displayMode === 'AIRFRAME' && activeSensor !== 'EOIR') {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -545,7 +578,6 @@ export function resolveTargetPresentation(
     };
   }
 
-  // 5. Approved Sensor Observation Dispatch
   if (!track.sensorObservation) {
     return {
       presentationCategory: 'RADAR_SYMBOL',
@@ -556,19 +588,13 @@ export function resolveTargetPresentation(
     };
   }
 
-  // Strict observation provenance & contract validation (Task 17.5.1 Part B2, B3)
-  const obsValidation = validateObservationProvenance(track.sensorObservation, context);
-  if (!obsValidation.isValid) {
-    return {
-      presentationCategory: 'RADAR_SYMBOL',
-      isVisuallyResolved: false,
-      observationState: obsValidation.fallbackState,
-      opticalConfidence: 0,
-      reason: `Observation validation failed: ${obsValidation.error}`,
-    };
-  }
+  return null;
+}
 
-  const obs = obsValidation.observation;
+function resolveValidatedObservation(
+  obs: ApprovedSensorObservation,
+  sensorHealth: Record<SensorMode, SensorHealthState>
+): TargetObservationResult {
   const signature = obs.signature ?? obs.observedSignature ?? 'UNRESOLVED_AIRFRAME';
   const resolution = obs.resolutionLevel ?? obs.resolution ?? 'UNRESOLVED';
   const obsHealth = obs.sensorHealth;
@@ -595,7 +621,6 @@ export function resolveTargetPresentation(
     };
   }
 
-  // Degraded sensor health or degraded observation produces UNKNOWN_AIRFRAME, not SENSOR_OFFLINE
   if (sensorHealth.EOIR === 'DEG' || obsHealth === 'DEG' || resolution === 'DEGRADED') {
     return {
       presentationCategory: 'UNKNOWN_AIRFRAME',
@@ -626,4 +651,30 @@ export function resolveTargetPresentation(
     opticalConfidence: confidence,
     reason: `Contact at ${Math.round(rangeM)}m exceeds sensor optical resolution`,
   };
+}
+
+export function resolveTargetPresentation(
+  track: SafeTrackView,
+  context: SensorObservationContext
+): TargetObservationResult {
+  const contextValidation = validateTargetPresentationContext(context);
+  if (!contextValidation.isValid && contextValidation.fallbackResult) {
+    return contextValidation.fallbackResult;
+  }
+
+  const preCheck = evaluatePreObservationConditions(track, context);
+  if (preCheck) return preCheck;
+
+  const obsValidation = validateObservationProvenance(track.sensorObservation, context);
+  if (!obsValidation.isValid) {
+    return {
+      presentationCategory: 'RADAR_SYMBOL',
+      isVisuallyResolved: false,
+      observationState: obsValidation.fallbackState,
+      opticalConfidence: 0,
+      reason: `Observation validation failed: ${obsValidation.error}`,
+    };
+  }
+
+  return resolveValidatedObservation(obsValidation.observation, context.sensorHealth!);
 }

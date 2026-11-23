@@ -18,6 +18,16 @@ function isInteractiveElement(target: EventTarget | null): boolean {
   );
 }
 
+function getAtmosphereDescription(weather: string, fogSeverity?: number): string {
+  if (weather === 'FOG') {
+    return `🌫 Dense Fog (Severity ${(fogSeverity ?? 1).toFixed(1)}x - Optical Range Reduced)`;
+  }
+  if (weather === 'RAIN') {
+    return '🌧 Precipitation / Rain (Radar Backscatter Present)';
+  }
+  return '🌤 Clear Visibility (Nominal Propagation)';
+}
+
 export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => {
   const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId) || DEFAULT_SCENARIO_ID;
   const startSession = useSessionStore((s) => s.startSession);
@@ -114,12 +124,12 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
   }, [selectedScenarioId, isStarting, sessionStatus, isScenarioModalOpen, onClose, closeBriefing]);
 
   return (
-    <div
-      role="dialog"
+    <dialog
+      open
       aria-modal="true"
       aria-label="Mission Briefing & Exercise Control"
       tabIndex={-1}
-      className="fixed inset-0 z-50 bg-carbon-950/95 flex items-center justify-center p-4 select-none font-mono text-xs outline-none"
+      className="fixed inset-0 z-50 bg-carbon-950/95 flex items-center justify-center p-4 m-0 border-0 max-w-none max-h-none w-screen h-screen select-none font-mono text-xs outline-none"
     >
       <div
         tabIndex={-1}
@@ -290,7 +300,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
               </div>
               <ul className="text-[11px] space-y-1 text-text-main list-disc list-inside pt-1">
                 <li><span className="text-text-dim">Lighting:</span> {envDesc.dayNight === 'NIGHT' ? '🌙 Night Operations (Thermal EO/IR Priority)' : '☀️ Daylight Standard (Visual & EO/IR Active)'}</li>
-                <li><span className="text-text-dim">Atmosphere:</span> {envDesc.weather === 'FOG' ? `🌫 Dense Fog (Severity ${(envDesc.fogSeverity ?? 1).toFixed(1)}x - Optical Range Reduced)` : envDesc.weather === 'RAIN' ? '🌧 Precipitation / Rain (Radar Backscatter Present)' : '🌤 Clear Visibility (Nominal Propagation)'}</li>
+                <li><span className="text-text-dim">Atmosphere:</span> {getAtmosphereDescription(envDesc.weather, envDesc.fogSeverity)}</li>
                 <li><span className="text-text-dim">Coverage Radius:</span> 5,000 meters tactical radius (S-Band 30 RPM)</li>
                 <li><span className="text-text-dim">Exclusion Zone:</span> 500m Point-of-No-Return (PNR) Defense Core</li>
               </ul>
@@ -373,6 +383,6 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };

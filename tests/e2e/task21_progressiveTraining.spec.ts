@@ -1,4 +1,9 @@
 import { test, expect } from '@playwright/test';
+import type { DrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
+
+type WindowWithDrishti = Window & {
+  __DRISHTI_TEST__?: DrishtiTestBridge | null;
+};
 
 test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback', () => {
   test('verifies TopBar difficulty indicator, AAR Red Team Plan debrief, and progression feedback', async ({
@@ -101,7 +106,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Wait for bridge to be ready once simulation is active
     await page.waitForFunction(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return Boolean(win.__DRISHTI_TEST__?.isReady());
     }, undefined, { timeout: 10000 });
 
@@ -112,7 +117,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Step 2: Advance initial session to completion
     await page.evaluate(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       win.__DRISHTI_TEST__?.advanceToSessionEnd();
     });
 
@@ -121,7 +126,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     if (!(await aarModal.isVisible())) {
       const aarBtn = page.getByRole('button', { name: /AAR SCORECARD/i });
       if (await aarBtn.isVisible()) {
-        await aarBtn.click({ force: true });
+        await aarBtn.click();
       }
     }
     await expect(aarModal).toBeVisible({ timeout: 10000 });
@@ -130,7 +135,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     await expect(persistedBadge).toBeVisible({ timeout: 10000 });
 
     const firstSessionUid = await page.evaluate(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getPersistenceState?.()?.latestSavedUid;
     });
     expect(firstSessionUid).toBeDefined();
@@ -181,7 +186,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Inspect actual active scenario spec levers and difficulty via test bridge (TASK 21-PT-R2-FINAL Section 4)
     const activeSpec = await page.evaluate(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getActiveScenarioSpec?.();
     });
     expect(activeSpec).not.toBeNull();
@@ -201,38 +206,38 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Step 7: Advance second session to completion
     await page.evaluate(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       win.__DRISHTI_TEST__?.advanceToSessionEnd();
     });
 
     // Explicit persistence state confirmation: wait for Dexie write of second session
     await page.waitForFunction((prevUid) => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       const s = win.__DRISHTI_TEST__?.getPersistenceState?.();
       return s?.status === 'SAVED' && s?.latestSavedUid && s.latestSavedUid !== prevUid;
     }, firstSessionUid, { timeout: 10000 });
 
     // Capture persisted second session state and UID before reload
     const secondSessionUid = await page.evaluate(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getPersistenceState?.()?.latestSavedUid;
     });
     expect(secondSessionUid).toBeDefined();
 
     const secondSessionBeforeReload = await page.evaluate(async (uid: string) => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieSession?.(uid);
-    }, secondSessionUid);
+    }, secondSessionUid!);
     expect(secondSessionBeforeReload).toBeDefined();
     expect(secondSessionBeforeReload?.mode).toBe('TRAIN');
     expect(secondSessionBeforeReload?.progressionApplied).toBe(true);
 
     const diffBeforeReload = await page.evaluate(async () => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieDifficulty?.() ?? 0.3;
     });
     const profileBeforeReload = await page.evaluate(async () => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieProfile?.();
     });
     expect(profileBeforeReload).not.toBeNull();
@@ -243,7 +248,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Wait for test bridge to be mounted
     await page.waitForFunction(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return Boolean(win.__DRISHTI_TEST__);
     }, undefined, { timeout: 10000 });
 
@@ -253,17 +258,17 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Verify the same session UID is still persisted in Dexie
     const storedAfterReload = await page.evaluate(async (uid: string) => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieSession?.(uid);
-    }, secondSessionUid);
+    }, secondSessionUid!);
     expect(storedAfterReload).toBeDefined();
     expect(storedAfterReload?.progressionApplied).toBe(true);
 
     // Resubmit identical session UID with progressionApplied intentionally unset (TASK 21-PT-R2-FINAL Section 5)
     const resubmitResult = await page.evaluate(async (uid: string) => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.resubmitSessionForIdempotencyTest?.(uid);
-    }, secondSessionUid);
+    }, secondSessionUid!);
     expect(resubmitResult).not.toBeNull();
 
     // Idempotency assertions:
@@ -289,7 +294,7 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
     await expect(evalStartBtn).not.toBeVisible({ timeout: 5000 });
 
     await page.waitForFunction(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return Boolean(win.__DRISHTI_TEST__?.isReady());
     }, undefined, { timeout: 10000 });
 
@@ -298,28 +303,31 @@ test.describe('TASK 21-PT — Progressive Training UI & End-to-End AAR Feedback'
 
     // Query difficulty and profile before completing EVAL drill
     const preEvalDifficulty = await page.evaluate(async () => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieDifficulty?.() ?? 0.3;
     });
     const preEvalProfile = await page.evaluate(async () => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieProfile?.() ?? null;
     });
 
     // Step 11: Complete EVAL drill, verify adaptive difficulty and EMA remain strictly unchanged
     await page.evaluate(() => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       win.__DRISHTI_TEST__?.advanceToSessionEnd();
     });
 
-    await page.waitForTimeout(1000);
+    await page.waitForFunction(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return win.__DRISHTI_TEST__?.isSessionEnded();
+    }, undefined, { timeout: 10000 });
 
     const postEvalDifficulty = await page.evaluate(async () => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieDifficulty?.() ?? 0.3;
     });
     const postEvalProfile = await page.evaluate(async () => {
-      const win = window as any;
+      const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieProfile?.() ?? null;
     });
 

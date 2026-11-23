@@ -576,7 +576,7 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
         // Assert simulation ticks continue without resetting simulation state
         engineInstance.step();
         expect(engineInstance.tickIndex).toBe(tickBeforeExit + 1);
-        expect(engineInstance.curr.length).toBe(tracksCountBeforeExit);
+        expect(engineInstance.curr).toHaveLength(tracksCountBeforeExit);
       } finally {
         if (origWindow !== undefined) {
           (globalThis as unknown as { window: unknown }).window = origWindow;

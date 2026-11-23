@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './types';
+import type { ZoneSpec } from '@/sim/types';
+import type { EnvironmentDescriptor, EnvironmentObjectInfo, EnvironmentPreset } from './types';
 import { toThree } from '../coords';
 import { getTerrainElevation } from './terrain';
 
@@ -71,7 +72,8 @@ export function getRotatedFootprintCorners(
 /**
  * Tests whether two 2D line segments (p1-p2 and p3-p4) intersect.
  */
-export function segmentsIntersect(
+// NOSONAR typescript:S107 - 2D line segment intersection requires 4 (x,y) vertex coordinates
+export function segmentsIntersect( // NOSONAR typescript:S107
   x1: number,
   y1: number,
   x2: number,
@@ -169,6 +171,522 @@ export function isFootprintFullyContained(
  * Builds 3D buildings, radar installations, command towers, and air defense infrastructure.
  * Uses shared geometries, instancing, and seeded deterministic layout.
  */
+interface PlacedFootprint {
+  x: number;
+  y: number;
+  radius: number;
+}
+
+interface BuildingMats {
+  bldMatConcrete: THREE.Material;
+  bldMatDark: THREE.Material;
+  bldMatHangar: THREE.Material;
+  radarMat: THREE.Material;
+  beaconMat: THREE.Material;
+  towerWireMat: THREE.LineBasicMaterial;
+}
+
+interface BuildingContext {
+  preset: EnvironmentPreset;
+  rMinM: number;
+  group: THREE.Group;
+  geometries: THREE.BufferGeometry[];
+  materials: THREE.Material[];
+  mats: BuildingMats;
+  registerBuilding: (mesh: THREE.Object3D, info: EnvironmentObjectInfo, extraUserData?: Record<string, unknown>) => void;
+  sampleGround: (simX: number, simY: number) => number;
+  nextRng: () => number;
+  placedFootprints: PlacedFootprint[];
+  isOverlapping: (x: number, y: number, radius: number) => boolean;
+}
+
+function buildC2ComplexAndRadar(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding } = ctx;
+  const c2Group = new THREE.Group();
+  c2Group.position.set(0, 0, 0);
+
+  // Main Command Bunker Block (50m x 50m x 17m).
+  // Ground mesh surface is at Y = -1; bunker base extends to Y = -1, roof at Y = 16.
+  const bunkerGeom = new THREE.BoxGeometry(50, 17, 50);
+  geometries.push(bunkerGeom);
+  const bunkerMesh = new THREE.Mesh(bunkerGeom, mats.bldMatDark);
+  bunkerMesh.position.y = 7.5; // [-1, 16]
+  c2Group.add(bunkerMesh);
+
+  // Upper Sensor Deck
+  const deckGeom = new THREE.BoxGeometry(30, 8, 30);
+  geometries.push(deckGeom);
+  const deckMesh = new THREE.Mesh(deckGeom, mats.bldMatConcrete);
+  deckMesh.position.y = 20;
+  c2Group.add(deckMesh);
+
+  // Primary S-Band Radar Mast Tower (Lattice Spire at Y = 24m -> 54m)
+  const mastGeom = new THREE.CylinderGeometry(1.5, 4, 30, 8);
+  geometries.push(mastGeom);
+  const mastMesh = new THREE.Mesh(mastGeom, mats.radarMat);
+  mastMesh.position.y = 39;
+  c2Group.add(mastMesh);
+
+  // Radar Dish Antenna
+  const dishGeom = new THREE.CylinderGeometry(8, 2, 4, 16);
+  dishGeom.rotateZ(Math.PI / 2);
+  geometries.push(dishGeom);
+  const dishMesh = new THREE.Mesh(dishGeom, mats.radarMat);
+  dishMesh.position.set(0, 56, 0);
+  c2Group.add(dishMesh);
+
+  // Flashing Navigation Beacon on top of mast
+  const beaconGeom = new THREE.SphereGeometry(1.2, 8, 8);
+  geometries.push(beaconGeom);
+  const beaconMesh = new THREE.Mesh(beaconGeom, mats.beaconMat);
+  beaconMesh.position.set(0, 59, 0);
+  c2Group.add(beaconMesh);
+
+  // Perimeter Security Barrier Fence (120m x 120m)
+  const fencePts = [
+    new THREE.Vector3(-60, 0, -60),
+    new THREE.Vector3(60, 0, -60),
+    new THREE.Vector3(60, 0, 60),
+    new THREE.Vector3(-60, 0, 60),
+    new THREE.Vector3(-60, 0, -60),
+  ];
+  const fenceGeom = new THREE.BufferGeometry().setFromPoints(fencePts);
+  geometries.push(fenceGeom);
+  const fenceLine = new THREE.Line(fenceGeom, mats.towerWireMat);
+  c2Group.add(fenceLine);
+
+  group.add(c2Group);
+
+  const c2Info: EnvironmentObjectInfo = {
+    id: 'FACILITY-CORE-C2',
+    name: 'Tactical Air Defense Command Center (C2)',
+    category: 'PROTECTED_FACILITY',
+    preset,
+    position: { x: 0, y: 0, z: 0 },
+    heightM: 60,
+    elevationM: 0,
+    isObstructionEnvelope: false,
+    description: 'Primary protected command bunker with 3D S-band search radar mast and tactical operations center.',
+  };
+  registerBuilding(bunkerMesh, c2Info);
+  registerBuilding(dishMesh, {
+    id: 'RADAR-PRIMARY-SBAND',
+    name: 'S-Band Primary Surveillance Radar Array',
+    category: 'RADAR_INSTALLATION',
+    preset,
+    position: { x: 0, y: 0, z: 56 },
+    heightM: 60,
+    elevationM: 56,
+    isObstructionEnvelope: false,
+    description: 'Rotating S-band 30 RPM search radar providing 5,000m airspace coverage.',
+  });
+
+  // Secondary RF Direction-Finding Tower at (-400m, 300m)
+  // Ground mesh is at Y = -1. Mast height = 36m (Y = -1 to 35). Center at Y = 17.
+  const rfTowerGeom = new THREE.CylinderGeometry(1, 3, 36, 6);
+  geometries.push(rfTowerGeom);
+  const rfTowerMesh = new THREE.Mesh(rfTowerGeom, mats.radarMat);
+  rfTowerMesh.position.set(-400, 17, -300);
+  group.add(rfTowerMesh);
+
+  registerBuilding(rfTowerMesh, {
+    id: 'RF-TRIANGULATOR-NORTH',
+    name: 'RF Direction-Finding Station Alpha',
+    category: 'TOWER',
+    preset,
+    position: { x: -400, y: 300, z: 0 },
+    heightM: 35,
+    isObstructionEnvelope: false,
+    description: 'High-sensitivity passive RF direction-finding antenna node.',
+  });
+}
+
+interface BuildingArchetype {
+  bldType: string;
+  bldSizeX: number;
+  bldSizeZ: number;
+  bldHeight: number;
+  bldMat: THREE.Material;
+  bldName: string;
+  rooftopEquipment: 'HVAC' | 'WATERTANK' | 'MAST' | 'NONE';
+}
+
+function resolveBuildingArchetype(
+  archetypeRoll: number,
+  zone: ZoneSpec,
+  placedInZone: number,
+  nextRng: () => number,
+  mats: BuildingMats
+): BuildingArchetype {
+  if (archetypeRoll < 0.35) {
+    const bldSizeX = 35 + nextRng() * 40;
+    const bldSizeZ = 35 + nextRng() * 40;
+    const bldHeight = Math.max(18, Math.min(zone.heightM, zone.heightM * 0.70 + nextRng() * (zone.heightM * 0.30)));
+    return {
+      bldType: 'COMMERCIAL',
+      bldSizeX,
+      bldSizeZ,
+      bldHeight,
+      bldMat: placedInZone % 2 === 0 ? mats.bldMatConcrete : mats.bldMatDark,
+      bldName: `Commercial Complex ${zone.id}-${placedInZone + 1}`,
+      rooftopEquipment: bldHeight > 22 ? 'HVAC' : 'NONE',
+    };
+  }
+  if (archetypeRoll < 0.65) {
+    const bldSizeX = 42 + nextRng() * 28;
+    const bldSizeZ = 22 + nextRng() * 16;
+    const bldHeight = Math.max(14, Math.min(zone.heightM * 0.85, zone.heightM * 0.50 + nextRng() * (zone.heightM * 0.32)));
+    return {
+      bldType: 'RESIDENTIAL_MID',
+      bldSizeX,
+      bldSizeZ,
+      bldHeight,
+      bldMat: mats.bldMatDark,
+      bldName: `Residential Apartment Block ${zone.id}-${placedInZone + 1}`,
+      rooftopEquipment: bldHeight > 16 ? 'WATERTANK' : 'NONE',
+    };
+  }
+  if (archetypeRoll < 0.82) {
+    const bldSizeX = 18 + nextRng() * 16;
+    const bldSizeZ = 18 + nextRng() * 16;
+    const bldHeight = Math.max(8, Math.min(zone.heightM * 0.45, 8 + nextRng() * 8));
+    return {
+      bldType: 'RESIDENTIAL_LOW',
+      bldSizeX,
+      bldSizeZ,
+      bldHeight,
+      bldMat: mats.bldMatConcrete,
+      bldName: `Townhouse Cluster ${zone.id}-${placedInZone + 1}`,
+      rooftopEquipment: 'NONE',
+    };
+  }
+  if (archetypeRoll < 0.94) {
+    const bldSizeX = 48 + nextRng() * 32;
+    const bldSizeZ = 30 + nextRng() * 20;
+    const bldHeight = Math.max(10, Math.min(zone.heightM * 0.40, 10 + nextRng() * 6));
+    return {
+      bldType: 'INDUSTRIAL',
+      bldSizeX,
+      bldSizeZ,
+      bldHeight,
+      bldMat: mats.bldMatHangar,
+      bldName: `Logistics Warehouse ${zone.id}-${placedInZone + 1}`,
+      rooftopEquipment: 'NONE',
+    };
+  }
+  const bldHeight = Math.max(22, Math.min(zone.heightM, zone.heightM * 0.85 + nextRng() * (zone.heightM * 0.15)));
+  return {
+    bldType: 'TOWER',
+    bldSizeX: 12,
+    bldSizeZ: 12,
+    bldHeight,
+    bldMat: mats.radarMat,
+    bldName: `Urban Communications Mast ${zone.id}-${placedInZone + 1}`,
+    rooftopEquipment: 'MAST',
+  };
+}
+
+function addRooftopEquipment(
+  rooftopEquipment: 'HVAC' | 'WATERTANK' | 'MAST' | 'NONE',
+  bldMesh: THREE.Mesh,
+  bldThree: THREE.Vector3,
+  roofTopY: number,
+  bldSizeX: number,
+  bldSizeZ: number,
+  ctx: BuildingContext
+): void {
+  const { group, geometries, mats, nextRng } = ctx;
+  if (rooftopEquipment === 'HVAC') {
+    const hvacGeom = new THREE.BoxGeometry(bldSizeX * 0.28, 2.8, bldSizeZ * 0.28);
+    geometries.push(hvacGeom);
+    const hvacMesh = new THREE.Mesh(hvacGeom, mats.radarMat);
+    hvacMesh.position.set(
+      bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.3,
+      roofTopY + 1.4,
+      bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.3
+    );
+    hvacMesh.rotation.copy(bldMesh.rotation);
+    group.add(hvacMesh);
+  } else if (rooftopEquipment === 'WATERTANK') {
+    const tankGeom = new THREE.CylinderGeometry(2.5, 2.5, 4, 8);
+    geometries.push(tankGeom);
+    const tankMesh = new THREE.Mesh(tankGeom, mats.radarMat);
+    tankMesh.position.set(
+      bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.25,
+      roofTopY + 2,
+      bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.25
+    );
+    group.add(tankMesh);
+  } else if (rooftopEquipment === 'MAST') {
+    const beaconGeom = new THREE.SphereGeometry(1.2, 6, 6);
+    geometries.push(beaconGeom);
+    const beaconMesh = new THREE.Mesh(beaconGeom, mats.beaconMat);
+    beaconMesh.position.set(bldThree.x, roofTopY + 0.8, bldThree.z);
+    group.add(beaconMesh);
+  }
+}
+
+function placeUrbanBuilding(
+  candidateX: number,
+  candidateY: number,
+  yawAngle: number,
+  arch: BuildingArchetype,
+  zone: ZoneSpec,
+  placedInZone: number,
+  ctx: BuildingContext
+): void {
+  const { group, geometries, mats, sampleGround, registerBuilding, preset, placedFootprints } = ctx;
+  const { bldType, bldSizeX, bldSizeZ, bldHeight, bldMat, bldName, rooftopEquipment } = arch;
+
+  const corners = getRotatedFootprintCorners(candidateX, candidateY, bldSizeX, bldSizeZ, yawAngle);
+  const centerGroundY = sampleGround(candidateX, candidateY);
+  const cornerGroundY = corners.map((c) => sampleGround(c[0], c[1]));
+  const midGroundY = [
+    sampleGround((corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2),
+    sampleGround((corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2),
+    sampleGround((corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2),
+    sampleGround((corners[3][0] + corners[0][0]) / 2, (corners[3][1] + corners[0][1]) / 2),
+  ];
+  const minGroundY = Math.min(centerGroundY, ...cornerGroundY, ...midGroundY);
+  const centerElev = centerGroundY + 1;
+  const minGroundElev = minGroundY + 1;
+
+  const foundationBaseY = minGroundY;
+  const roofTopY = centerElev + bldHeight;
+  const totalHeight = roofTopY - foundationBaseY;
+  const meshCenterY = foundationBaseY + totalHeight / 2;
+
+  const bldThree = toThree(candidateX, candidateY, 0);
+
+  let bldMesh: THREE.Mesh;
+  if (bldType === 'TOWER') {
+    const spireGeom = new THREE.CylinderGeometry(1.2, 4.5, totalHeight, 6);
+    geometries.push(spireGeom);
+    bldMesh = new THREE.Mesh(spireGeom, bldMat);
+    bldMesh.position.set(bldThree.x, meshCenterY, bldThree.z);
+  } else {
+    const bldGeom = new THREE.BoxGeometry(bldSizeX, totalHeight, bldSizeZ);
+    geometries.push(bldGeom);
+    bldMesh = new THREE.Mesh(bldGeom, bldMat);
+    bldMesh.position.set(bldThree.x, meshCenterY, bldThree.z);
+  }
+
+  bldMesh.rotation.y = yawAngle;
+  group.add(bldMesh);
+
+  if (bldType !== 'TOWER') {
+    const wireGeom = new THREE.EdgesGeometry(bldMesh.geometry);
+    geometries.push(wireGeom);
+    const wire = new THREE.LineSegments(wireGeom, mats.towerWireMat);
+    wire.position.copy(bldMesh.position);
+    wire.rotation.copy(bldMesh.rotation);
+    group.add(wire);
+  }
+
+  addRooftopEquipment(rooftopEquipment, bldMesh, bldThree, roofTopY, bldSizeX, bldSizeZ, ctx);
+
+  const footRadius = Math.hypot(bldSizeX, bldSizeZ) / 2 + 8;
+  placedFootprints.push({ x: candidateX, y: candidateY, radius: footRadius });
+
+  const bldId = `BLD-${zone.id}-${placedInZone + 1}`;
+  registerBuilding(bldMesh, {
+    id: bldId,
+    name: bldName,
+    category: bldType === 'TOWER' ? 'TOWER' : 'BUILDING',
+    preset,
+    zoneId: zone.id,
+    position: { x: candidateX, y: candidateY, z: centerElev },
+    heightM: bldHeight,
+    elevationM: centerElev + bldHeight,
+    maskingProperties: {
+      heightM: zone.heightM,
+      shadowM: zone.shadowM,
+      rho: zone.rho,
+      zoneType: zone.type,
+    },
+    isObstructionEnvelope: false,
+    description: `Authoritative ${bldType.toLowerCase()} structure in ${zone.id}. Height ${Math.round(bldHeight)}m (zone envelope ${zone.heightM}m).`,
+  }, {
+    footprintSizeX: bldSizeX,
+    footprintSizeZ: bldSizeZ,
+    yawAngle,
+    minGroundElev,
+  });
+}
+
+interface DistrictCluster {
+  cx: number;
+  cy: number;
+  spreadX: number;
+  spreadY: number;
+  angle: number;
+}
+
+function buildZoneClusters(
+  zone: ZoneSpec,
+  minX: number,
+  minY: number,
+  width: number,
+  depth: number,
+  clusterCount: number,
+  nextRng: () => number
+): DistrictCluster[] {
+  const clusters: DistrictCluster[] = [];
+  for (let c = 0; c < clusterCount; c++) {
+    let cx = minX + 45 + nextRng() * Math.max(20, width - 90);
+    let cy = minY + 45 + nextRng() * Math.max(20, depth - 90);
+    for (let tries = 0; tries < 20; tries++) {
+      if (pointInPolygon(cx, cy, zone.polygon)) break;
+      cx = minX + 45 + nextRng() * Math.max(20, width - 90);
+      cy = minY + 45 + nextRng() * Math.max(20, depth - 90);
+    }
+    clusters.push({
+      cx,
+      cy,
+      spreadX: Math.max(50, width * 0.25),
+      spreadY: Math.max(50, depth * 0.25),
+      angle: (nextRng() - 0.5) * 0.8,
+    });
+  }
+  return clusters;
+}
+
+function buildUrbanDistrictClusters(zones: ZoneSpec[], ctx: BuildingContext): void {
+  const { nextRng, mats, rMinM, isOverlapping } = ctx;
+
+  for (const zone of zones) {
+    if (zone.type !== 'URBAN') continue;
+
+    const minX = Math.min(...zone.polygon.map((p: [number, number]) => p[0]));
+    const maxX = Math.max(...zone.polygon.map((p: [number, number]) => p[0]));
+    const minY = Math.min(...zone.polygon.map((p: [number, number]) => p[1]));
+    const maxY = Math.max(...zone.polygon.map((p: [number, number]) => p[1]));
+
+    const width = maxX - minX;
+    const depth = maxY - minY;
+    const targetBldCount = Math.min(22, Math.max(6, Math.floor(Math.sqrt(width * depth) / 75)));
+    const clusterCount = Math.min(4, Math.max(2, Math.floor(targetBldCount / 5)));
+
+    const clusters = buildZoneClusters(zone, minX, minY, width, depth, clusterCount, nextRng);
+
+    let placedInZone = 0;
+    let attempts = 0;
+    const maxAttempts = targetBldCount * 45;
+
+    while (placedInZone < targetBldCount && attempts < maxAttempts) {
+      attempts++;
+      const cluster = clusters[placedInZone % clusterCount];
+      const u = (nextRng() - 0.5) * 2 * cluster.spreadX;
+      const v = (nextRng() - 0.5) * 2 * cluster.spreadY;
+      const candidateX = cluster.cx + u * Math.cos(cluster.angle) - v * Math.sin(cluster.angle);
+      const candidateY = cluster.cy + u * Math.sin(cluster.angle) + v * Math.cos(cluster.angle);
+
+      const archetypeRoll = nextRng();
+      const arch = resolveBuildingArchetype(archetypeRoll, zone, placedInZone, nextRng, mats);
+
+      const yawAngle = cluster.angle + (nextRng() - 0.5) * 0.2;
+
+      if (!isFootprintFullyContained(candidateX, candidateY, arch.bldSizeX, arch.bldSizeZ, yawAngle, zone.polygon, rMinM)) {
+        continue;
+      }
+
+      const footRadius = Math.hypot(arch.bldSizeX, arch.bldSizeZ) / 2 + 8;
+      if (isOverlapping(candidateX, candidateY, footRadius)) {
+        continue;
+      }
+
+      placeUrbanBuilding(candidateX, candidateY, yawAngle, arch, zone, placedInZone, ctx);
+      placedInZone++;
+    }
+  }
+}
+
+function buildAirfieldStructures(ctx: BuildingContext): void {
+  const { group, geometries, materials, mats, preset, registerBuilding } = ctx;
+
+  // Airfield Control Tower at (350m, 500m). Base anchored to terrain mesh at Y = -1.
+  const towerGeom = new THREE.BoxGeometry(18, 49, 18);
+  geometries.push(towerGeom);
+  const towerMesh = new THREE.Mesh(towerGeom, mats.bldMatConcrete);
+  const towerThree = toThree(350, 500, 0);
+  towerMesh.position.set(towerThree.x, 23.5, towerThree.z);
+  group.add(towerMesh);
+
+  // Tower Glass Cab on top
+  const cabGeom = new THREE.CylinderGeometry(14, 11, 8, 8);
+  geometries.push(cabGeom);
+  const cabMat = new THREE.MeshLambertMaterial({ color: 0x3a4b5d });
+  materials.push(cabMat);
+  const cabMesh = new THREE.Mesh(cabGeom, cabMat);
+  cabMesh.position.set(towerThree.x, 52, towerThree.z);
+  group.add(cabMesh);
+
+  registerBuilding(towerMesh, {
+    id: 'TOWER-AIRFIELD-ATC',
+    name: 'Airfield Control Tower',
+    category: 'TOWER',
+    preset,
+    position: { x: 350, y: 500, z: 0 },
+    heightM: 56,
+    elevationM: 56,
+    isObstructionEnvelope: false,
+    description: 'Air traffic control observation tower with 360° flightline visibility.',
+  });
+
+  // 2 Aircraft Hangars along taxiway. Base anchored to terrain mesh at Y = -1.
+  for (let h = 0; h < 2; h++) {
+    const hangarGeom = new THREE.BoxGeometry(120, 23, 70);
+    geometries.push(hangarGeom);
+    const hangarMesh = new THREE.Mesh(hangarGeom, mats.bldMatHangar);
+    const hThree = toThree(100 + h * 180, 680, 0);
+    hangarMesh.position.set(hThree.x, 10.5, hThree.z);
+    group.add(hangarMesh);
+
+    registerBuilding(hangarMesh, {
+      id: `HANGAR-MAINT-${h + 1}`,
+      name: `UAV Maintenance Hangar ${h + 1}`,
+      category: 'AIRFIELD',
+      preset,
+      position: { x: 100 + h * 180, y: 680, z: 0 },
+      heightM: 22,
+      isObstructionEnvelope: false,
+      description: 'Hardened composite maintenance hangar for reconnaissance and tactical aircraft.',
+    });
+  }
+}
+
+function buildPerimeterMasts(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding } = ctx;
+  const obsCoords = [
+    { x: 1200, y: -900, name: 'Southeastern Relay Mast' },
+    { x: -1100, y: 1400, name: 'Northwestern Forward Post' },
+  ];
+  for (let i = 0; i < obsCoords.length; i++) {
+    const coord = obsCoords[i];
+    const pTowerGeom = new THREE.CylinderGeometry(1, 2.5, 29, 6);
+    geometries.push(pTowerGeom);
+    const pMesh = new THREE.Mesh(pTowerGeom, mats.radarMat);
+    const tPos = toThree(coord.x, coord.y, 0);
+    pMesh.position.set(tPos.x, 13.5, tPos.z);
+    group.add(pMesh);
+
+    registerBuilding(pMesh, {
+      id: `PERIMETER-OBS-${i + 1}`,
+      name: coord.name,
+      category: 'TOWER',
+      preset,
+      position: { x: coord.x, y: coord.y, z: 0 },
+      heightM: 28,
+      isObstructionEnvelope: false,
+      description: 'Forward perimeter observation mast with electro-optical repeater.',
+    });
+  }
+}
+
+/**
+ * Builds 3D buildings, radar installations, command towers, and air defense infrastructure.
+ * Uses shared geometries, instancing, and seeded deterministic layout.
+ */
 export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, groundMesh?: THREE.Mesh): BuildingsBuildResult {
   const group = new THREE.Group();
   group.name = 'ProceduralBuildings';
@@ -177,7 +695,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
 
-  const { preset, zones } = descriptor;
+  const { preset, zones, rMinM } = descriptor;
 
   if (groundMesh) {
     groundMesh.updateMatrixWorld(true);
@@ -216,7 +734,15 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
 
   materials.push(bldMatConcrete, bldMatDark, bldMatHangar, radarMat, beaconMat, towerWireMat);
 
-  // Helper to register an inspectable building
+  const mats: BuildingMats = {
+    bldMatConcrete,
+    bldMatDark,
+    bldMatHangar,
+    radarMat,
+    beaconMat,
+    towerWireMat,
+  };
+
   function registerBuilding(
     mesh: THREE.Object3D,
     info: EnvironmentObjectInfo,
@@ -226,117 +752,12 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
       isEnvironmentObject: true,
       envObjectId: info.id,
       envObjectInfo: info,
-      ...(extraUserData || {}),
+      ...extraUserData,
     };
     objects.push(info);
     selectableMeshes.push(mesh);
   }
 
-  // ---------------------------------------------------------
-  // A. Central Protected High-Value Asset: Command C2 Complex at (0, 0, 0)
-  // ---------------------------------------------------------
-  const c2Group = new THREE.Group();
-  c2Group.position.set(0, 0, 0);
-
-  // Main Command Bunker Block (50m x 50m x 17m).
-  // Ground mesh surface is at Y = -1; bunker base extends to Y = -1, roof at Y = 16.
-  const bunkerGeom = new THREE.BoxGeometry(50, 17, 50);
-  geometries.push(bunkerGeom);
-  const bunkerMesh = new THREE.Mesh(bunkerGeom, bldMatDark);
-  bunkerMesh.position.y = 7.5; // [-1, 16]
-  c2Group.add(bunkerMesh);
-
-  // Upper Sensor Deck
-  const deckGeom = new THREE.BoxGeometry(30, 8, 30);
-  geometries.push(deckGeom);
-  const deckMesh = new THREE.Mesh(deckGeom, bldMatConcrete);
-  deckMesh.position.y = 20;
-  c2Group.add(deckMesh);
-
-  // Primary S-Band Radar Mast Tower (Lattice Spire at Y = 24m -> 54m)
-  const mastGeom = new THREE.CylinderGeometry(1.5, 4, 30, 8);
-  geometries.push(mastGeom);
-  const mastMesh = new THREE.Mesh(mastGeom, radarMat);
-  mastMesh.position.y = 39;
-  c2Group.add(mastMesh);
-
-  // Radar Dish Antenna
-  const dishGeom = new THREE.CylinderGeometry(8, 2, 4, 16);
-  dishGeom.rotateZ(Math.PI / 2);
-  geometries.push(dishGeom);
-  const dishMesh = new THREE.Mesh(dishGeom, radarMat);
-  dishMesh.position.set(0, 56, 0);
-  c2Group.add(dishMesh);
-
-  // Flashing Navigation Beacon on top of mast
-  const beaconGeom = new THREE.SphereGeometry(1.2, 8, 8);
-  geometries.push(beaconGeom);
-  const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
-  beaconMesh.position.set(0, 59, 0);
-  c2Group.add(beaconMesh);
-
-  // Perimeter Security Barrier Fence (120m x 120m)
-  const fencePts = [
-    new THREE.Vector3(-60, 0, -60),
-    new THREE.Vector3(60, 0, -60),
-    new THREE.Vector3(60, 0, 60),
-    new THREE.Vector3(-60, 0, 60),
-    new THREE.Vector3(-60, 0, -60),
-  ];
-  const fenceGeom = new THREE.BufferGeometry().setFromPoints(fencePts);
-  geometries.push(fenceGeom);
-  const fenceLine = new THREE.Line(fenceGeom, towerWireMat);
-  c2Group.add(fenceLine);
-
-  group.add(c2Group);
-
-  const c2Info: EnvironmentObjectInfo = {
-    id: 'FACILITY-CORE-C2',
-    name: 'Tactical Air Defense Command Center (C2)',
-    category: 'PROTECTED_FACILITY',
-    preset,
-    position: { x: 0, y: 0, z: 0 },
-    heightM: 60,
-    elevationM: 0,
-    isObstructionEnvelope: false,
-    description: 'Primary protected command bunker with 3D S-band search radar mast and tactical operations center.',
-  };
-  registerBuilding(bunkerMesh, c2Info);
-  registerBuilding(dishMesh, {
-    id: 'RADAR-PRIMARY-SBAND',
-    name: 'S-Band Primary Surveillance Radar Array',
-    category: 'RADAR_INSTALLATION',
-    preset,
-    position: { x: 0, y: 0, z: 56 },
-    heightM: 60,
-    elevationM: 56,
-    isObstructionEnvelope: false,
-    description: 'Rotating S-band 30 RPM search radar providing 5,000m airspace coverage.',
-  });
-
-  // Secondary RF Direction-Finding Tower at (-400m, 300m)
-  // Ground mesh is at Y = -1. Mast height = 36m (Y = -1 to 35). Center at Y = 17.
-  const rfTowerGeom = new THREE.CylinderGeometry(1, 3, 36, 6);
-  geometries.push(rfTowerGeom);
-  const rfTowerMesh = new THREE.Mesh(rfTowerGeom, radarMat);
-  // Sim coords: x = -400, y = 300 -> Three.js: X = -400, Z = -300
-  rfTowerMesh.position.set(-400, 17, -300);
-  group.add(rfTowerMesh);
-
-  registerBuilding(rfTowerMesh, {
-    id: 'RF-TRIANGULATOR-NORTH',
-    name: 'RF Direction-Finding Station Alpha',
-    category: 'TOWER',
-    preset,
-    position: { x: -400, y: 300, z: 0 },
-    heightM: 35,
-    isObstructionEnvelope: false,
-    description: 'High-sensitivity passive RF direction-finding antenna node.',
-  });
-
-  // ---------------------------------------------------------
-  // B. Scenario Zones Integration: Deterministic Seeded Scatter Placement (Task 17 Phase 4)
-  // ---------------------------------------------------------
   // Dedicated renderer-only PRNG (mulberry32). Does not consume simulation RNG streams.
   let rngState = (descriptor.seed ^ 0x9e3779b9) >>> 0;
   function nextRng(): number {
@@ -346,21 +767,12 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
-  // Record placed footprint bounding circles to enforce non-overlap (minimum separation)
-  interface PlacedFootprint {
-    x: number;
-    y: number;
-    radius: number;
-  }
   const placedFootprints: PlacedFootprint[] = [
-    // Central C2 complex exclusion circle
     { x: 0, y: 0, radius: 150 },
-    // Secondary RF tower exclusion circle
     { x: -400, y: 300, radius: 60 },
   ];
 
   if (preset === 'COASTAL_AIRFIELD') {
-    // Airfield runway corridor exclusion [-1600, -100] to [1600, 100]
     placedFootprints.push(
       { x: -800, y: 0, radius: 250 },
       { x: 0, y: 0, radius: 250 },
@@ -379,322 +791,34 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
     return false;
   }
 
-  for (const zone of zones) {
-    if (zone.type === 'URBAN') {
-      const minX = Math.min(...zone.polygon.map((p) => p[0]));
-      const maxX = Math.max(...zone.polygon.map((p) => p[0]));
-      const minY = Math.min(...zone.polygon.map((p) => p[1]));
-      const maxY = Math.max(...zone.polygon.map((p) => p[1]));
+  const ctx: BuildingContext = {
+    preset,
+    rMinM,
+    group,
+    geometries,
+    materials,
+    mats,
+    registerBuilding,
+    sampleGround,
+    nextRng,
+    placedFootprints,
+    isOverlapping,
+  };
 
-      const width = maxX - minX;
-      const depth = maxY - minY;
-      // Target building count scales with area, supporting varied clusters in larger zones
-      const targetBldCount = Math.min(22, Math.max(6, Math.floor(Math.sqrt(width * depth) / 75)));
+  // A. Central Protected High-Value Asset: Command C2 Complex at (0, 0, 0)
+  buildC2ComplexAndRadar(ctx);
 
-      // Generate 2 to 4 irregular sub-district cluster nodes with varied street angles
-      const clusterCount = Math.min(4, Math.max(2, Math.floor(targetBldCount / 5)));
-      interface DistrictCluster {
-        cx: number;
-        cy: number;
-        spreadX: number;
-        spreadY: number;
-        angle: number;
-      }
-      const clusters: DistrictCluster[] = [];
-      for (let c = 0; c < clusterCount; c++) {
-        let cx = minX + 45 + nextRng() * Math.max(20, width - 90);
-        let cy = minY + 45 + nextRng() * Math.max(20, depth - 90);
-        // Find cluster centers that lie inside the polygon
-        for (let tries = 0; tries < 20; tries++) {
-          if (pointInPolygon(cx, cy, zone.polygon)) break;
-          cx = minX + 45 + nextRng() * Math.max(20, width - 90);
-          cy = minY + 45 + nextRng() * Math.max(20, depth - 90);
-        }
-        clusters.push({
-          cx,
-          cy,
-          spreadX: Math.max(50, width * 0.25),
-          spreadY: Math.max(50, depth * 0.25),
-          angle: (nextRng() - 0.5) * 0.8,
-        });
-      }
+  // B. Scenario Zones Integration: Deterministic Seeded Scatter Placement
+  buildUrbanDistrictClusters(zones, ctx);
 
-      let placedInZone = 0;
-      let attempts = 0;
-      const maxAttempts = targetBldCount * 45;
-
-      while (placedInZone < targetBldCount && attempts < maxAttempts) {
-        attempts++;
-        const cluster = clusters[placedInZone % clusterCount];
-        // Non-uniform spacing along irregular street vectors
-        const u = (nextRng() - 0.5) * 2 * cluster.spreadX;
-        const v = (nextRng() - 0.5) * 2 * cluster.spreadY;
-        const candidateX = cluster.cx + u * Math.cos(cluster.angle) - v * Math.sin(cluster.angle);
-        const candidateY = cluster.cy + u * Math.sin(cluster.angle) + v * Math.cos(cluster.angle);
-
-        // Select building archetype deterministically
-        // (Commercial Tower, Mid-Rise Apartment, Low-Rise Townhouse, Industrial Logistics Warehouse, Comms Tower)
-        const archetypeRoll = nextRng();
-        let bldType = 'COMMERCIAL';
-        let bldSizeX = 40;
-        let bldSizeZ = 40;
-        let bldHeight = 25;
-        let bldMat = bldMatConcrete;
-        let bldName = `Urban Commercial Complex ${zone.id}-${placedInZone + 1}`;
-        let rooftopEquipment: 'HVAC' | 'WATERTANK' | 'MAST' | 'NONE' = 'NONE';
-
-        if (archetypeRoll < 0.35) {
-          bldType = 'COMMERCIAL';
-          bldSizeX = 35 + nextRng() * 40;
-          bldSizeZ = 35 + nextRng() * 40;
-          bldHeight = Math.max(18, Math.min(zone.heightM, zone.heightM * 0.70 + nextRng() * (zone.heightM * 0.30)));
-          bldMat = placedInZone % 2 === 0 ? bldMatConcrete : bldMatDark;
-          bldName = `Commercial Complex ${zone.id}-${placedInZone + 1}`;
-          rooftopEquipment = bldHeight > 22 ? 'HVAC' : 'NONE';
-        } else if (archetypeRoll < 0.65) {
-          bldType = 'RESIDENTIAL_MID';
-          bldSizeX = 42 + nextRng() * 28;
-          bldSizeZ = 22 + nextRng() * 16;
-          bldHeight = Math.max(14, Math.min(zone.heightM * 0.85, zone.heightM * 0.50 + nextRng() * (zone.heightM * 0.32)));
-          bldMat = bldMatDark;
-          bldName = `Residential Apartment Block ${zone.id}-${placedInZone + 1}`;
-          rooftopEquipment = bldHeight > 16 ? 'WATERTANK' : 'NONE';
-        } else if (archetypeRoll < 0.82) {
-          bldType = 'RESIDENTIAL_LOW';
-          bldSizeX = 18 + nextRng() * 16;
-          bldSizeZ = 18 + nextRng() * 16;
-          bldHeight = Math.max(8, Math.min(zone.heightM * 0.45, 8 + nextRng() * 8));
-          bldMat = bldMatConcrete;
-          bldName = `Townhouse Cluster ${zone.id}-${placedInZone + 1}`;
-          rooftopEquipment = 'NONE';
-        } else if (archetypeRoll < 0.94) {
-          bldType = 'INDUSTRIAL';
-          bldSizeX = 48 + nextRng() * 32;
-          bldSizeZ = 30 + nextRng() * 20;
-          bldHeight = Math.max(10, Math.min(zone.heightM * 0.40, 10 + nextRng() * 6));
-          bldMat = bldMatHangar;
-          bldName = `Logistics Warehouse ${zone.id}-${placedInZone + 1}`;
-          rooftopEquipment = 'NONE';
-        } else {
-          bldType = 'TOWER';
-          bldSizeX = 12;
-          bldSizeZ = 12;
-          bldHeight = Math.max(22, Math.min(zone.heightM, zone.heightM * 0.85 + nextRng() * (zone.heightM * 0.15)));
-          bldMat = radarMat;
-          bldName = `Urban Communications Mast ${zone.id}-${placedInZone + 1}`;
-          rooftopEquipment = 'MAST';
-        }
-
-        // Street-aligned orientation with subtle natural jitter
-        const yawAngle = cluster.angle + (nextRng() - 0.5) * 0.2;
-
-        // Enforce full rotated footprint containment: all 4 corners, center, and edges inside zone polygon
-        // and strictly outside protected installation radius (rMinM)
-        if (!isFootprintFullyContained(candidateX, candidateY, bldSizeX, bldSizeZ, yawAngle, zone.polygon, descriptor.rMinM)) {
-          continue;
-        }
-
-        const footRadius = Math.hypot(bldSizeX, bldSizeZ) / 2 + 8; // 8m non-overlap clearance margin
-        if (isOverlapping(candidateX, candidateY, footRadius)) {
-          continue;
-        }
-
-        // Exact terrain alignment:
-        // Account for procedural terrain surface elevation and Three.js ground mesh offset (groundMesh.position.y = -1).
-        // Evaluate ground elevation across footprint corners, center, and 4 edge midpoints to eliminate any floating foundation gap on slopes.
-        const corners = getRotatedFootprintCorners(candidateX, candidateY, bldSizeX, bldSizeZ, yawAngle);
-        const centerGroundY = sampleGround(candidateX, candidateY);
-        const cornerGroundY = corners.map((c) => sampleGround(c[0], c[1]));
-        const midGroundY = [
-          sampleGround((corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2),
-          sampleGround((corners[1][0] + corners[2][0]) / 2, (corners[1][1] + corners[2][1]) / 2),
-          sampleGround((corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2),
-          sampleGround((corners[3][0] + corners[0][0]) / 2, (corners[3][1] + corners[0][1]) / 2),
-        ];
-        const minGroundY = Math.min(centerGroundY, ...cornerGroundY, ...midGroundY);
-        const centerElev = centerGroundY + 1;
-        const minGroundElev = minGroundY + 1;
-
-        // Ground mesh surface in Three.js world coordinates is sampled directly via sampleGround().
-        // Foundation base extends down to minGroundY to coincide with or embed into terrain mesh surface.
-        const foundationBaseY = minGroundY;
-        const roofTopY = centerElev + bldHeight;
-        const totalHeight = roofTopY - foundationBaseY;
-        const meshCenterY = foundationBaseY + totalHeight / 2;
-
-        const bldThree = toThree(candidateX, candidateY, 0);
-
-        let bldMesh: THREE.Mesh;
-        if (bldType === 'TOWER') {
-          const spireGeom = new THREE.CylinderGeometry(1.2, 4.5, totalHeight, 6);
-          geometries.push(spireGeom);
-          bldMesh = new THREE.Mesh(spireGeom, bldMat);
-          bldMesh.position.set(bldThree.x, meshCenterY, bldThree.z);
-        } else {
-          const bldGeom = new THREE.BoxGeometry(bldSizeX, totalHeight, bldSizeZ);
-          geometries.push(bldGeom);
-          bldMesh = new THREE.Mesh(bldGeom, bldMat);
-          bldMesh.position.set(bldThree.x, meshCenterY, bldThree.z);
-        }
-
-        bldMesh.rotation.y = yawAngle;
-        group.add(bldMesh);
-
-        // Add wireframe rooftop outline for tactical visual definition
-        if (bldType !== 'TOWER') {
-          const wireGeom = new THREE.EdgesGeometry(bldMesh.geometry);
-          geometries.push(wireGeom);
-          const wire = new THREE.LineSegments(wireGeom, towerWireMat);
-          wire.position.copy(bldMesh.position);
-          wire.rotation.copy(bldMesh.rotation);
-          group.add(wire);
-        }
-
-        // Rooftop equipment additions anchored to roofTopY
-        if (rooftopEquipment === 'HVAC') {
-          const hvacGeom = new THREE.BoxGeometry(bldSizeX * 0.28, 2.8, bldSizeZ * 0.28);
-          geometries.push(hvacGeom);
-          const hvacMesh = new THREE.Mesh(hvacGeom, radarMat);
-          hvacMesh.position.set(
-            bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.3,
-            roofTopY + 1.4,
-            bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.3
-          );
-          hvacMesh.rotation.copy(bldMesh.rotation);
-          group.add(hvacMesh);
-        } else if (rooftopEquipment === 'WATERTANK') {
-          const tankGeom = new THREE.CylinderGeometry(2.5, 2.5, 4, 8);
-          geometries.push(tankGeom);
-          const tankMesh = new THREE.Mesh(tankGeom, radarMat);
-          tankMesh.position.set(
-            bldThree.x + (nextRng() - 0.5) * bldSizeX * 0.25,
-            roofTopY + 2,
-            bldThree.z + (nextRng() - 0.5) * bldSizeZ * 0.25
-          );
-          group.add(tankMesh);
-        } else if (rooftopEquipment === 'MAST') {
-          const beaconGeom = new THREE.SphereGeometry(1.2, 6, 6);
-          geometries.push(beaconGeom);
-          const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
-          beaconMesh.position.set(bldThree.x, roofTopY + 0.8, bldThree.z);
-          group.add(beaconMesh);
-        }
-
-        placedFootprints.push({ x: candidateX, y: candidateY, radius: footRadius });
-        placedInZone++;
-
-        const bldId = `BLD-${zone.id}-${placedInZone}`;
-        registerBuilding(bldMesh, {
-          id: bldId,
-          name: bldName,
-          category: bldType === 'TOWER' ? 'TOWER' : 'BUILDING',
-          preset,
-          zoneId: zone.id,
-          position: { x: candidateX, y: candidateY, z: centerElev },
-          heightM: bldHeight,
-          elevationM: centerElev + bldHeight,
-          maskingProperties: {
-            heightM: zone.heightM,
-            shadowM: zone.shadowM,
-            rho: zone.rho,
-            zoneType: zone.type,
-          },
-          isObstructionEnvelope: false,
-          description: `Authoritative ${bldType.toLowerCase()} structure in ${zone.id}. Height ${Math.round(bldHeight)}m (zone envelope ${zone.heightM}m).`,
-        }, {
-          footprintSizeX: bldSizeX,
-          footprintSizeZ: bldSizeZ,
-          yawAngle,
-          minGroundElev,
-        });
-      }
-    }
-  }
-
-  // ---------------------------------------------------------
   // C. Airfield Hangars & Control Tower (for COASTAL_AIRFIELD)
-  // ---------------------------------------------------------
   if (preset === 'COASTAL_AIRFIELD') {
-    // Airfield Control Tower at (350m, 500m). Base anchored to terrain mesh at Y = -1.
-    const towerGeom = new THREE.BoxGeometry(18, 49, 18);
-    geometries.push(towerGeom);
-    const towerMesh = new THREE.Mesh(towerGeom, bldMatConcrete);
-    const towerThree = toThree(350, 500, 0);
-    towerMesh.position.set(towerThree.x, 23.5, towerThree.z);
-    group.add(towerMesh);
-
-    // Tower Glass Cab on top
-    const cabGeom = new THREE.CylinderGeometry(14, 11, 8, 8);
-    geometries.push(cabGeom);
-    const cabMat = new THREE.MeshLambertMaterial({ color: 0x3a4b5d });
-    materials.push(cabMat);
-    const cabMesh = new THREE.Mesh(cabGeom, cabMat);
-    cabMesh.position.set(towerThree.x, 52, towerThree.z);
-    group.add(cabMesh);
-
-    registerBuilding(towerMesh, {
-      id: 'TOWER-AIRFIELD-ATC',
-      name: 'Airfield Control Tower',
-      category: 'TOWER',
-      preset,
-      position: { x: 350, y: 500, z: 0 },
-      heightM: 56,
-      elevationM: 56,
-      isObstructionEnvelope: false,
-      description: 'Air traffic control observation tower with 360° flightline visibility.',
-    });
-
-    // 2 Aircraft Hangars along taxiway. Base anchored to terrain mesh at Y = -1.
-    for (let h = 0; h < 2; h++) {
-      const hangarGeom = new THREE.BoxGeometry(120, 23, 70);
-      geometries.push(hangarGeom);
-      const hangarMesh = new THREE.Mesh(hangarGeom, bldMatHangar);
-      const hThree = toThree(100 + h * 180, 680, 0);
-      hangarMesh.position.set(hThree.x, 10.5, hThree.z);
-      group.add(hangarMesh);
-
-      registerBuilding(hangarMesh, {
-        id: `HANGAR-MAINT-${h + 1}`,
-        name: `UAV Maintenance Hangar ${h + 1}`,
-        category: 'AIRFIELD',
-        preset,
-        position: { x: 100 + h * 180, y: 680, z: 0 },
-        heightM: 22,
-        isObstructionEnvelope: false,
-        description: 'Hardened composite maintenance hangar for reconnaissance and tactical aircraft.',
-      });
-    }
+    buildAirfieldStructures(ctx);
   }
 
-  // ---------------------------------------------------------
   // D. Perimeter Industrial & Observation Structures (SUBURBAN / OPEN_RURAL)
-  // ---------------------------------------------------------
   if (preset === 'SUBURBAN' || preset === 'OPEN_RURAL') {
-    const obsCoords = [
-      { x: 1200, y: -900, name: 'Southeastern Relay Mast' },
-      { x: -1100, y: 1400, name: 'Northwestern Forward Post' },
-    ];
-    for (let i = 0; i < obsCoords.length; i++) {
-      const coord = obsCoords[i];
-      // Base anchored to terrain mesh at Y = -1.
-      const pTowerGeom = new THREE.CylinderGeometry(1, 2.5, 29, 6);
-      geometries.push(pTowerGeom);
-      const pMesh = new THREE.Mesh(pTowerGeom, radarMat);
-      const tPos = toThree(coord.x, coord.y, 0);
-      pMesh.position.set(tPos.x, 13.5, tPos.z);
-      group.add(pMesh);
-
-      registerBuilding(pMesh, {
-        id: `PERIMETER-OBS-${i + 1}`,
-        name: coord.name,
-        category: 'TOWER',
-        preset,
-        position: { x: coord.x, y: coord.y, z: 0 },
-        heightM: 28,
-        isObstructionEnvelope: false,
-        description: 'Forward perimeter observation mast with electro-optical repeater.',
-      });
-    }
+    buildPerimeterMasts(ctx);
   }
 
   return { group, objects, selectableMeshes, disposables: { geometries, materials } };

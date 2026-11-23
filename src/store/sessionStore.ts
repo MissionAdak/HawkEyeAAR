@@ -10,6 +10,7 @@ import type {
   EffectorId,
   TrackClass,
   SessionMode,
+  WeaknessVector,
 } from '@/sim/types';
 import { SIM_VERSION, SCHEMA_VERSION } from '@/sim/types';
 import { CONFIG_HASH } from '@/config';
@@ -33,7 +34,6 @@ import {
 } from '@/db/sessionRepo';
 import { generateScenario } from '@/director/generator';
 import { sampleAdaptiveLevers, DEFAULT_METRIC_EMA, WEAKNESS_LEVER_MAP, type WeaknessDimension } from '@/director/adaptive';
-import type { WeaknessVector } from '@/sim/types';
 import type { SessionRow } from '@/db/dexie';
 
 // Global singleton instances of SimEngine and SimClock
@@ -204,6 +204,34 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } | null {
   return { tRawMs, applyTick };
 }
 
+function parseAdaptiveOptions(options?: {
+  seed?: number;
+  targetLever?: string;
+  scenarioId?: string;
+}): { seed: number; targetLever: string | undefined } {
+  let seed = typeof options?.seed === 'number' ? options.seed : undefined;
+  let targetLever = options?.targetLever;
+
+  if (options?.scenarioId?.startsWith('ADAPTIVE-')) {
+    const parts = options.scenarioId.split('-');
+    if (!targetLever && parts[1]) {
+      targetLever = parts[1];
+    }
+    if (typeof seed !== 'number' && parts[2]) {
+      const parsedSeed = Number.parseInt(parts[2], 10);
+      if (Number.isFinite(parsedSeed)) {
+        seed = parsedSeed;
+      }
+    }
+  }
+
+  if (typeof seed !== 'number') {
+    seed = generateLocalSeed();
+  }
+
+  return { seed, targetLever };
+}
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   ui: initialSnapshot,
   isSimRunning: false,
@@ -333,12 +361,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       target &&
       (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS')
     ) {
-      const reasonCode =
-        target.step === 'ASSESS'
-          ? 'DUPLICATE_PENDING_FIRE'
-          : target.step === 'CLOSED' || target.lifecycle === 'LEAKED'
-            ? 'PNR_VIOLATION'
-            : 'INACTIVE_TARGET';
+      let reasonCode = 'INACTIVE_TARGET';
+      if (target.step === 'ASSESS') {
+        reasonCode = 'DUPLICATE_PENDING_FIRE';
+      } else if (target.step === 'CLOSED' || target.lifecycle === 'LEAKED') {
+        reasonCode = 'PNR_VIOLATION';
+      }
       const est = engineInstance.tracker.getTrackEstimate(trackNo);
       const fb = createOperatorFeedback({
         category: 'RELEASE_BLOCKED',
@@ -552,7 +580,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Critical A (Task 20-A4): Pre-sim scenario snapshot capture.
     // Deep-clone and capture snapshot BEFORE engineInstance.load(spec) to guarantee mutation immunity.
-    const preSimSnapshot: ScenarioSpec = JSON.parse(JSON.stringify(spec));
+    const preSimSnapshot: ScenarioSpec = structuredClone(spec);
     const preSimSnapshotHash = computeScenarioSnapshotHash(preSimSnapshot);
     activeSessionScenarioSnapshot = preSimSnapshot;
     activeSessionSnapshotHash = preSimSnapshotHash;
@@ -606,7 +634,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
         // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2, Task 20-A3, Task 20-A4)
         try {
-          const snapshotToUse = activeSessionScenarioSnapshot ?? JSON.parse(JSON.stringify(spec));
+          const snapshotToUse = activeSessionScenarioSnapshot ?? structuredClone(spec);
           const snapshotHashToUse = activeSessionSnapshotHash ?? computeScenarioSnapshotHash(snapshotToUse);
           const metrics = aggregateAARMetrics(engineInstance.events, snapshotToUse);
           const sessionUid = recorderForSession.getSessionUid();
@@ -760,32 +788,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sat: DEFAULT_METRIC_EMA,
     };
 
-    let seed = typeof options?.seed === 'number' ? options.seed : undefined;
-    let targetLever = options?.targetLever;
-
-    // Recommendation consistency (TASK 21-PT-R2 Section 2):
-    // Parse target lever and recommendation seed from scenarioId if provided and not explicitly set
-    if (options?.scenarioId && options.scenarioId.startsWith('ADAPTIVE-')) {
-      const parts = options.scenarioId.split('-');
-      if (!targetLever && parts[1]) {
-        targetLever = parts[1];
-      }
-      if (typeof seed !== 'number' && parts[2]) {
-        const parsedSeed = parseInt(parts[2], 10);
-        if (Number.isFinite(parsedSeed)) {
-          seed = parsedSeed;
-        }
-      }
-    }
-
-    if (typeof seed !== 'number') {
-      seed = generateLocalSeed();
-    }
-
-    if (!targetLever) {
-      const sampled = sampleAdaptiveLevers(effectiveProfile, seed, 1);
-      targetLever = sampled[0].leverId;
-    }
+    const { seed, targetLever: parsedLever } = parseAdaptiveOptions(options);
+    const targetLever = parsedLever ?? sampleAdaptiveLevers(effectiveProfile, seed, 1)[0].leverId;
 
     // Historical features for novelty filter
     const historySessions = await getTraineeSessions(state.currentCallsign, 'asc', 'ALL');

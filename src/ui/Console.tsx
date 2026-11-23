@@ -159,20 +159,14 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           key={dm}
           onClick={() => onTargetDisplayMode(dm)}
-          title={
-            dm === 'AUTO'
-              ? 'Sensor-Auto Target Display (Adapts to Active Sensor & Optical Environment)'
-              : dm === 'RADAR'
-              ? 'Force Radar Contact Symbols'
-              : 'Observed Airframe Silhouettes (Permitted only when optically observed)'
-          }
+          title={getTargetDisplayTitle(dm)}
           className={`px-2 py-0.5 border transition-colors ${
             targetDisplayMode === dm
               ? 'border-amber text-amber bg-amber/20 font-bold'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
           }`}
         >
-          {dm === 'AUTO' ? 'TGT:AUTO' : dm === 'RADAR' ? 'TGT:RADAR' : 'TGT:AIR'}
+          {getTargetDisplayLabel(dm)}
         </button>
       ))}
 
@@ -420,6 +414,22 @@ export async function loadRender3DModuleWithTimeout(
       clearTimeout(timer);
     }
   }
+}
+
+function getTargetDisplayTitle(dm: 'AUTO' | 'RADAR' | 'AIRFRAME'): string {
+  if (dm === 'AUTO') {
+    return 'Sensor-Auto Target Display (Adapts to Active Sensor & Optical Environment)';
+  }
+  if (dm === 'RADAR') {
+    return 'Force Radar Contact Symbols';
+  }
+  return 'Observed Airframe Silhouettes (Permitted only when optically observed)';
+}
+
+function getTargetDisplayLabel(dm: 'AUTO' | 'RADAR' | 'AIRFRAME'): string {
+  if (dm === 'AUTO') return 'TGT:AUTO';
+  if (dm === 'RADAR') return 'TGT:RADAR';
+  return 'TGT:AIR';
 }
 
 export const Console: React.FC = () => {

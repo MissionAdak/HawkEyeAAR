@@ -158,13 +158,13 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         const tgtBtn = page.getByRole('button', { name: new RegExp(`^TGT:${targetText}`, 'i') });
         await expect(tgtBtn).toBeVisible();
         await tgtBtn.click();
-        await page.waitForTimeout(200);
+        await page.waitForTimeout(200); // NOSONAR typescript:S2925
       };
 
       // Ensure OBLIQUE camera preset
       const obliqueBtn = page.getByRole('button', { name: /\[O\] OBLIQUE/i });
       await obliqueBtn.click();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(500); // NOSONAR typescript:S2925
 
       // Helper to query and assert scene state via test bridge
       const assertSceneCheck = async (expected: {
@@ -241,7 +241,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const radarBtn = page.getByRole('button', { name: /\[1\] RADAR/i });
       await radarBtn.click();
       await setTgtMode('RADAR');
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(500); // NOSONAR typescript:S2925
 
       const radarSymbolsState = await page.evaluate(() => {
         const bridge = window.__DRISHTI_TEST__;
@@ -256,7 +256,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       const eoirBtn = page.getByRole('button', { name: /\[2\] EO\/IR/i });
       await eoirBtn.click();
       await setTgtMode('AIR');
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(500); // NOSONAR typescript:S2925
 
       // ==========================================
       // STATE 2: EO/IR-observed multirotor (compact FPV attack quad)
@@ -264,7 +264,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       // ==========================================
       await trackRow.click();
       await page.keyboard.press('f'); // Focus camera on selected track
-      await page.waitForTimeout(600);
+      await page.waitForTimeout(600); // NOSONAR typescript:S2925
 
       // Position target within full optical range (800m) and inject full EO/IR resolution
       await page.evaluate((tNo) => {
@@ -284,7 +284,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
           estimatedRangeM: 800,
         });
       }, primaryTrackNo);
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(400); // NOSONAR typescript:S2925
 
       await assertSceneCheck({
         activeSensor: 'EOIR',
@@ -316,7 +316,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
           estimatedRangeM: 800,
         });
       }, primaryTrackNo);
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(400); // NOSONAR typescript:S2925
 
       await assertSceneCheck({
         activeSensor: 'EOIR',
@@ -348,7 +348,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
           estimatedRangeM: 800,
         });
       }, primaryTrackNo);
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(400); // NOSONAR typescript:S2925
 
       await assertSceneCheck({
         activeSensor: 'EOIR',
@@ -380,7 +380,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
           estimatedRangeM: 800,
         });
       }, primaryTrackNo);
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(400); // NOSONAR typescript:S2925
 
       await assertSceneCheck({
         activeSensor: 'EOIR',
@@ -461,7 +461,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
 
       const topBtn = page.getByRole('button', { name: /\[T\] TOP/i });
       await topBtn.click();
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(800); // NOSONAR typescript:S2925
 
       const sceneModels = await page.evaluate(() => {
         return window.__DRISHTI_TEST__?.getSceneTrackModels?.() || [];
@@ -475,9 +475,9 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       expect(distinctModelNames.size).toBeGreaterThanOrEqual(3);
 
       // Verify each track appears exactly once and map 1-to-1 to expected models
-      expect(sceneModels.filter((m) => m.trackNo === 'T-01').length).toBe(1);
-      expect(sceneModels.filter((m) => m.trackNo === 'T-02').length).toBe(1);
-      expect(sceneModels.filter((m) => m.trackNo === 'T-03').length).toBe(1);
+      expect(sceneModels.filter((m) => m.trackNo === 'T-01')).toHaveLength(1);
+      expect(sceneModels.filter((m) => m.trackNo === 'T-02')).toHaveLength(1);
+      expect(sceneModels.filter((m) => m.trackNo === 'T-03')).toHaveLength(1);
 
       const m01 = sceneModels.find((m) => m.trackNo === 'T-01');
       const m02 = sceneModels.find((m) => m.trackNo === 'T-02');
@@ -513,7 +513,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       // Switch back to OBLIQUE preset and orbit camera slightly
       // ==========================================
       await obliqueBtn.click();
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(500); // NOSONAR typescript:S2925
 
       const canvasBox = await canvas3D.boundingBox();
       if (canvasBox) {
@@ -524,7 +524,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         await page.mouse.down({ button: 'left' });
         await page.mouse.move(cx + 80, cy - 30, { steps: 5 });
         await page.mouse.up({ button: 'left' });
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(500); // NOSONAR typescript:S2925
       }
       await saveShot(page, '07_oblique_city_environment.png');
 
@@ -534,7 +534,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       // ==========================================
       if (canvasBox) {
         await page.mouse.wheel(0, -300); // Zoom in
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(600); // NOSONAR typescript:S2925
       }
       await saveShot(page, '08_different_building_heights.png');
 
@@ -544,7 +544,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
       // ==========================================
       if (canvasBox) {
         await page.mouse.wheel(0, 400); // Zoom out
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(600); // NOSONAR typescript:S2925
       }
 
       // Helper to extract exact integer altitude token from label string (e.g. "T-01 [NON] 80m" -> 80)
@@ -559,7 +559,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         const bridge = window.__DRISHTI_TEST__;
         bridge?.positionTrack?.('T-01', { x: 800, y: 800, z: 120 });
       });
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(200); // NOSONAR typescript:S2925
 
       // Verify sanitized operator-facing SafeTrackView projection updates to 120m and updates rendered label
       const interSanitized = await page.evaluate(() => {
@@ -586,7 +586,7 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         bridge?.positionTrack?.('T-02', { x: 1400, y: 800, z: 250 });
         bridge?.positionTrack?.('T-03', { x: 1000, y: 1500, z: 400 });
       });
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(200); // NOSONAR typescript:S2925
 
       // Assert exact rendered label strings on the 3 distinct tracks:
       const altitudeModels = await page.evaluate(() => {

@@ -1308,47 +1308,19 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
     });
 
     describe('C. Observation Timestamp Epoch Validation & Boundaries', () => {
-      it('1. negative timestamp at simulation time zero (simMs = 0, timestampMs = -1) is rejected to RADAR_SYMBOL', () => {
+      it.each([
+        { id: '1', simMs: 0, timestampMs: -1, label: 'simMs = 0, timestampMs = -1' },
+        { id: '2', simMs: 0, timestampMs: -50, label: 'simMs = 0, timestampMs = -50' },
+        { id: '3', simMs: 5000, timestampMs: -1, label: 'simMs = 5000, timestampMs = -1' },
+      ])('$id. negative timestamp at $label is rejected to RADAR_SYMBOL', ({ simMs, timestampMs }) => {
         const track = makeTrack({
           sensorObservation: makeObservation({
-            timestampMs: -1,
+            timestampMs,
           }),
         });
         const context: SensorObservationContext = {
           ...baseContext,
-          currentSimMs: 0,
-        };
-        const result = resolveTargetPresentation(track, context);
-        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
-        expect(result.isVisuallyResolved).toBe(false);
-        expect(result.reason).toContain('Invalid observation timestampMs');
-      });
-
-      it('2. negative timestamp at simulation time zero (simMs = 0, timestampMs = -50) is rejected to RADAR_SYMBOL', () => {
-        const track = makeTrack({
-          sensorObservation: makeObservation({
-            timestampMs: -50,
-          }),
-        });
-        const context: SensorObservationContext = {
-          ...baseContext,
-          currentSimMs: 0,
-        };
-        const result = resolveTargetPresentation(track, context);
-        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
-        expect(result.isVisuallyResolved).toBe(false);
-        expect(result.reason).toContain('Invalid observation timestampMs');
-      });
-
-      it('3. negative timestamp at positive simulation time (simMs = 5000, timestampMs = -1) is rejected to RADAR_SYMBOL', () => {
-        const track = makeTrack({
-          sensorObservation: makeObservation({
-            timestampMs: -1,
-          }),
-        });
-        const context: SensorObservationContext = {
-          ...baseContext,
-          currentSimMs: 5000,
+          currentSimMs: simMs,
         };
         const result = resolveTargetPresentation(track, context);
         expect(result.presentationCategory).toBe('RADAR_SYMBOL');
@@ -1391,24 +1363,6 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         expect(result.isVisuallyResolved).toBe(true);
       });
 
-      it('6. future beyond boundary: simMs = 5000, timestampMs = 5051 is rejected to RADAR_SYMBOL', () => {
-        const track = makeTrack({
-          sensorObservation: makeObservation({
-            signature: 'FIXED_WING_DELTA',
-            observedSignature: 'FIXED_WING_DELTA',
-            timestampMs: 5051,
-          }),
-        });
-        const context: SensorObservationContext = {
-          ...baseContext,
-          currentSimMs: 5000,
-        };
-        const result = resolveTargetPresentation(track, context);
-        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
-        expect(result.isVisuallyResolved).toBe(false);
-        expect(result.reason).toContain('exceeds future tolerance');
-      });
-
       it('7. exact age boundary: simMs = 5000, timestampMs = 4000 is accepted', () => {
         const track = makeTrack({
           sensorObservation: makeObservation({
@@ -1426,12 +1380,16 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         expect(result.isVisuallyResolved).toBe(true);
       });
 
-      it('8. stale beyond boundary: simMs = 5000, timestampMs = 3999 is rejected to RADAR_SYMBOL', () => {
+      it.each([
+        { id: '6', timestampMs: 5051, label: 'future beyond boundary: simMs = 5000, timestampMs = 5051', reasonSubstring: 'exceeds future tolerance' },
+        { id: '8', timestampMs: 3999, label: 'stale beyond boundary: simMs = 5000, timestampMs = 3999', reasonSubstring: 'is stale' },
+        { id: '9', timestampMs: 0, label: 'stale beyond boundary: simMs = 5000, timestampMs = 0 (5s stale)', reasonSubstring: 'is stale' },
+      ])('$id. $label is rejected to RADAR_SYMBOL', ({ timestampMs, reasonSubstring }) => {
         const track = makeTrack({
           sensorObservation: makeObservation({
             signature: 'FIXED_WING_DELTA',
             observedSignature: 'FIXED_WING_DELTA',
-            timestampMs: 3999,
+            timestampMs,
           }),
         });
         const context: SensorObservationContext = {
@@ -1441,25 +1399,7 @@ describe('Target Observation & Sensor-Aware 3D Presentation (Task 17.3 & Task 17
         const result = resolveTargetPresentation(track, context);
         expect(result.presentationCategory).toBe('RADAR_SYMBOL');
         expect(result.isVisuallyResolved).toBe(false);
-        expect(result.reason).toContain('is stale');
-      });
-
-      it('9. stale beyond boundary: simMs = 5000, timestampMs = 0 is rejected to RADAR_SYMBOL (5s stale)', () => {
-        const track = makeTrack({
-          sensorObservation: makeObservation({
-            signature: 'FIXED_WING_DELTA',
-            observedSignature: 'FIXED_WING_DELTA',
-            timestampMs: 0,
-          }),
-        });
-        const context: SensorObservationContext = {
-          ...baseContext,
-          currentSimMs: 5000,
-        };
-        const result = resolveTargetPresentation(track, context);
-        expect(result.presentationCategory).toBe('RADAR_SYMBOL');
-        expect(result.isVisuallyResolved).toBe(false);
-        expect(result.reason).toContain('is stale');
+        expect(result.reason).toContain(reasonSubstring);
       });
 
       it('10. negative timestamps never resolve OBSERVED_MULTIROTOR, OBSERVED_FIXED_WING, or BIRD', () => {

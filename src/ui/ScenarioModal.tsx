@@ -11,6 +11,45 @@ interface ScenarioModalProps {
   onClose: () => void;
 }
 
+function getScenarioActionButtonProps(
+  entryName: string,
+  sessionStatus: string,
+  isSelectedForBriefing: boolean,
+  isActive: boolean,
+  isEvalActive: boolean
+): { actionBtnStyle: string; actionBtnTitle: string; buttonLabel: string } {
+  let actionBtnStyle = 'border-phosphor text-phosphor hover:bg-phosphor hover:text-carbon-950';
+  if (isEvalActive) {
+    actionBtnStyle = 'opacity-40 cursor-not-allowed border-line text-text-dim bg-carbon-900';
+  } else if (sessionStatus === 'READY') {
+    if (isSelectedForBriefing) {
+      actionBtnStyle = 'border-phosphor bg-phosphor text-carbon-950 font-bold';
+    } else {
+      actionBtnStyle = 'border-line text-text-main hover:border-phosphor hover:text-phosphor';
+    }
+  } else if (isActive) {
+    actionBtnStyle = 'border-amber text-amber hover:bg-amber hover:text-carbon-950';
+  }
+
+  let actionBtnTitle = `Load ${entryName}`;
+  if (isEvalActive) {
+    actionBtnTitle = 'Locked in EVAL mode';
+  } else if (sessionStatus === 'READY') {
+    actionBtnTitle = `Select ${entryName} for mission briefing`;
+  } else if (isActive) {
+    actionBtnTitle = 'Restart current scenario session with fresh seed';
+  }
+
+  let buttonLabel = '[LOAD SCENARIO]';
+  if (sessionStatus === 'READY') {
+    buttonLabel = isSelectedForBriefing ? '[SELECTED]' : '[SELECT FOR BRIEFING]';
+  } else if (isActive) {
+    buttonLabel = '[R] RESTART (NEW SEED)';
+  }
+
+  return { actionBtnStyle, actionBtnTitle, buttonLabel };
+}
+
 export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
   const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId);
@@ -125,11 +164,11 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div
-      role="dialog"
+    <dialog
+      open
       aria-modal="true"
       aria-label="Mission / Exercise Scenario Selector"
-      className="fixed inset-0 z-[60] bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none font-mono"
+      className="fixed inset-0 z-[60] bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 m-0 border-0 max-w-none max-h-none w-screen h-screen select-none font-mono"
     >
       <div className="w-[860px] max-h-[88vh] bg-carbon-900 border border-line flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
@@ -190,34 +229,13 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
             const isSelectedForBriefing = sessionStatus === 'READY' && entry.id === selectedScenarioId;
             const isActive = sessionStatus === 'RUNNING' && entry.id === currentScenarioId;
 
-            let actionBtnStyle = 'border-phosphor text-phosphor hover:bg-phosphor hover:text-carbon-950';
-            if (isEvalActive) {
-              actionBtnStyle = 'opacity-40 cursor-not-allowed border-line text-text-dim bg-carbon-900';
-            } else if (sessionStatus === 'READY') {
-              if (isSelectedForBriefing) {
-                actionBtnStyle = 'border-phosphor bg-phosphor text-carbon-950 font-bold';
-              } else {
-                actionBtnStyle = 'border-line text-text-main hover:border-phosphor hover:text-phosphor';
-              }
-            } else if (isActive) {
-              actionBtnStyle = 'border-amber text-amber hover:bg-amber hover:text-carbon-950';
-            }
-
-            let actionBtnTitle = `Load ${entry.name}`;
-            if (isEvalActive) {
-              actionBtnTitle = 'Locked in EVAL mode';
-            } else if (sessionStatus === 'READY') {
-              actionBtnTitle = `Select ${entry.name} for mission briefing`;
-            } else if (isActive) {
-              actionBtnTitle = 'Restart current scenario session with fresh seed';
-            }
-
-            let buttonLabel = '[LOAD SCENARIO]';
-            if (sessionStatus === 'READY') {
-              buttonLabel = isSelectedForBriefing ? '[SELECTED]' : '[SELECT FOR BRIEFING]';
-            } else if (isActive) {
-              buttonLabel = '[R] RESTART (NEW SEED)';
-            }
+            const { actionBtnStyle, actionBtnTitle, buttonLabel } = getScenarioActionButtonProps(
+              entry.name,
+              sessionStatus,
+              isSelectedForBriefing,
+              isActive,
+              isEvalActive
+            );
 
             return (
               <div
@@ -398,6 +416,6 @@ export const ScenarioModal: React.FC<ScenarioModalProps> = ({ onClose }) => {
           </div>
         </div>
       )}
-    </div>
+    </dialog>
   );
 };

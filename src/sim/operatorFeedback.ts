@@ -35,6 +35,52 @@ let feedbackCounter = 0;
  * Creates typed operator feedback for weapon release blocks, soft ROE warnings, and engagement outcomes.
  * Strictly guarantees zero disclosure of secret ground truth (trueClass, droneType, seeded draws) during live play.
  */
+function createOutOfEnvelopeFeedback(params: {
+  id: string;
+  timestampMs: number;
+  trackNo?: string;
+  effectorId?: EffectorId;
+  reasonCode: string;
+  effConfig?: { envelopeMinM?: number; envelopeMaxM?: number };
+  effectorName: string;
+  rangeM?: number;
+}): OperatorFeedback {
+  const { id, timestampMs, trackNo, effectorId, reasonCode, effConfig, effectorName, rangeM } = params;
+  const minM = effConfig?.envelopeMinM ?? 0;
+  const maxM = effConfig?.envelopeMaxM ?? 5000;
+  const hasEstimatedRange = typeof rangeM === 'number';
+  const isTooClose = hasEstimatedRange && rangeM < minM;
+  let explanation = `Target is outside effective engagement envelope for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`;
+  if (typeof rangeM === 'number') {
+    const proximityDesc = isTooClose ? 'inside minimum arming range' : 'beyond maximum effective range';
+    explanation = `Target estimated range (~${(rangeM / 1000).toFixed(2)} km) is ${proximityDesc} for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`;
+  }
+
+  return {
+    id,
+    timestampMs,
+    category: 'RELEASE_BLOCKED',
+    severity: 'ERROR',
+    title: 'RELEASE BLOCKED — OUTSIDE EFFECTOR ENVELOPE',
+    explanation,
+    trackNo,
+    effectorId,
+    reasonCode,
+    ...(hasEstimatedRange
+      ? {
+          measured: {
+            actual: `~${(rangeM / 1000).toFixed(2)} km`,
+            required: `${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km`,
+            unit: 'Range',
+          },
+        }
+      : {}),
+    recommendedAction: isTooClose
+      ? 'Switch to close-in kinetic effector (GUN) or RF Soft-Kill.'
+      : 'Wait for target to close into envelope or select long-range effector.',
+  };
+}
+
 export function createOperatorFeedback(params: {
   category: FeedbackCategory;
   reasonCode: string;
@@ -128,39 +174,17 @@ export function createOperatorFeedback(params: {
       };
     }
 
-    case 'OUT_OF_ENVELOPE': {
-      const minM = effConfig?.envelopeMinM ?? 0;
-      const maxM = effConfig?.envelopeMaxM ?? 5000;
-      const hasEstimatedRange = typeof rangeM === 'number';
-      const isTooClose = hasEstimatedRange && rangeM < minM;
-      return {
+    case 'OUT_OF_ENVELOPE':
+      return createOutOfEnvelopeFeedback({
         id,
         timestampMs,
-        category: 'RELEASE_BLOCKED',
-        severity: 'ERROR',
-        title: 'RELEASE BLOCKED — OUTSIDE EFFECTOR ENVELOPE',
-        explanation: hasEstimatedRange
-          ? `Target estimated range (~${(rangeM / 1000).toFixed(2)} km) is ${
-              isTooClose ? 'inside minimum arming range' : 'beyond maximum effective range'
-            } for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`
-          : `Target is outside effective engagement envelope for ${effectorName} (${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km).`,
         trackNo,
         effectorId,
         reasonCode,
-        ...(hasEstimatedRange
-          ? {
-              measured: {
-                actual: `~${(rangeM / 1000).toFixed(2)} km`,
-                required: `${(minM / 1000).toFixed(2)} - ${(maxM / 1000).toFixed(2)} km`,
-                unit: 'Range',
-              },
-            }
-          : {}),
-        recommendedAction: isTooClose
-          ? 'Switch to close-in kinetic effector (GUN) or RF Soft-Kill.'
-          : 'Wait for target to close into envelope or select long-range effector.',
-      };
-    }
+        effConfig,
+        effectorName,
+        rangeM,
+      });
 
     case 'RF_JAMMING_ACTIVE': {
       return {
@@ -300,11 +324,17 @@ export function createOperatorFeedback(params: {
     }
 
     default: {
+      let severity: 'WARNING' | 'SUCCESS' | 'INFO' = 'INFO';
+      if (category === 'ROE_WARNING') {
+        severity = 'WARNING';
+      } else if (category === 'NEUTRALIZATION_INDICATED') {
+        severity = 'SUCCESS';
+      }
       return {
         id,
         timestampMs,
         category,
-        severity: category === 'ROE_WARNING' ? 'WARNING' : category === 'NEUTRALIZATION_INDICATED' ? 'SUCCESS' : 'INFO',
+        severity,
         title: `TACTICAL SYSTEM NOTICE — ${reasonCode}`,
         explanation: `System notification regarding ${trackNo ?? 'operation'}.`,
         trackNo,

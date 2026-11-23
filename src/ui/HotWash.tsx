@@ -4,7 +4,7 @@ import { exportSessionJson, exportSessionCsv } from '@/db/io';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
-import type { EffectorId, ScenarioSpec, ZoneSpec } from '@/sim/types';
+import type { EffectorId, ScenarioSpec, ZoneSpec, WeaknessVector } from '@/sim/types';
 import demo1Spec from '@/director/bundled/demo1.json';
 import { AarEngagementInspector } from './aar/AarEngagementInspector';
 import {
@@ -28,7 +28,6 @@ import {
   type UnitCohortStats,
 } from '@/db/sessionRepo';
 import type { SessionRow } from '@/db/dexie';
-import type { WeaknessVector } from '@/sim/types';
 
 interface HotWashProps {
   onClose: () => void;

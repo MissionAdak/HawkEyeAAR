@@ -69,7 +69,8 @@ export function validateProducerSensorHealth(
     }
     const val = record[mode];
     if (typeof val !== 'string' || !VALID_PRODUCER_HEALTH_STATES.includes(val as SensorHealthStatus)) {
-      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${String(val)}` };
+      const valStr = typeof val === 'string' ? val : JSON.stringify(val);
+      return { isValid: false, error: `Invalid sensor health state for ${mode}: ${valStr}` };
     }
   }
   return {
@@ -124,6 +125,51 @@ export function mapDroneTypeToAirframeSignature(droneType: DroneType): ObservedA
  *  - Sensor health is missing, malformed, incomplete, or contains invalid states
  *  - Active sensor is not EO/IR (optical models forbidden in non-EO/IR modes)
  */
+function computeOpticalThresholds(
+  weather: string,
+  isNight: boolean
+): { clearThreshold: number; maxThreshold: number } {
+  let weatherFactor = 1.0;
+  let weatherMaxFactor = 1.0;
+  if (weather === 'FOG') {
+    weatherFactor = 0.35;
+    weatherMaxFactor = 0.48;
+  } else if (weather === 'RAIN') {
+    weatherFactor = 0.65;
+    weatherMaxFactor = 0.75;
+  }
+
+  const lightingFactor = isNight ? 0.60 : 1.0;
+  const clearThreshold = NOMINAL_CLEAR_OPTICAL_RECOGNITION_M * weatherFactor * lightingFactor;
+  const maxThreshold = NOMINAL_MAX_OPTICAL_DETECTION_M * weatherMaxFactor * (isNight ? 0.75 : 1.0);
+  return { clearThreshold, maxThreshold };
+}
+
+function makeUnresolvedObservation(
+  currentSimMs: number,
+  eoirHealth: SensorHealthStatus,
+  distM: number,
+  visibilityState: OpticalVisibilityState,
+  sensorAvailability = true,
+  confidence = 0
+): ApprovedSensorObservation {
+  return {
+    signature: 'UNRESOLVED_AIRFRAME',
+    observedSignature: 'UNRESOLVED_AIRFRAME',
+    timestampMs: currentSimMs,
+    sensorSource: 'EOIR',
+    activeSensor: 'EOIR',
+    confidence,
+    resolutionLevel: 'UNRESOLVED',
+    resolution: 'UNRESOLVED',
+    visibilityState,
+    sensorAvailability,
+    sensorHealth: eoirHealth,
+    sensorHealthOk: eoirHealth === 'OK',
+    estimatedRangeM: Math.round(distM),
+  };
+}
+
 export function evaluateSensorObservation(
   entity: TrackEntity,
   context: SensorObservationPipelineContext
@@ -163,41 +209,13 @@ export function evaluateSensorObservation(
 
   // Rule §7: EO/IR offline prevents optical model presentation entirely.
   if (eoirHealth === 'OUT') {
-    return {
-      signature: 'UNRESOLVED_AIRFRAME',
-      observedSignature: 'UNRESOLVED_AIRFRAME',
-      timestampMs: currentSimMs,
-      sensorSource: 'EOIR',
-      activeSensor: 'EOIR',
-      confidence: 0,
-      resolutionLevel: 'UNRESOLVED',
-      resolution: 'UNRESOLVED',
-      visibilityState: 'OUT_OF_RANGE',
-      sensorAvailability: false,
-      sensorHealth: 'OUT',
-      sensorHealthOk: false,
-      estimatedRangeM: 0,
-    };
+    return makeUnresolvedObservation(currentSimMs, 'OUT', 0, 'OUT_OF_RANGE', false, 0);
   }
 
   // Rule §4, §8: Terrain/building line-of-sight masking strictly occludes optical vision.
   if (entity.masked) {
     const distM = Math.hypot(entity.pos.x - sensorPos.x, entity.pos.y - sensorPos.y, entity.pos.z - sensorPos.z);
-    return {
-      signature: 'UNRESOLVED_AIRFRAME',
-      observedSignature: 'UNRESOLVED_AIRFRAME',
-      timestampMs: currentSimMs,
-      sensorSource: 'EOIR',
-      activeSensor: 'EOIR',
-      confidence: 0,
-      resolutionLevel: 'UNRESOLVED',
-      resolution: 'UNRESOLVED',
-      visibilityState: 'MASKED',
-      sensorAvailability: true,
-      sensorHealth: eoirHealth,
-      sensorHealthOk: eoirHealth === 'OK',
-      estimatedRangeM: Math.round(distM),
-    };
+    return makeUnresolvedObservation(currentSimMs, eoirHealth, distM, 'MASKED', true, 0);
   }
 
   // 3D Distance propagation from defensive sensor origin
@@ -206,59 +224,16 @@ export function evaluateSensorObservation(
   const dz = entity.pos.z - sensorPos.z;
   const distM = Math.hypot(dx, dy, dz);
 
-  // Weather atmospheric attenuation factors
-  let weatherFactor = 1.0;
-  let weatherMaxFactor = 1.0;
-  if (weather === 'FOG') {
-    weatherFactor = 0.35;      // Clear recognition drops to ~840m
-    weatherMaxFactor = 0.48;   // Visual detection drops to ~1824m
-  } else if (weather === 'RAIN') {
-    weatherFactor = 0.65;
-    weatherMaxFactor = 0.75;
-  }
-
-  // Night-time thermal attenuation factor
-  const lightingFactor = isNight ? 0.60 : 1.0;
-
-  const clearThreshold = NOMINAL_CLEAR_OPTICAL_RECOGNITION_M * weatherFactor * lightingFactor;
-  const maxThreshold = NOMINAL_MAX_OPTICAL_DETECTION_M * weatherMaxFactor * (isNight ? 0.75 : 1.0);
+  const { clearThreshold, maxThreshold } = computeOpticalThresholds(weather, isNight);
 
   // Severe track quality degradation (coasting/dropped return)
   if (entity.q < 0.20) {
-    return {
-      signature: 'UNRESOLVED_AIRFRAME',
-      observedSignature: 'UNRESOLVED_AIRFRAME',
-      timestampMs: currentSimMs,
-      sensorSource: 'EOIR',
-      activeSensor: 'EOIR',
-      confidence: 0,
-      resolutionLevel: 'UNRESOLVED',
-      resolution: 'UNRESOLVED',
-      visibilityState: 'OUT_OF_RANGE',
-      sensorAvailability: true,
-      sensorHealth: eoirHealth,
-      sensorHealthOk: eoirHealth === 'OK',
-      estimatedRangeM: Math.round(distM),
-    };
+    return makeUnresolvedObservation(currentSimMs, eoirHealth, distM, 'OUT_OF_RANGE', true, 0);
   }
 
   // Beyond maximum optical reach
   if (distM > maxThreshold) {
-    return {
-      signature: 'UNRESOLVED_AIRFRAME',
-      observedSignature: 'UNRESOLVED_AIRFRAME',
-      timestampMs: currentSimMs,
-      sensorSource: 'EOIR',
-      activeSensor: 'EOIR',
-      confidence: Math.max(0, Math.min(1.0, 0.1)),
-      resolutionLevel: 'UNRESOLVED',
-      resolution: 'UNRESOLVED',
-      visibilityState: 'OUT_OF_RANGE',
-      sensorAvailability: true,
-      sensorHealth: eoirHealth,
-      sensorHealthOk: eoirHealth === 'OK',
-      estimatedRangeM: Math.round(distM),
-    };
+    return makeUnresolvedObservation(currentSimMs, eoirHealth, distM, 'OUT_OF_RANGE', true, 0.1);
   }
 
   // Intermediate distance or degraded sensor: partial visual recognition
@@ -268,14 +243,14 @@ export function evaluateSensorObservation(
       Math.min(0.65, 1.0 - (distM - clearThreshold) / Math.max(1, maxThreshold - clearThreshold))
     );
     const confidence = eoirHealth === 'DEG' ? rawConf * 0.7 : rawConf;
-    const degradedVisState: OpticalVisibilityState =
-      weather === 'FOG'
-        ? 'DEGRADED_FOG'
-        : weather === 'RAIN'
-          ? 'DEGRADED_RAIN'
-          : isNight
-            ? 'DEGRADED_NIGHT_THERMAL'
-            : 'DEGRADED';
+    let degradedVisState: OpticalVisibilityState = 'DEGRADED';
+    if (weather === 'FOG') {
+      degradedVisState = 'DEGRADED_FOG';
+    } else if (weather === 'RAIN') {
+      degradedVisState = 'DEGRADED_RAIN';
+    } else if (isNight) {
+      degradedVisState = 'DEGRADED_NIGHT_THERMAL';
+    }
 
     return {
       signature: 'UNRESOLVED_AIRFRAME',

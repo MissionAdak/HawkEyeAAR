@@ -52,7 +52,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     if (!(await aarModal.isVisible())) {
       const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
       if (await aarBtn.isVisible()) {
-        await aarBtn.click({ force: true });
+        await aarBtn.click();
       }
     }
     await expect(aarModal).toBeVisible({ timeout: 5000 });
@@ -183,7 +183,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     if (!(await aarModal.isVisible())) {
       const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
       if (await aarBtn.isVisible()) {
-        await aarBtn.click({ force: true });
+        await aarBtn.click();
       }
     }
     await expect(aarModal).toBeVisible({ timeout: 5000 });
@@ -267,7 +267,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieEvents?.(uid) ?? [];
     }, targetUid);
-    expect(reloadedEvents.length).toBe(persistedEvents.length);
+    expect(reloadedEvents).toHaveLength(persistedEvents.length);
 
     // 11. Reopen AAR modal and navigate to Unit Readiness
     const standbyBtn = page.getByTestId('standby-view-btn');
@@ -276,7 +276,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
     }
     const standbyAarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
     await expect(standbyAarBtn).toBeVisible({ timeout: 5000 });
-    await standbyAarBtn.click({ force: true });
+    await standbyAarBtn.click();
 
     const reloadedAarModal = page.getByTestId('aar-modal');
     await expect(reloadedAarModal).toBeVisible({ timeout: 5000 });
@@ -556,7 +556,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieEvents?.(uid) ?? [];
     }, realUid);
-    expect(realEvents.length).toBe(3);
+    expect(realEvents).toHaveLength(3);
 
     // 5. Reload and verify migration idempotence
     await page.reload({ waitUntil: 'networkidle' });
@@ -569,7 +569,7 @@ test.describe('TASK 20 — Unit Performance View, Longitudinal Session History &
       const win = window as unknown as WindowWithDrishti;
       return await win.__DRISHTI_TEST__?.getDexieSessions?.() ?? [];
     });
-    expect(reloadedSessions.length).toBe(sessions.length);
+    expect(reloadedSessions).toHaveLength(sessions.length);
     const reloadedReal = reloadedSessions.find((s) => s.uid === realUid);
     expect(reloadedReal?.metrics?.gScore).toBe(realSession?.metrics?.gScore);
     const reloadedTampered = reloadedSessions.find((s) => s.uid === tamperedUid);

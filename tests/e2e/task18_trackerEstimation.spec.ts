@@ -285,7 +285,6 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     await setupSession(page, 'http://127.0.0.1:4173/HawkEyeAAR/', true);
 
     // Wait until track is detected
-    let targetNo: string | undefined;
     await expect.poll(async () => {
       return await page.evaluate(() => {
         const win = window as unknown as WindowWithDrishti;
@@ -294,7 +293,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
       });
     }, { timeout: 10000 }).toBe(true);
 
-    targetNo = await page.evaluate(() => {
+    const targetNo = await page.evaluate(() => {
       const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getTrackList()[0]?.trackNo;
     });
@@ -427,7 +426,11 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     const canvas3D = page.locator('canvas.cursor-grab');
     await expect(canvas3D).toBeVisible({ timeout: 5000 });
 
-    await page.waitForTimeout(1000);
+    // Wait until 3D viewport produces safe operator-facing data
+    await page.waitForFunction(() => {
+      const win = window as unknown as WindowWithDrishti;
+      return Boolean(win.__DRISHTI_TEST__?.inspectOperatorFacingData());
+    }, undefined, { timeout: 10000 });
 
     // Check zero leaks in SafeTrackView
     const audit = await page.evaluate(() => {
@@ -466,7 +469,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
     if (!(await aarModal.isVisible())) {
       const aarBtn = page.getByRole('button', { name: /\[AAR SCORECARD\]|AAR SCORECARD/i });
       if (await aarBtn.isVisible()) {
-        await aarBtn.click({ force: true });
+        await aarBtn.click();
       }
     }
     await expect(aarModal).toBeVisible({ timeout: 5000 });
@@ -587,7 +590,7 @@ test.describe('TASK 18 — Deterministic Sensor Measurement & Operator Track-Est
       const win = window as unknown as WindowWithDrishti;
       return win.__DRISHTI_TEST__?.getRfMeasurements() ?? [];
     });
-    expect(postCutRf.length).toBe(0);
+    expect(postCutRf).toHaveLength(0);
 
     await saveShot(page, 'task18_08_rf_bearing_only_measurements.png');
   });

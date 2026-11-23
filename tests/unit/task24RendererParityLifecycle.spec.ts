@@ -419,7 +419,7 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
       }
 
       // Assert identical post-fire event sequence and bit-identical state hash
-      expect(engine2D.events.length).toBe(engine3D.events.length);
+      expect(engine2D.events).toHaveLength(engine3D.events.length);
       for (let i = 0; i < engine2D.events.length; i++) {
         expect(engine2D.events[i]).toEqual(engine3D.events[i]);
       }
@@ -433,7 +433,7 @@ describe('TASK 24-R — Simulation Parity, Failure Recovery & Renderer Lifecycle
       const engageResults2D = engine2D.events.filter((e) => e.type === 'ENGAGE_RESULT');
       const engageResults3D = engine3D.events.filter((e) => e.type === 'ENGAGE_RESULT');
       expect(engageResults2D.length).toBeGreaterThan(0);
-      expect(engageResults2D.length).toBe(engageResults3D.length);
+      expect(engageResults2D).toHaveLength(engageResults3D.length);
       for (let i = 0; i < engageResults2D.length; i++) {
         const res2D = engageResults2D[i];
         const res3D = engageResults3D[i];

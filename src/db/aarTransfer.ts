@@ -41,7 +41,7 @@ export function stableJson(value: unknown): string {
   }
 
   const object = value as Record<string, unknown>;
-  const keys = Object.keys(object).sort();
+  const keys = Object.keys(object).sort((a, b) => a.localeCompare(b));
 
   return `{${keys.map(
     (key) => `${JSON.stringify(key)}:${stableJson(object[key])}`,
@@ -167,15 +167,17 @@ export async function exportSessionJson(
 }
 
 function csvCell(value: unknown): string {
-  let text = value == null ? '' :
-    typeof value === 'string' ? value : JSON.stringify(value);
+  let text = '';
+  if (value != null) {
+    text = typeof value === 'string' ? value : JSON.stringify(value);
+  }
 
   // Prevent spreadsheet formula execution for untrusted imported strings.
   if (/^[\t\r ]*[=+\-@]/.test(text)) {
     text = `'${text}`;
   }
 
-  return `"${text.replace(/"/g, '""')}"`;
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 export async function createSessionCsvString(
@@ -217,73 +219,53 @@ export async function exportSessionCsv(
   );
 }
 
-export async function importSessionJson(
-  file: File,
-): Promise<AARImportResult> {
-  const raw = JSON.parse(await file.text()) as unknown;
+interface ValidatedAarEnvelope {
+  format: string;
+  version: number;
+  events: unknown[];
+  eventCount: number;
+  sha256: string;
+  sessionUid: string;
+}
 
-  if (!isRecord(raw) ||
-      raw.format !== FORMAT ||
-      raw.version !== VERSION ||
-      !Array.isArray(raw.events) ||
-      !Number.isSafeInteger(raw.eventCount) ||
-      raw.eventCount !== raw.events.length ||
-      typeof raw.sha256 !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(raw.sha256)) {
+function validateAarEnvelope(raw: unknown): ValidatedAarEnvelope {
+  if (!isRecord(raw)) {
     throw new Error('Invalid AAR export format or metadata.');
   }
-
-  const events = raw.events;
-
-  // Verify the checksum before writing anything.
-  const actualChecksum = await sha256(
-  stableJson({ sessionUid: raw.sessionUid, events }),
-);
-
-  if (actualChecksum !== raw.sha256) {
-    throw new Error('SHA-256 verification failed. The file may be corrupted or modified.');
+  if (raw.format !== FORMAT || raw.version !== VERSION) {
+    throw new Error('Invalid AAR export format or metadata.');
   }
-
-  if (events.some((event) => !isValidEvent(event))) {
-    throw new Error('The file contains invalid simulation events. Nothing was imported.');
+  if (!Array.isArray(raw.events)) {
+    throw new TypeError('Invalid AAR export format or metadata.');
   }
-
-
-
-  // Session identity is stored in the envelope in newer exports.
-  // Older or empty exports cannot safely be imported without it.
+  if (!Number.isSafeInteger(raw.eventCount) || raw.eventCount !== raw.events.length) {
+    throw new Error('Invalid AAR export format or metadata.');
+  }
+  if (typeof raw.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(raw.sha256)) {
+    throw new Error('Invalid AAR export format or metadata.');
+  }
   if (typeof raw.sessionUid !== 'string' || raw.sessionUid.length === 0) {
     throw new Error('Missing sessionUid in export metadata.');
   }
+  return raw as unknown as ValidatedAarEnvelope;
+}
 
-  const importedEvents = events as SimEvent[];
-
-  
+function assertNoDuplicateSequenceNumbers(importedEvents: SimEvent[]): void {
   const uniqueKeys = new Set<string>();
-
   for (const event of importedEvents) {
     const key = eventKey(event);
-
     if (uniqueKeys.has(key)) {
-      throw new Error(
-        'The export contains duplicate event sequence numbers.',
-      );
+      throw new Error('The export contains duplicate event sequence numbers.');
     }
-
     uniqueKeys.add(key);
   }
+}
 
-  const existing = typeof indexedDB === 'undefined'
-    ? await getRecordedEventsForSession(raw.sessionUid)
-    : await db.events
-        .where('sessionUid')
-        .equals(raw.sessionUid)
-        .toArray();
-
-  const existingBySeq = new Map(
-    existing.map((event) => [eventKey(event), event]),
-  );
-
+function mergeImportedEvents(
+  importedEvents: SimEvent[],
+  existingBySeq: Map<string, StoredSimEvent>,
+  sessionUid: string
+): { pending: StoredSimEvent[]; duplicates: number } {
   const pending: StoredSimEvent[] = [];
   let duplicates = 0;
 
@@ -297,37 +279,76 @@ export async function importSessionJson(
           `Conflicting data for event sequence ${event.seq}. Nothing was imported.`,
         );
       }
-
       duplicates++;
       continue;
     }
 
-    existingBySeq.set(key, {
+    const stored: StoredSimEvent = {
       ...event,
-      sessionUid: raw.sessionUid,
-    });
-
-    pending.push({
-      ...event,
-      sessionUid: raw.sessionUid,
-    });
+      sessionUid,
+    };
+    existingBySeq.set(key, stored);
+    pending.push(stored);
   }
+
+  return { pending, duplicates };
+}
+
+export async function importSessionJson(
+  file: File,
+): Promise<AARImportResult> {
+  const raw = JSON.parse(await file.text()) as unknown;
+  const envelope = validateAarEnvelope(raw);
+  const events = envelope.events;
+
+  // Verify the checksum before writing anything.
+  const actualChecksum = await sha256(
+    stableJson({ sessionUid: envelope.sessionUid, events }),
+  );
+
+  if (actualChecksum !== envelope.sha256) {
+    throw new Error('SHA-256 verification failed. The file may be corrupted or modified.');
+  }
+
+  if (events.some((event) => !isValidEvent(event))) {
+    throw new Error('The file contains invalid simulation events. Nothing was imported.');
+  }
+
+  const importedEvents = events as SimEvent[];
+  assertNoDuplicateSequenceNumbers(importedEvents);
+
+  const existing = typeof indexedDB === 'undefined'
+    ? await getRecordedEventsForSession(envelope.sessionUid)
+    : await db.events
+        .where('sessionUid')
+        .equals(envelope.sessionUid)
+        .toArray();
+
+  const existingBySeq = new Map(
+    existing.map((event) => [eventKey(event), event]),
+  );
+
+  const { pending, duplicates } = mergeImportedEvents(
+    importedEvents,
+    existingBySeq,
+    envelope.sessionUid
+  );
 
   // Validate conflicts before writing. Use a transaction so the import
   // is atomic if a database write fails.
   if (typeof indexedDB === 'undefined') {
     addFallbackEventsForTest(pending);
   } else {
+    const batches: StoredSimEvent[][] = [];
+    for (
+      let index = 0;
+      index < pending.length;
+      index += IMPORT_BATCH_SIZE
+    ) {
+      batches.push(pending.slice(index, index + IMPORT_BATCH_SIZE));
+    }
     await db.transaction('rw', db.events, async () => {
-      for (
-        let index = 0;
-        index < pending.length;
-        index += IMPORT_BATCH_SIZE
-      ) {
-        await db.events.bulkAdd(
-          pending.slice(index, index + IMPORT_BATCH_SIZE),
-        );
-      }
+      await Promise.all(batches.map((batch) => db.events.bulkAdd(batch)));
     });
   }
 return {

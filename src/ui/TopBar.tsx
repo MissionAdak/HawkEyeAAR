@@ -88,6 +88,29 @@ export const TopBar: React.FC = () => {
     }
   };
 
+  const renderPauseControl = () => {
+    if (mode === 'EVAL') {
+      return (
+        <button
+          disabled
+          className="px-2 py-0.5 border border-line text-[11px] font-mono bg-carbon-800 text-text-dim opacity-50 cursor-not-allowed"
+          title="Pause disabled in EVAL mode. Press Esc to Abort."
+        >
+          NO PAUSE (EVAL)
+        </button>
+      );
+    }
+    return (
+      <button
+        onClick={() => (isPaused ? resume() : pause())}
+        className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
+        title="Pause / Resume Sim (P)"
+      >
+        {isPaused ? '[P] RESUME' : '[P] PAUSE'}
+      </button>
+    );
+  };
+
   return (
     <header className="h-[45px] w-full bg-carbon-900 border-b border-line px-3 flex items-center justify-between font-display text-xs select-none">
       {/* Left: ROE Active Banner */}
@@ -192,23 +215,7 @@ export const TopBar: React.FC = () => {
               [START SESSION]
             </button>
           </>
-        ) : mode === 'EVAL' ? (
-          <button
-            disabled
-            className="px-2 py-0.5 border border-line text-[11px] font-mono bg-carbon-800 text-text-dim opacity-50 cursor-not-allowed"
-            title="Pause disabled in EVAL mode. Press Esc to Abort."
-          >
-            NO PAUSE (EVAL)
-          </button>
-        ) : (
-          <button
-            onClick={() => (isPaused ? resume() : pause())}
-            className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
-            title="Pause / Resume Sim (P)"
-          >
-            {isPaused ? '[P] RESUME' : '[P] PAUSE'}
-          </button>
-        )}
+        ) : renderPauseControl()}
       </div>
     </header>
   );

@@ -89,7 +89,7 @@ export function computeConvexHull2D(points: Point2D[]): Point2D[] {
   // Build lower hull
   const lower: Point2D[] = [];
   for (const p of sorted) {
-    while (lower.length >= 2 && crossProduct(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+    while (lower.length >= 2 && crossProduct(lower.at(-2)!, lower.at(-1)!, p) <= 0) {
       lower.pop();
     }
     lower.push(p);
@@ -99,7 +99,7 @@ export function computeConvexHull2D(points: Point2D[]): Point2D[] {
   const upper: Point2D[] = [];
   for (let i = sorted.length - 1; i >= 0; i--) {
     const p = sorted[i];
-    while (upper.length >= 2 && crossProduct(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+    while (upper.length >= 2 && crossProduct(upper.at(-2)!, upper.at(-1)!, p) <= 0) {
       upper.pop();
     }
     upper.push(p);
@@ -174,36 +174,65 @@ function createFallbackEnvelope(points: Point2D[], epsM: number): Point2D[] {
  * - pos.z (quantized to discrete altitude band LOW/MID/HIGH)
  * Zero ground truth inputs are accepted.
  */
-export function detectTrackClusters(
-  tracks: SafeTrackView[],
-  options: ClusterOptions = {}
-): ClusterMetrics[] {
-  const epsM = options.epsM ?? DEFAULT_CLUSTER_EPS_M;
-  const minPts = options.minPts ?? DEFAULT_CLUSTER_MIN_PTS;
+interface ClusterExpansionContext {
+  candidateTracks: SafeTrackView[];
+  distMatrix: number[][];
+  epsM: number;
+  minPts: number;
+  visited: Set<string>;
+  clustered: Set<string>;
+}
 
-  // Filter for active, non-closed, operator-visible tracks
-  const candidateTracks = tracks
-    .filter(
-      (t) =>
-        t.step !== 'UNDETECTED' &&
-        t.step !== 'CLOSED' &&
-        (t.lifecycle === 'ACTIVE' || t.lifecycle === 'LEAKED' || t.lifecycle === 'NEUTRALISED')
-    )
-    .slice()
-    // Deterministic sort by trackNo ensures order-independent iteration
-    .sort((a, b) => a.trackNo.localeCompare(b.trackNo));
+function expandClusterFromCore(
+  rootTrack: SafeTrackView,
+  rootNeighbors: number[],
+  ctx: ClusterExpansionContext
+): SafeTrackView[] {
+  const { candidateTracks, distMatrix, epsM, minPts, visited, clustered } = ctx;
+  const currentCluster: SafeTrackView[] = [rootTrack];
+  clustered.add(rootTrack.trackNo);
 
-  if (candidateTracks.length < minPts) {
-    return [];
+  const queue: number[] = [...rootNeighbors];
+
+  while (queue.length > 0) {
+    const neighborIdx = queue.shift()!;
+    const neighborTrack = candidateTracks[neighborIdx];
+
+    if (!visited.has(neighborTrack.trackNo)) {
+      visited.add(neighborTrack.trackNo);
+
+      const subNeighbors: number[] = [];
+      for (let j = 0; j < candidateTracks.length; j++) {
+        if (distMatrix[neighborIdx][j] <= epsM) {
+          subNeighbors.push(j);
+        }
+      }
+      if (subNeighbors.length >= minPts) {
+        queue.push(...subNeighbors);
+      }
+    }
+
+    if (!clustered.has(neighborTrack.trackNo)) {
+      clustered.add(neighborTrack.trackNo);
+      currentCluster.push(neighborTrack);
+    }
   }
 
+  currentCluster.sort((a, b) => a.trackNo.localeCompare(b.trackNo));
+  return currentCluster;
+}
+
+function performDbscanClustering(
+  candidateTracks: SafeTrackView[],
+  epsM: number,
+  minPts: number
+): SafeTrackView[][] {
   const n = candidateTracks.length;
   const visited = new Set<string>();
   const clustered = new Set<string>();
   const clusterGroups: SafeTrackView[][] = [];
 
-  // Distance matrix
-  const distMatrix: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
+  const distMatrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const d = horizontalDist(candidateTracks[i].pos, candidateTracks[j].pos);
@@ -217,7 +246,6 @@ export function detectTrackClusters(
     if (visited.has(rootTrack.trackNo)) continue;
     visited.add(rootTrack.trackNo);
 
-    // Find neighbors of rootTrack
     const neighbors: number[] = [];
     for (let j = 0; j < n; j++) {
       if (distMatrix[i][j] <= epsM) {
@@ -226,140 +254,173 @@ export function detectTrackClusters(
     }
 
     if (neighbors.length >= minPts) {
-      // Core point: expand cluster
-      const currentCluster: SafeTrackView[] = [rootTrack];
-      clustered.add(rootTrack.trackNo);
-
-      const queue: number[] = [...neighbors];
-
-      while (queue.length > 0) {
-        const neighborIdx = queue.shift()!;
-        const neighborTrack = candidateTracks[neighborIdx];
-
-        if (!visited.has(neighborTrack.trackNo)) {
-          visited.add(neighborTrack.trackNo);
-
-          // Find secondary neighbors
-          const subNeighbors: number[] = [];
-          for (let j = 0; j < n; j++) {
-            if (distMatrix[neighborIdx][j] <= epsM) {
-              subNeighbors.push(j);
-            }
-          }
-          if (subNeighbors.length >= minPts) {
-            queue.push(...subNeighbors);
-          }
-        }
-
-        if (!clustered.has(neighborTrack.trackNo)) {
-          clustered.add(neighborTrack.trackNo);
-          currentCluster.push(neighborTrack);
-        }
-      }
-
-      // Sort tracks in cluster deterministically
-      currentCluster.sort((a, b) => a.trackNo.localeCompare(b.trackNo));
-      clusterGroups.push(currentCluster);
+      const cluster = expandClusterFromCore(rootTrack, neighbors, {
+        candidateTracks,
+        distMatrix,
+        epsM,
+        minPts,
+        visited,
+        clustered,
+      });
+      clusterGroups.push(cluster);
     }
   }
 
-  // Sort clusters deterministically by the trackNo of their first member
   clusterGroups.sort((a, b) => a[0].trackNo.localeCompare(b[0].trackNo));
+  return clusterGroups;
+}
 
-  // Compute metrics for each cluster
-  const results: ClusterMetrics[] = [];
-
-  for (let cIdx = 0; cIdx < clusterGroups.length; cIdx++) {
-    const cTracks = clusterGroups[cIdx];
-    const count = cTracks.length;
-    const trackNos = cTracks.map((t) => t.trackNo);
-    const clusterId = `C-${String(cIdx + 1).padStart(2, '0')}`;
-
-    const points2D: Point2D[] = cTracks.map((t) => ({ x: t.pos.x, y: t.pos.y }));
-
-    // Centroid
-    let cx = 0;
-    let cy = 0;
-    for (const p of points2D) {
-      cx += p.x;
-      cy += p.y;
-    }
-    cx /= count;
-    cy /= count;
-    const centroid: Point2D = { x: cx, y: cy };
-
-    // Nearest-neighbor spacing
-    let spacingSum = 0;
-    for (let i = 0; i < count; i++) {
-      let minD = Infinity;
-      for (let j = 0; j < count; j++) {
-        if (i === j) continue;
-        const d = horizontalDist(points2D[i], points2D[j]);
-        if (d < minD) minD = d;
-      }
-      spacingSum += minD === Infinity ? 0 : minD;
-    }
-    const meanSpacingM = spacingSum / count;
-
-    // Convex Hull
-    let rawHull = computeConvexHull2D(points2D);
-    let areaM2 = computePolygonAreaM2(rawHull);
-    let isDegenerate = false;
-
-    // Check for degenerate hull (collinear points or area < 100 m^2)
-    if (rawHull.length < 3 || areaM2 < 100) {
-      isDegenerate = true;
-      rawHull = createFallbackEnvelope(points2D, epsM);
-      areaM2 = computePolygonAreaM2(rawHull);
-    }
-
-    const areaKm2 = areaM2 / 1_000_000;
-    const densityTrkPerKm2 = count / Math.max(0.001, areaKm2);
-
-    // Altitude bands
-    const bandsPresent = new Set<AltBand>();
-    for (const t of cTracks) {
-      bandsPresent.add(getAltBand(t.pos.z));
-    }
-
-    const lowestBand: AltBand = bandsPresent.has('LOW')
-      ? 'LOW'
-      : bandsPresent.has('MID')
-      ? 'MID'
-      : 'HIGH';
-
-    const highestBand: AltBand = bandsPresent.has('HIGH')
-      ? 'HIGH'
-      : bandsPresent.has('MID')
-      ? 'MID'
-      : 'LOW';
-
-    const altSpan =
-      lowestBand === highestBand ? lowestBand : `${lowestBand}–${highestBand}`;
-
-    const zMinM = getAltBandBounds(lowestBand).floorM;
-    const zMaxM = getAltBandBounds(highestBand).ceilM;
-
-    const label = `CLUSTER ${count} · ${altSpan} · ${densityTrkPerKm2.toFixed(1)} TRK/KM² · SPACING ${Math.round(meanSpacingM)}m`;
-
-    results.push({
-      clusterId,
-      trackNos,
-      count,
-      hull2D: rawHull,
-      centroid,
-      areaKm2,
-      densityTrkPerKm2,
-      meanSpacingM,
-      lowestBand,
-      highestBand,
-      altSpan,
-      zMinM,
-      zMaxM,
-      label,
-      isDegenerate,
-    });
+function computeClusterAltitudeSpan(cTracks: SafeTrackView[]): {
+  lowestBand: AltBand;
+  highestBand: AltBand;
+  altSpan: string;
+  zMinM: number;
+  zMaxM: number;
+} {
+  const bandsPresent = new Set<AltBand>();
+  for (const t of cTracks) {
+    bandsPresent.add(getAltBand(t.pos.z));
   }
 
-  return results;
+  let lowestBand: AltBand = 'HIGH';
+  if (bandsPresent.has('LOW')) {
+    lowestBand = 'LOW';
+  } else if (bandsPresent.has('MID')) {
+    lowestBand = 'MID';
+  }
+
+  let highestBand: AltBand = 'LOW';
+  if (bandsPresent.has('HIGH')) {
+    highestBand = 'HIGH';
+  } else if (bandsPresent.has('MID')) {
+    highestBand = 'MID';
+  }
+
+  const altSpan =
+    lowestBand === highestBand ? lowestBand : `${lowestBand}–${highestBand}`;
+
+  const zMinM = getAltBandBounds(lowestBand).floorM;
+  const zMaxM = getAltBandBounds(highestBand).ceilM;
+
+  return { lowestBand, highestBand, altSpan, zMinM, zMaxM };
+}
+
+function computeClusterGeometry(
+  points2D: Point2D[],
+  epsM: number
+): {
+  centroid: Point2D;
+  meanSpacingM: number;
+  hull2D: Point2D[];
+  areaKm2: number;
+  isDegenerate: boolean;
+} {
+  const count = points2D.length;
+  let cx = 0;
+  let cy = 0;
+  for (const p of points2D) {
+    cx += p.x;
+    cy += p.y;
+  }
+  const centroid: Point2D = { x: cx / count, y: cy / count };
+
+  let spacingSum = 0;
+  for (let i = 0; i < count; i++) {
+    let minD = Infinity;
+    for (let j = 0; j < count; j++) {
+      if (i === j) continue;
+      const d = horizontalDist(points2D[i], points2D[j]);
+      if (d < minD) minD = d;
+    }
+    spacingSum += minD === Infinity ? 0 : minD;
+  }
+  const meanSpacingM = spacingSum / count;
+
+  let rawHull = computeConvexHull2D(points2D);
+  let areaM2 = computePolygonAreaM2(rawHull);
+  let isDegenerate = false;
+
+  if (rawHull.length < 3 || areaM2 < 100) {
+    isDegenerate = true;
+    rawHull = createFallbackEnvelope(points2D, epsM);
+    areaM2 = computePolygonAreaM2(rawHull);
+  }
+
+  const areaKm2 = areaM2 / 1_000_000;
+  return { centroid, meanSpacingM, hull2D: rawHull, areaKm2, isDegenerate };
+}
+
+function computeSingleClusterMetrics(
+  cTracks: SafeTrackView[],
+  cIdx: number,
+  epsM: number
+): ClusterMetrics {
+  const count = cTracks.length;
+  const trackNos = cTracks.map((t) => t.trackNo);
+  const clusterId = `C-${String(cIdx + 1).padStart(2, '0')}`;
+  const points2D: Point2D[] = cTracks.map((t) => ({ x: t.pos.x, y: t.pos.y }));
+
+  const { centroid, meanSpacingM, hull2D, areaKm2, isDegenerate } =
+    computeClusterGeometry(points2D, epsM);
+  const { lowestBand, highestBand, altSpan, zMinM, zMaxM } =
+    computeClusterAltitudeSpan(cTracks);
+
+  const densityTrkPerKm2 = count / Math.max(0.001, areaKm2);
+  const label = `CLUSTER ${count} · ${altSpan} · ${densityTrkPerKm2.toFixed(1)} TRK/KM² · SPACING ${Math.round(meanSpacingM)}m`;
+
+  return {
+    clusterId,
+    trackNos,
+    count,
+    hull2D,
+    centroid,
+    areaKm2,
+    densityTrkPerKm2,
+    meanSpacingM,
+    lowestBand,
+    highestBand,
+    altSpan,
+    zMinM,
+    zMaxM,
+    label,
+    isDegenerate,
+  };
+}
+
+/**
+ * Spatial track clustering engine (DBSCAN + Convex Hull).
+ * Groups dense swarms / formations of tracks for macro-tactical situational awareness.
+ *
+ * Invariant:
+ * Strictly uses only operator-visible SafeTrackView fields:
+ * - trackNo
+ * - pos.x, pos.y (horizontal coordinates)
+ * - pos.z (quantized to discrete altitude band LOW/MID/HIGH)
+ * Zero ground truth inputs are accepted.
+ */
+export function detectTrackClusters(
+  tracks: SafeTrackView[],
+  options: ClusterOptions = {}
+): ClusterMetrics[] {
+  const epsM = options.epsM ?? DEFAULT_CLUSTER_EPS_M;
+  const minPts = options.minPts ?? DEFAULT_CLUSTER_MIN_PTS;
+
+  const candidateTracks = tracks
+    .filter(
+      (t) =>
+        t.step !== 'UNDETECTED' &&
+        t.step !== 'CLOSED' &&
+        (t.lifecycle === 'ACTIVE' || t.lifecycle === 'LEAKED' || t.lifecycle === 'NEUTRALISED')
+    )
+    .slice()
+    .sort((a, b) => a.trackNo.localeCompare(b.trackNo));
+
+  if (candidateTracks.length < minPts) {
+    return [];
+  }
+
+  const clusterGroups = performDbscanClustering(candidateTracks, epsM, minPts);
+  return clusterGroups.map((cTracks, cIdx) =>
+    computeSingleClusterMetrics(cTracks, cIdx, epsM)
+  );
 }

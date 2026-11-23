@@ -260,7 +260,7 @@ describe('Track X3D — Coverage and Cross-Section Training Aid (TASK-F5)', () =
       }
 
       expect(engineOff.tickIndex).toBe(engineOn.tickIndex);
-      expect(engineOff.events.length).toBe(engineOn.events.length);
+      expect(engineOff.events).toHaveLength(engineOn.events.length);
 
       for (let i = 0; i < engineOff.events.length; i++) {
         expect(engineOff.events[i].type).toBe(engineOn.events[i].type);
@@ -287,7 +287,7 @@ describe('Track X3D — Coverage and Cross-Section Training Aid (TASK-F5)', () =
       });
 
       aid3d.dispose();
-      expect(aid3d.group.children.length).toBe(0);
+      expect(aid3d.group.children).toHaveLength(0);
     });
   });
 });

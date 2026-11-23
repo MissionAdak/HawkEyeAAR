@@ -22,6 +22,8 @@ import {
   getProgressionLogEntry,
 } from '@/db/sessionRepo';
 
+export type SimTimeOverride = number | 'MISSING' | 'INVALID' | null;
+
 export interface DrishtiPresentationRecord {
   trackNo: string;
   currentCategory: TargetModelCategory;
@@ -52,45 +54,34 @@ export interface TrackEstimateOverride {
   isCoasting?: boolean;
 }
 
+function isValidVector3Like(val: unknown): boolean {
+  if (!val || typeof val !== 'object') return false;
+  const v = val as Record<string, unknown>;
+  return (
+    typeof v.x === 'number' &&
+    Number.isFinite(v.x) &&
+    typeof v.y === 'number' &&
+    Number.isFinite(v.y) &&
+    typeof v.z === 'number' &&
+    Number.isFinite(v.z)
+  );
+}
+
+function isValidPositiveNumber(val: unknown): boolean {
+  return typeof val === 'number' && Number.isFinite(val) && val >= 0;
+}
+
 export function isValidTrackEstimateOverride(override: unknown): override is TrackEstimateOverride {
   if (!override || typeof override !== 'object') return false;
   const ovr = override as Record<string, unknown>;
 
-  if ('estPos' in ovr && ovr.estPos !== undefined) {
-    const pos = ovr.estPos as Record<string, unknown>;
-    if (!pos || typeof pos !== 'object') return false;
-    if (typeof pos.x !== 'number' || !Number.isFinite(pos.x)) return false;
-    if (typeof pos.y !== 'number' || !Number.isFinite(pos.y)) return false;
-    if (typeof pos.z !== 'number' || !Number.isFinite(pos.z)) return false;
-  }
-
-  if ('estVel' in ovr && ovr.estVel !== undefined) {
-    const vel = ovr.estVel as Record<string, unknown>;
-    if (!vel || typeof vel !== 'object') return false;
-    if (typeof vel.x !== 'number' || !Number.isFinite(vel.x)) return false;
-    if (typeof vel.y !== 'number' || !Number.isFinite(vel.y)) return false;
-    if (typeof vel.z !== 'number' || !Number.isFinite(vel.z)) return false;
-  }
-
-  if ('estRangeM' in ovr && ovr.estRangeM !== undefined) {
-    if (typeof ovr.estRangeM !== 'number' || !Number.isFinite(ovr.estRangeM) || ovr.estRangeM < 0) return false;
-  }
-
-  if ('estBearingDeg' in ovr && ovr.estBearingDeg !== undefined) {
-    if (typeof ovr.estBearingDeg !== 'number' || !Number.isFinite(ovr.estBearingDeg)) return false;
-  }
-
-  if ('estSpeedMps' in ovr && ovr.estSpeedMps !== undefined) {
-    if (typeof ovr.estSpeedMps !== 'number' || !Number.isFinite(ovr.estSpeedMps) || ovr.estSpeedMps < 0) return false;
-  }
-
-  if ('uncertaintyM' in ovr && ovr.uncertaintyM !== undefined) {
-    if (typeof ovr.uncertaintyM !== 'number' || !Number.isFinite(ovr.uncertaintyM) || ovr.uncertaintyM < 0) return false;
-  }
-
-  if ('isCoasting' in ovr && ovr.isCoasting !== undefined) {
-    if (typeof ovr.isCoasting !== 'boolean') return false;
-  }
+  if ('estPos' in ovr && ovr.estPos !== undefined && !isValidVector3Like(ovr.estPos)) return false;
+  if ('estVel' in ovr && ovr.estVel !== undefined && !isValidVector3Like(ovr.estVel)) return false;
+  if ('estRangeM' in ovr && ovr.estRangeM !== undefined && !isValidPositiveNumber(ovr.estRangeM)) return false;
+  if ('estBearingDeg' in ovr && ovr.estBearingDeg !== undefined && (typeof ovr.estBearingDeg !== 'number' || !Number.isFinite(ovr.estBearingDeg))) return false;
+  if ('estSpeedMps' in ovr && ovr.estSpeedMps !== undefined && !isValidPositiveNumber(ovr.estSpeedMps)) return false;
+  if ('uncertaintyM' in ovr && ovr.uncertaintyM !== undefined && !isValidPositiveNumber(ovr.uncertaintyM)) return false;
+  if ('isCoasting' in ovr && ovr.isCoasting !== undefined && typeof ovr.isCoasting !== 'boolean') return false;
 
   return true;
 }
@@ -137,7 +128,7 @@ export interface DrishtiTestBridge {
   }>;
   setSensorHealthOverride: (health: Record<string, unknown> | null) => boolean;
   setProducerHealthOverride: (health: Record<string, unknown> | null | undefined) => boolean;
-  setSimTimeOverride: (timeOverride: number | 'MISSING' | 'INVALID' | null) => boolean;
+  setSimTimeOverride: (timeOverride: SimTimeOverride) => boolean;
   injectObservationOverride: (trackNo: string, obs: Partial<ApprovedSensorObservation> | null) => boolean;
   overrideTrackEstimate: (trackNo: string, estimate: TrackEstimateOverride | null) => boolean;
   clearOverrides: () => void;
@@ -198,6 +189,55 @@ export interface DrishtiTestBridge {
 declare global {
   interface Window {
     __DRISHTI_TEST__?: DrishtiTestBridge | null;
+  }
+}
+
+function get2DPresentationState(
+  engine: SimEngine,
+  trackNo?: string
+): {
+  trackCount: number;
+  allAreRadarSymbols: boolean;
+  tracks: DrishtiPresentationRecord[];
+} {
+  const opTracks = engine.getOperatorTracks();
+  const candidateTracks = trackNo ? opTracks.filter((t) => t.trackNo === trackNo) : opTracks;
+  return {
+    trackCount: candidateTracks.length,
+    allAreRadarSymbols: true,
+    tracks: candidateTracks.map((t) => ({
+      trackNo: t.trackNo,
+      currentCategory: (t.sensorObservation?.signature ? `OBSERVED_${t.sensorObservation.signature}` : 'RADAR_SYMBOL') as TargetModelCategory,
+      observation: t.sensorObservation
+        ? {
+            sensorSource: t.sensorObservation.sensorSource,
+            timestampMs: t.sensorObservation.timestampMs,
+            confidence: t.sensorObservation.confidence,
+            resolutionLevel: t.sensorObservation.resolutionLevel,
+            visibilityState: t.sensorObservation.visibilityState,
+            sensorHealth: t.sensorObservation.sensorHealth,
+            sensorAvailability: t.sensorObservation.sensorAvailability,
+          }
+        : null,
+      estRangeM: t.estRangeM,
+      estBearingDeg: t.estBearingDeg,
+      estSpeedMs: t.estSpeedMps,
+      uncertaintyM: t.uncertaintyM,
+      isCoasting: t.isCoasting,
+    })),
+  };
+}
+
+function auditObjectForForbiddenProps(
+  target: object,
+  targetName: string,
+  forbiddenProps: string[],
+  leaked: string[]
+): void {
+  for (const prop of forbiddenProps) {
+    if (prop in target || Object.hasOwn(target, prop)) {
+      leaked.push(`${targetName}.${prop}`);
+    }
   }
 }
 
@@ -275,7 +315,7 @@ export function installDrishtiTestBridge(
         const obsOvr = observationOverrides.get(t.trackNo);
         base.sensorObservation = obsOvr
           ? ({
-              ...(t.sensorObservation ?? {}),
+              ...t.sensorObservation,
               ...obsOvr,
               timestampMs: obsOvr.timestampMs ?? (engine.tickIndex * 50),
             } as ApprovedSensorObservation)
@@ -357,7 +397,7 @@ export function installDrishtiTestBridge(
     },
 
     setSensorCondition(condition: { sensor: SensorMode; health: SensorHealthStatus }): boolean {
-      if (!condition || !condition.sensor || !condition.health) return false;
+      if (!condition?.sensor || !condition?.health) return false;
       if (condition.sensor !== 'RADAR' && condition.sensor !== 'EOIR' && condition.sensor !== 'RF') {
         return false;
       }
@@ -459,7 +499,7 @@ export function installDrishtiTestBridge(
                 ...t,
                 sensorObservation: obs
                   ? ({
-                      ...(t.sensorObservation ?? {}),
+                      ...t.sensorObservation,
                       ...obs,
                       timestampMs: obs.timestampMs ?? (engine.tickIndex * 50),
                     } as ApprovedSensorObservation)
@@ -512,32 +552,7 @@ export function installDrishtiTestBridge(
     } {
       const r3d = getRenderer3D();
       if (!r3d) {
-        const opTracks = engine.getOperatorTracks();
-        const candidateTracks = trackNo ? opTracks.filter((t) => t.trackNo === trackNo) : opTracks;
-        return {
-          trackCount: candidateTracks.length,
-          allAreRadarSymbols: true,
-          tracks: candidateTracks.map((t) => ({
-            trackNo: t.trackNo,
-            currentCategory: (t.sensorObservation?.signature ? `OBSERVED_${t.sensorObservation.signature}` : 'RADAR_SYMBOL') as TargetModelCategory,
-            observation: t.sensorObservation
-              ? {
-                  sensorSource: t.sensorObservation.sensorSource,
-                  timestampMs: t.sensorObservation.timestampMs,
-                  confidence: t.sensorObservation.confidence,
-                  resolutionLevel: t.sensorObservation.resolutionLevel,
-                  visibilityState: t.sensorObservation.visibilityState,
-                  sensorHealth: t.sensorObservation.sensorHealth,
-                  sensorAvailability: t.sensorObservation.sensorAvailability,
-                }
-              : null,
-            estRangeM: t.estRangeM,
-            estBearingDeg: t.estBearingDeg,
-            estSpeedMs: t.estSpeedMps,
-            uncertaintyM: t.uncertaintyM,
-            isCoasting: t.isCoasting,
-          })),
-        };
+        return get2DPresentationState(engine, trackNo);
       }
 
       const trackData = r3d.getCurrentTracks();
@@ -552,7 +567,7 @@ export function installDrishtiTestBridge(
           return {
             ...t,
             sensorObservation: override
-              ? ({ ...(t.sensorObservation ?? {}), ...override } as ApprovedSensorObservation)
+              ? ({ ...t.sensorObservation, ...override } as ApprovedSensorObservation)
               : null,
           };
         }
@@ -592,7 +607,7 @@ export function installDrishtiTestBridge(
             (r3d as unknown as { setSimTimeProvider: (fn?: unknown) => void }).setSimTimeProvider(undefined);
           } else if (simTimeOverride === 'INVALID') {
             (r3d as unknown as { setSimTimeProvider: (fn: () => unknown) => void }).setSimTimeProvider(
-              () => ({ simMs: NaN })
+              () => ({ simMs: Number.NaN })
             );
           } else if (typeof simTimeOverride === 'number') {
             (r3d as unknown as { setSimTimeProvider: (fn: () => unknown) => void }).setSimTimeProvider(
@@ -693,24 +708,18 @@ export function installDrishtiTestBridge(
         'plannedSpawns',
       ];
 
-      const r3d = getRenderer3D();
-      if (r3d) {
+      function auditRenderer3DData(): void {
+        const r3d = getRenderer3D();
+        if (!r3d) return;
+
         const trackData = r3d.getCurrentTracks();
         if (trackData) {
           for (const t of trackData.tracks) {
-            for (const prop of forbiddenProps) {
-              if (prop in t || Object.prototype.hasOwnProperty.call(t, prop)) {
-                leaked.push(`SafeTrackView.${t.trackNo}.${prop}`);
-              }
-            }
+            auditObjectForForbiddenProps(t, `SafeTrackView.${t.trackNo}`, forbiddenProps, leaked);
             const rawEntity = engine.curr.find((e) => e.trackNo === t.trackNo);
             if (rawEntity) {
-              if (t.pos === rawEntity.pos) {
-                leaked.push(`SafeTrackView.${t.trackNo}.posReferenceIdentity`);
-              }
-              if (t.vel === rawEntity.vel) {
-                leaked.push(`SafeTrackView.${t.trackNo}.velReferenceIdentity`);
-              }
+              if (t.pos === rawEntity.pos) leaked.push(`SafeTrackView.${t.trackNo}.posReferenceIdentity`);
+              if (t.vel === rawEntity.vel) leaked.push(`SafeTrackView.${t.trackNo}.velReferenceIdentity`);
             }
           }
         }
@@ -718,78 +727,61 @@ export function installDrishtiTestBridge(
         if (typeof r3d.getEventsProviderInput === 'function') {
           const live3dEvents = r3d.getEventsProviderInput();
           for (const ev of live3dEvents) {
-            for (const prop of forbiddenProps) {
-              if (prop in ev || Object.prototype.hasOwnProperty.call(ev, prop)) {
-                leaked.push(`live3dEvents.${(ev as { id?: string }).id}.${prop}`);
-              }
-            }
+            const evId = (ev as { id?: string }).id ?? 'ev';
+            auditObjectForForbiddenProps(ev, `live3dEvents.${evId}`, forbiddenProps, leaked);
             const p = (ev as { payload?: Record<string, unknown> }).payload;
             if (p) {
-              for (const prop of forbiddenProps) {
-                if (prop in p || Object.prototype.hasOwnProperty.call(p, prop)) {
-                  leaked.push(`live3dEvents.${(ev as { id?: string }).id}.payload.${prop}`);
-                }
+              auditObjectForForbiddenProps(p, `live3dEvents.${evId}.payload`, forbiddenProps, leaked);
+            }
+          }
+        }
+      }
+
+      function auditUiSnapshotData(): void {
+        for (const opt of engine.getOperatorTracks()) {
+          auditObjectForForbiddenProps(opt, `OperatorTrackView.${opt.trackNo}`, forbiddenProps, leaked);
+        }
+
+        const snapshot = engine.buildUiSnapshot();
+        for (const row of snapshot.trackRows) {
+          auditObjectForForbiddenProps(row, `trackRow.${row.trackNo}`, forbiddenProps, leaked);
+        }
+
+        for (const ev of snapshot.recentEvents) {
+          auditObjectForForbiddenProps(ev, `recentEvents.${ev.id}`, forbiddenProps, leaked);
+          if (ev.payload) {
+            auditObjectForForbiddenProps(ev.payload, `recentEvents.${ev.id}.payload`, forbiddenProps, leaked);
+          }
+        }
+      }
+
+      function auditOperatorFeedbackData(): void {
+        const store = useSessionStore.getState();
+        const feedbacks = [
+          ...(store.activeFeedback ? [store.activeFeedback] : []),
+          ...(store.feedbackList || []),
+        ];
+        for (const fb of feedbacks) {
+          auditObjectForForbiddenProps(fb, `feedback.${fb.id}`, forbiddenProps, leaked);
+          if (fb.trackNo) {
+            const raw = engine.curr.find((e) => e.trackNo === fb.trackNo);
+            const est = engine.tracker.getTrackEstimate(fb.trackNo);
+            if (raw && est && Math.abs(est.estRangeM - Math.hypot(raw.pos.x, raw.pos.y)) > 15) {
+              const rawKmStr = (Math.hypot(raw.pos.x, raw.pos.y) / 1000).toFixed(2);
+              if (fb.explanation?.includes(`${rawKmStr} km`)) {
+                leaked.push(`feedback.${fb.id}.exactRangeInExplanation`);
+              }
+              if (fb.measured && String(fb.measured.actual).includes(`${rawKmStr} km`)) {
+                leaked.push(`feedback.${fb.id}.exactRangeInMeasured`);
               }
             }
           }
         }
       }
 
-      const opTracks = engine.getOperatorTracks();
-      for (const opt of opTracks) {
-        for (const prop of forbiddenProps) {
-          if (prop in opt || Object.prototype.hasOwnProperty.call(opt, prop)) {
-            leaked.push(`OperatorTrackView.${opt.trackNo}.${prop}`);
-          }
-        }
-      }
-
-      const snapshot = engine.buildUiSnapshot();
-      for (const row of snapshot.trackRows) {
-        for (const prop of forbiddenProps) {
-          if (prop in row || Object.prototype.hasOwnProperty.call(row, prop)) {
-            leaked.push(`trackRow.${row.trackNo}.${prop}`);
-          }
-        }
-      }
-
-      for (const ev of snapshot.recentEvents) {
-        for (const prop of forbiddenProps) {
-          if (prop in ev || Object.prototype.hasOwnProperty.call(ev, prop)) {
-            leaked.push(`recentEvents.${ev.id}.${prop}`);
-          }
-          if (ev.payload && (prop in ev.payload || Object.prototype.hasOwnProperty.call(ev.payload, prop))) {
-            leaked.push(`recentEvents.${ev.id}.payload.${prop}`);
-          }
-        }
-      }
-
-      // Inspect active operator feedback and feedback history
-      const store = useSessionStore.getState();
-      const feedbacks = [
-        ...(store.activeFeedback ? [store.activeFeedback] : []),
-        ...(store.feedbackList || []),
-      ];
-      for (const fb of feedbacks) {
-        for (const prop of forbiddenProps) {
-          if (prop in fb || Object.prototype.hasOwnProperty.call(fb, prop)) {
-            leaked.push(`feedback.${fb.id}.${prop}`);
-          }
-        }
-        if (fb.trackNo) {
-          const raw = engine.curr.find((e) => e.trackNo === fb.trackNo);
-          const est = engine.tracker.getTrackEstimate(fb.trackNo);
-          if (raw && est && Math.abs(est.estRangeM - Math.hypot(raw.pos.x, raw.pos.y)) > 15) {
-            const rawKmStr = (Math.hypot(raw.pos.x, raw.pos.y) / 1000).toFixed(2);
-            if (fb.explanation && fb.explanation.includes(`${rawKmStr} km`)) {
-              leaked.push(`feedback.${fb.id}.exactRangeInExplanation`);
-            }
-            if (fb.measured && String(fb.measured.actual).includes(`${rawKmStr} km`)) {
-              leaked.push(`feedback.${fb.id}.exactRangeInMeasured`);
-            }
-          }
-        }
-      }
+      auditRenderer3DData();
+      auditUiSnapshotData();
+      auditOperatorFeedbackData();
 
       return {
         hasLeaks: leaked.length > 0,
@@ -1039,7 +1031,7 @@ export function installDrishtiTestBridge(
     },
 
     getActiveScenarioSpec(): import('@/sim/types').ScenarioSpec | null {
-      return engine.spec ? (JSON.parse(JSON.stringify(engine.spec)) as import('@/sim/types').ScenarioSpec) : null;
+      return engine.spec ? (structuredClone(engine.spec) as import('@/sim/types').ScenarioSpec) : null;
     },
 
     setMockProgressionTxFailure(mode: import('@/db/sessionRepo').MockTransactionFailurePoint): void {

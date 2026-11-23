@@ -30,7 +30,7 @@ describe('TASK 15 — Explicit Start Session, Mission Briefing & Session Lifecyc
 
     it('does not load a scenario into engine on mount (engine spec remains null)', () => {
       expect(engineInstance.spec).toBeNull();
-      expect(engineInstance.curr.length).toBe(0);
+      expect(engineInstance.curr).toHaveLength(0);
     });
 
     it('holds clock at T+00:00.000 and tick index at 0 before explicit start', () => {
@@ -42,7 +42,7 @@ describe('TASK 15 — Explicit Start Session, Mission Briefing & Session Lifecyc
     it('does not start an EventRecorder or emit SIM_START before explicit start', () => {
       expect(getActiveRecorder()).toBeNull();
       const simStartEvents = engineInstance.events.filter((e) => e.type === 'SIM_START');
-      expect(simStartEvents.length).toBe(0);
+      expect(simStartEvents).toHaveLength(0);
     });
   });
 
@@ -67,7 +67,7 @@ describe('TASK 15 — Explicit Start Session, Mission Briefing & Session Lifecyc
       expect(useSessionStore.getState().selectedScenarioId).toBe('RANDOM-1');
       expect(useSessionStore.getState().sessionStatus).toBe('READY');
       expect(engineInstance.spec).toBeNull();
-      expect(engineInstance.events.length).toBe(0);
+      expect(engineInstance.events).toHaveLength(0);
     });
   });
 
@@ -91,7 +91,7 @@ describe('TASK 15 — Explicit Start Session, Mission Briefing & Session Lifecyc
 
       // Verify exactly one SIM_START event captured
       const simStartEvents = engineInstance.events.filter((e) => e.type === 'SIM_START');
-      expect(simStartEvents.length).toBe(1);
+      expect(simStartEvents).toHaveLength(1);
 
       // Verify active recorder is connected
       expect(getActiveRecorder()).not.toBeNull();
@@ -170,7 +170,7 @@ describe('TASK 15 — Explicit Start Session, Mission Briefing & Session Lifecyc
       expect(state.isAarOpen).toBe(false);
       expect(engineInstance.spec).toBeNull();
       expect(engineInstance.tickIndex).toBe(0);
-      expect(engineInstance.curr.length).toBe(0);
+      expect(engineInstance.curr).toHaveLength(0);
     });
 
     it('restartSession starts a fresh run with a new seed', async () => {

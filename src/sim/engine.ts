@@ -417,6 +417,31 @@ export class SimEngine {
     }
   }
 
+  private handleRadarTrackInitiation(
+    entity: TrackEntity,
+    hitsIn3: number,
+    currentSimMs: number,
+    rangeM: number
+  ): void {
+    if (hitsIn3 >= 2 && entity.tTrk === null) {
+      entity.tTrk = currentSimMs;
+      entity.tVis ??= currentSimMs;
+      if (entity.step === 'UNDETECTED') {
+        entity.step = 'FIND';
+      }
+      this.appendEvent(
+        'TRACK_INIT',
+        { trackNo: entity.trackNo, rangeM, q: entity.q },
+        entity.trackNo ?? undefined,
+        entity.id
+      );
+
+      if (this.selectedTrackNo === null && entity.trackNo) {
+        this.selectedTrackNo = entity.trackNo;
+      }
+    }
+  }
+
   private processEntityRadarDetection(
     entity: TrackEntity,
     index: number,
@@ -452,23 +477,7 @@ export class SimEngine {
 
     // Track initiation: requires 2 hits in 3 consecutive sweeps (Rules.md DT-3, PRD 3.4, ARCHITECTURE.md 3.3)
     const hitsIn3 = entity.hitHistory.filter(Boolean).length;
-    if (hitsIn3 >= 2 && entity.tTrk === null) {
-      entity.tTrk = currentSimMs;
-      entity.tVis ??= currentSimMs;
-      if (entity.step === 'UNDETECTED') {
-        entity.step = 'FIND';
-      }
-      this.appendEvent(
-        'TRACK_INIT',
-        { trackNo: entity.trackNo, rangeM, q: entity.q },
-        entity.trackNo ?? undefined,
-        entity.id
-      );
-
-      if (this.selectedTrackNo === null && entity.trackNo) {
-        this.selectedTrackNo = entity.trackNo;
-      }
-    }
+    this.handleRadarTrackInitiation(entity, hitsIn3, currentSimMs, rangeM);
 
     // Generate noisy measurement & update tracker for established or newly initiated track
     if (isHit && (entity.tTrk !== null || hitsIn3 >= 2) && entity.trackNo && this.spec) {
@@ -732,13 +741,8 @@ export class SimEngine {
     }
   }
 
-  private updateAuxiliarySensors(currentSimMs: number): void {
+  private updateRfMeasurements(currentSimMs: number): void {
     if (!this.spec) return;
-
-    // 1. Synchronize operational statuses and seed any unseeded initiated tracks
-    this.syncTrackerWithEntities(currentSimMs);
-
-    // 2. Generate RF measurements for emitting active targets
     this.rfMeasurements = [];
     const isJamming = this.sensorHealth.RF === 'OUT';
     for (let i = 0; i < this.curr.length; i++) {
@@ -758,32 +762,39 @@ export class SimEngine {
         }
       }
     }
+  }
 
-    // 3. Generate EO/IR optical observation measurements
-    if (this.sensorHealth.EOIR !== 'OUT') {
-      const isNight = this.spec.dayNight === 'NIGHT';
-      for (let i = 0; i < this.curr.length; i++) {
-        const e = this.curr[i];
-        if (e.trackNo && e.step !== 'UNDETECTED' && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED')) {
-          const eoirMeas = generateEoirMeasurement({
-            entity: e,
-            entityIndex: i,
-            tickIndex: this.tickIndex,
-            timestampMs: currentSimMs,
-            scenarioSeed: this.spec.seed,
-            context: {
-              activeSensor: this.activeSensor,
-              sensorHealth: this.sensorHealth,
-              isNight,
-              currentSimMs,
-            },
-          });
-          if (eoirMeas) {
-            this.tracker.updateWithEoir(eoirMeas);
-          }
+  private updateEoirMeasurements(currentSimMs: number): void {
+    if (!this.spec || this.sensorHealth.EOIR === 'OUT') return;
+    const isNight = this.spec.dayNight === 'NIGHT';
+    for (let i = 0; i < this.curr.length; i++) {
+      const e = this.curr[i];
+      if (e.trackNo && e.step !== 'UNDETECTED' && (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED')) {
+        const eoirMeas = generateEoirMeasurement({
+          entity: e,
+          entityIndex: i,
+          tickIndex: this.tickIndex,
+          timestampMs: currentSimMs,
+          scenarioSeed: this.spec.seed,
+          context: {
+            activeSensor: this.activeSensor,
+            sensorHealth: this.sensorHealth,
+            isNight,
+            currentSimMs,
+          },
+        });
+        if (eoirMeas) {
+          this.tracker.updateWithEoir(eoirMeas);
         }
       }
     }
+  }
+
+  private updateAuxiliarySensors(currentSimMs: number): void {
+    if (!this.spec) return;
+    this.syncTrackerWithEntities(currentSimMs);
+    this.updateRfMeasurements(currentSimMs);
+    this.updateEoirMeasurements(currentSimMs);
   }
 
   public getOperatorTracks(): OperatorTrackView[] {
@@ -1248,6 +1259,13 @@ export class SimEngine {
     const trk = ev.trackNo ? `TRK ${ev.trackNo} ` : '';
     const rng = estRangeM !== undefined ? ` | RNG ${(estRangeM / 1000).toFixed(2)}km` : '';
 
+    const safeStr = (val: unknown, fallback: string = '') => {
+      if (val === undefined || val === null) return fallback;
+      if (typeof val === 'string') return val;
+      if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+      return fallback;
+    };
+
     switch (ev.type) {
       case 'DETECT':
         return `${trk}SIGNAL DETECTED`;
@@ -1258,19 +1276,19 @@ export class SimEngine {
       case 'REACQUIRE':
         return `${trk}SIGNAL REACQUIRED`;
       case 'DESIGNATE':
-        return `${trk}DESIGNATED VIA ${String(ev.payload.via ?? 'SYSTEM')}`;
+        return `${trk}DESIGNATED VIA ${safeStr(ev.payload.via, 'SYSTEM')}`;
       case 'CLASSIFY':
-        return `${trk}CLASSIFIED AS ${String(ev.payload.label ?? 'UNKNOWN')}`;
+        return `${trk}CLASSIFIED AS ${safeStr(ev.payload.label, 'UNKNOWN')}`;
       case 'ENGAGE':
-        return `${trk}ENGAGED WITH ${String(ev.payload.effector ?? 'WEAPON')}${rng}`;
+        return `${trk}ENGAGED WITH ${safeStr(ev.payload.effector, 'WEAPON')}${rng}`;
       case 'ENGAGE_RESULT':
         return `${trk}${ev.payload.killed ? 'NEUTRALIZATION INDICATED' : 'ENGAGEMENT INEFFECTIVE'}`;
       case 'RELEASE_BLOCKED':
-        return `RELEASE BLOCKED: ${String(ev.payload.reason ?? 'UNKNOWN')}`;
+        return `RELEASE BLOCKED: ${safeStr(ev.payload.reason, 'UNKNOWN')}`;
       case 'ROE_VIOLATION':
-        return `ROE VIOLATION: ${String(ev.payload.reason ?? 'CRITERIA NOT MET')}`;
+        return `ROE VIOLATION: ${safeStr(ev.payload.reason, 'CRITERIA NOT MET')}`;
       case 'FLAG':
-        return `TACTICAL FLAG: ${String(ev.payload.type ?? 'ALERT')}`;
+        return `TACTICAL FLAG: ${safeStr(ev.payload.type, 'ALERT')}`;
       case 'LEAK':
         return `PERIMETER BREACH DETECTED`;
       case 'CHAOS_ON':
@@ -1278,7 +1296,7 @@ export class SimEngine {
       case 'CHAOS_OFF':
         return `ENVIRONMENTAL CONDITIONS NORMAL`;
       case 'SENSOR_SWITCH':
-        return `SENSOR SWITCHED TO ${String(ev.payload.mode ?? '')}`;
+        return `SENSOR SWITCHED TO ${safeStr(ev.payload.mode, '')}`;
       case 'SESSION_PAUSE':
         return `SIMULATION PAUSED`;
       case 'SESSION_RESUME':
