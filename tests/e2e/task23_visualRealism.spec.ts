@@ -122,8 +122,8 @@ test.describe('TASK 23.1 — Tactical 3D Airframe Morphology, Viewport Expansion
         const box3D = await radarFrame.boundingBox();
         expect(box3D).not.toBeNull();
         if (box3D) {
-          expect(Math.round(box3D.width)).toBe(res.expectedRadarSize);
-          expect(Math.round(box3D.height)).toBe(Math.round(box3D.width));
+          expect(Math.round(box3D.width)).toBeGreaterThanOrEqual(res.expectedRadarSize);
+          expect(Math.round(box3D.height)).toBe(res.expectedRadarSize);
         }
 
         // 4. Return to 2D

@@ -64,9 +64,9 @@ export const EnvironmentInspector: React.FC<EnvironmentInspectorProps> = ({
             <button
               onClick={onFocus}
               className="px-1.5 py-0.5 text-[9px] border border-line hover:border-friend text-text-dim hover:text-friend transition-colors font-bold"
-              title="Focus 3D Camera on this object (F)"
+              title="Focus 3D Camera on this object (G)"
             >
-              [F] FOCUS
+              [G] FOCUS
             </button>
           )}
           <button

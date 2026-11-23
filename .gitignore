@@ -36,3 +36,5 @@ scripts/validate-*
 scripts/search_repo.*
 scripts/setup_search.*
 
+
+tests/e2e/screenshots/

@@ -12,6 +12,7 @@ import { MissionBriefing } from './MissionBriefing';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EnvironmentInspector } from './EnvironmentInspector';
 import { OperatorFeedbackToast } from './OperatorFeedbackToast';
+import type { OperatorFeedback } from '@/sim/operatorFeedback';
 import { TargetRecognitionModal } from './TargetRecognitionModal';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
@@ -500,6 +501,26 @@ export const Console: React.FC = () => {
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
 
+let toastCounter = 0;
+
+  const handleTargetDisplayMode = (mode: TargetDisplayMode) => {
+    setTargetDisplayMode(mode);
+    if (mode === 'AIRFRAME' && activeSensor !== 'EOIR') {
+      const fb: OperatorFeedback = {
+        id: `fb_toast_${Date.now()}_${++toastCounter}`,
+        timestampMs: Date.now(),
+        category: 'SYSTEM_WARNING',
+        severity: 'INFO',
+        title: 'AIRFRAME VIEW REQUIRES CLEAR EO/IR OBSERVATION',
+        explanation: 'Radar contacts displayed as symbols until EO/IR is active.',
+      };
+      useSessionStore.setState((s) => ({
+        feedbackList: [fb, ...s.feedbackList].slice(0, 20),
+        activeFeedback: fb,
+      }));
+    }
+  };
+
   useEffect(() => {
     renderer3dRef.current?.setActiveSensor(activeSensor);
   }, [activeSensor]);
@@ -528,7 +549,7 @@ export const Console: React.FC = () => {
   const radarFrameRef = useRef<HTMLDivElement>(null);
   const [radarSize, setRadarSize] = useState<number>(520);
 
-  // Responsive radar viewport dimension synchronization (Task 23.1 Section 4)
+  // Responsive radar viewport dimension synchronization (Task 23.1 Section 4, Task 28 Fix C)
   useEffect(() => {
     const el = radarFrameRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -536,24 +557,33 @@ export const Console: React.FC = () => {
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = Math.round(entry.contentRect.width);
-        if (width >= 300 && width !== radarSize) {
-          setRadarSize(width);
-          if (canvasRef.current) {
-            canvasRef.current.width = width;
-            canvasRef.current.height = width;
+        const height = Math.round(entry.contentRect.height);
+        if (width >= 300 && height >= 300) {
+          if (viewMode === '3D') {
+            if (canvas3dRef.current) {
+              canvas3dRef.current.width = width;
+              canvas3dRef.current.height = height;
+            }
+            renderer3dRef.current?.resize(width, height);
+          } else {
+            setRadarSize(width);
+            if (canvasRef.current) {
+              canvasRef.current.width = width;
+              canvasRef.current.height = width;
+            }
+            if (canvas3dRef.current) {
+              canvas3dRef.current.width = width;
+              canvas3dRef.current.height = height;
+            }
+            renderer3dRef.current?.resize(width, height);
           }
-          if (canvas3dRef.current) {
-            canvas3dRef.current.width = width;
-            canvas3dRef.current.height = width;
-          }
-          renderer3dRef.current?.resize(width, width);
         }
       }
     });
 
     ro.observe(el);
     return () => ro.disconnect();
-  }, [radarSize]);
+  }, [viewMode]);
 
   useEffect(() => {
     renderer3dRef.current?.setLowFidelity(lowFi);
@@ -942,8 +972,8 @@ export const Console: React.FC = () => {
       {/* 3. Center Radar Scope Viewport */}
       <div className="console-center bg-carbon-950">
         <div className="flex items-center justify-center w-full h-full relative">
-          {/* Left Gutter: Range Rings Legend (visible on ultra-wide tactical displays) */}
-          <div className="hidden 2xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-4 select-none">
+          {/* Left Gutter: Range Rings Legend (restored across tactical displays) */}
+          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-3 select-none shrink-0">
             <div className="border-l border-phosphorDim pl-2">
               <span className="text-phosphor block font-bold">5.0 km</span>
               <span>MAX RADAR</span>
@@ -958,14 +988,23 @@ export const Console: React.FC = () => {
             </div>
           </div>
 
-          {/* Responsive Canvas Frame bounded by var(--radar) */}
+          {/* Responsive Canvas Frame bounded by var(--radar) in 2D, or wider landscape in 3D */}
           <div
             ref={radarFrameRef}
-            className="radar-frame shrink-0 border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden"
-            style={{
-              width: 'var(--radar)',
-              height: 'var(--radar)',
-            }}
+            className={`radar-frame shrink-0 border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden ${
+              viewMode === '3D' ? 'radar-frame-3d' : ''
+            }`}
+            style={
+              viewMode === '3D'
+                ? {
+                    width: 'var(--radar-w-3d, min(960px, calc(100vw - 720px)))',
+                    height: 'var(--radar)',
+                  }
+                : {
+                    width: 'var(--radar)',
+                    height: 'var(--radar)',
+                  }
+            }
           >
             {/* Native HTML5 2D Radar Canvas */}
             <canvas
@@ -1008,7 +1047,7 @@ export const Console: React.FC = () => {
               onToggleClusters={toggleClusters}
               onToggleTrainingAid={toggleTrainingAid}
               onToggleCrossSection={toggleCrossSection}
-              onTargetDisplayMode={setTargetDisplayMode}
+              onTargetDisplayMode={handleTargetDisplayMode}
               onOpenRecogModal={() => setIsRecogModalOpen(true)}
               onToggleViewMode={toggleViewMode}
               onEnterVr={handleOpenVr}
@@ -1029,7 +1068,7 @@ export const Console: React.FC = () => {
                   AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
                 </div>
                 <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
-                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [F] | RESET: [HOME]
+                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [G] | RESET: [HOME]
                 </div>
               </>
             )}
@@ -1097,8 +1136,8 @@ export const Console: React.FC = () => {
             )}
           </div>
 
-          {/* Right Gutter: Active Mode Telemetry (visible on ultra-wide tactical displays) */}
-          <div className="hidden 2xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-4 select-none">
+          {/* Right Gutter: Active Mode Telemetry (restored across tactical displays) */}
+          <div className="flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-3 select-none shrink-0">
             <div className="border-r border-line pr-2 text-right">
               <span className="text-text-main block font-bold">30 RPM</span>
               <span>SWEEP RATE</span>
@@ -1109,7 +1148,7 @@ export const Console: React.FC = () => {
             </div>
             <div className="border-r border-line pr-2 text-right">
               <span className="text-phosphor block font-bold">60 FPS</span>
-              <span>INTERPOLATED</span>
+              <span>RENDER TARGET</span>
             </div>
           </div>
         </div>

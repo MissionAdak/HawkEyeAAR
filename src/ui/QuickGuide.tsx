@@ -147,7 +147,7 @@ export const QuickGuide: React.FC<QuickGuideProps> = ({ onClose }) => {
           </div>
 
           {/* Tactical Operator Tips */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px]">
             <div className="p-2 border border-line bg-carbon-950 space-y-1">
               <span className="text-phosphor font-bold block">💡 TIP: SPEED CONTROLS</span>
               <p className="text-text-dim">
@@ -159,6 +159,12 @@ export const QuickGuide: React.FC<QuickGuideProps> = ({ onClose }) => {
               <span className="text-amber font-bold block">💡 TIP: 1-CLICK TACTICAL ASSISTANT</span>
               <p className="text-text-dim">
                 The green action card on top of the right rail always tells you what to do next with a single click!
+              </p>
+            </div>
+            <div className="p-2 border border-line bg-carbon-950 space-y-1">
+              <span className="text-friend font-bold block">💡 TIP: 3D CAMERA CONTROLS</span>
+              <p className="text-text-dim">
+                Press <span className="text-friend font-bold">[V]</span> for 3D View, <span className="text-friend font-bold">[G]</span> to focus target, and <span className="text-friend font-bold">[HOME]</span> to reset!
               </p>
             </div>
           </div>

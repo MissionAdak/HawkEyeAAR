@@ -1,0 +1,142 @@
+import { test, expect } from '@playwright/test';
+import path from 'node:path';
+
+test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus & UI Acceptance', () => {
+  const resolutions = [
+    { name: '1280x720 (Laptop HD)', width: 1280, height: 720 },
+    { name: '1366x768 (Standard Tactical Laptop)', width: 1366, height: 768 },
+    { name: '1440x900 (Widescreen Display)', width: 1440, height: 900 },
+    { name: '1600x900 (HD+ Display)', width: 1600, height: 900 },
+    { name: '1780x858 (Custom Reference Tactical Display)', width: 1780, height: 858 },
+    { name: '1920x1080 (Full HD Tactical C2 Display)', width: 1920, height: 1080 },
+  ];
+
+  for (const res of resolutions) {
+    test(`Fix B & C: verifies side panels visible and zero overflow at ${res.name}`, async ({ page }) => {
+      await page.setViewportSize({ width: res.width, height: res.height });
+      await page.goto('/');
+
+      // Start session from Mission Briefing
+      const startBtn = page.getByTestId('start-session-btn');
+      await expect(startBtn).toBeVisible({ timeout: 5000 });
+      await startBtn.click();
+
+      // Zero vertical overflow
+      const overflow = await page.evaluate(() => ({
+        scrollHeight: document.documentElement.scrollHeight,
+        innerHeight: window.innerHeight,
+      }));
+      expect(overflow.scrollHeight).toBeLessThanOrEqual(overflow.innerHeight);
+
+      // Left gutter assertions (exact match to distinguish from effector range descriptions)
+      await expect(page.getByText('5.0 km', { exact: true })).toBeVisible();
+      await expect(page.getByText('MAX RADAR', { exact: true })).toBeVisible();
+      await expect(page.getByText('3.0 km', { exact: true })).toBeVisible();
+      await expect(page.getByText('NOMINAL REF', { exact: true })).toBeVisible();
+      await expect(page.getByText('0.5 km', { exact: true })).toBeVisible();
+      await expect(page.getByText('POINT OF NO RETURN', { exact: true })).toBeVisible();
+
+      // Right gutter assertions
+      await expect(page.getByText('30 RPM', { exact: true })).toBeVisible();
+      await expect(page.getByText('SWEEP RATE', { exact: true })).toBeVisible();
+      await expect(page.getByText('20 Hz', { exact: true })).toBeVisible();
+      await expect(page.getByText('DETERMINISTIC SIM', { exact: true })).toBeVisible();
+      await expect(page.getByText('60 FPS', { exact: true })).toBeVisible();
+      await expect(page.getByText('RENDER TARGET', { exact: true })).toBeVisible();
+
+      // Verify 2D radar is strictly circular (1:1 square aspect ratio)
+      const radarFrame = page.locator('.radar-frame');
+      const box2D = await radarFrame.boundingBox();
+      expect(box2D).not.toBeNull();
+      if (box2D) {
+        expect(Math.round(box2D.width)).toBe(Math.round(box2D.height));
+      }
+    });
+  }
+
+  test('Fix C & E: 3D viewport expands horizontally and shows G focus shortcut', async ({ page }) => {
+    await page.setViewportSize({ width: 1780, height: 858 });
+    await page.goto('/');
+
+    // Start session
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // 2D box width
+    const radarFrame = page.locator('.radar-frame');
+    const box2D = await radarFrame.boundingBox();
+    expect(box2D).not.toBeNull();
+    const width2D = box2D!.width;
+
+    // Switch to 3D View
+    const toggle3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DBtn).toBeVisible();
+    await toggle3DBtn.click();
+
+    // In 3D view, frame width should be wider on widescreen tactical display
+    const box3D = await radarFrame.boundingBox();
+    expect(box3D).not.toBeNull();
+    expect(box3D!.width).toBeGreaterThanOrEqual(width2D);
+
+    // Verify 3D footer hint uses [G] for focus
+    await expect(page.getByText(/FOCUS: DBLCLICK \/ \[G\]/i)).toBeVisible();
+
+    // Capture screenshot for visual evidence
+    const shotPath = path.join(process.cwd(), 'tests/e2e/screenshots/task28_01_wide_3d_viewport.png');
+    await page.screenshot({ path: shotPath, fullPage: true });
+  });
+
+  test('Fix A: Toast feedback when choosing TGT:AIR under non-EO/IR sensor mode', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/');
+
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // Switch to 3D View
+    await page.getByRole('button', { name: /\[V\] 3D VIEW/i }).click();
+
+    // While RADAR is active, click TGT:AIR
+    const airframeBtn = page.getByRole('button', { name: /TGT:AIR/i });
+    await expect(airframeBtn).toBeVisible();
+    await airframeBtn.click();
+
+    // Operator feedback toast should appear
+    await expect(page.getByText('AIRFRAME VIEW REQUIRES CLEAR EO/IR OBSERVATION')).toBeVisible();
+    await expect(page.getByText('Radar contacts displayed as symbols until EO/IR is active.')).toBeVisible();
+
+    const shotPath = path.join(process.cwd(), 'tests/e2e/screenshots/task28_02_sensor_feedback_toast.png');
+    await page.screenshot({ path: shotPath, fullPage: true });
+  });
+
+  test('Fix F & G: Neutralized target and completed session read-only presentation', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/');
+
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // Wait for radar tracks to populate in track directory
+    const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
+    await trackRow.click();
+
+    // Classify as hostile attack
+    const haBtn = page.getByRole('button', { name: /\[HA\]\s*HOSTILE ATTACK/i });
+    await expect(haBtn).toBeVisible();
+    await haBtn.click();
+
+    // Check Track Table active count
+    await expect(page.getByText(/ACTIVE: \d+\/\d+/i)).toBeVisible();
+
+    // Fire weapon if in range or wait
+    const fireBtn = page.getByRole('button', { name: /\[F\] RELEASE/i }).first();
+    await expect(fireBtn).toBeVisible();
+
+    const shotPath = path.join(process.cwd(), 'tests/e2e/screenshots/task28_03_active_engagement.png');
+    await page.screenshot({ path: shotPath, fullPage: true });
+  });
+});

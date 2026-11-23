@@ -150,13 +150,45 @@ export class TargetModelFactory {
         break;
       case 'OBSERVED_MULTIROTOR':
         if (signature === 'MULTIROTOR_COMPACT') {
-          model = buildFpvAttackModel(palette);
+          const fpvPalette = {
+            body: this.getMaterial('body_fpv_obs', () => new THREE.MeshLambertMaterial({ color: 0x1d2127 })),
+            accent: this.getMaterial('accent_fpv_obs', () => new THREE.MeshBasicMaterial({ color: 0xff3b30 })),
+            rotors: this.getMaterial('rotors_fpv_obs', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.4 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildFpvAttackModel(fpvPalette);
         } else if (signature === 'MULTIROTOR_MICRO' || signature === 'SWARM_ELEMENT') {
-          model = buildSwarmElementModel(palette);
+          const swarmPalette = {
+            body: this.getMaterial('body_swarm_obs', () => new THREE.MeshLambertMaterial({ color: 0x181a1e })),
+            accent: this.getMaterial('accent_swarm_obs', () => new THREE.MeshBasicMaterial({ color: 0xff9500 })),
+            rotors: this.getMaterial('rotors_swarm_obs', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.45 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildSwarmElementModel(swarmPalette);
         } else if (signature === 'MULTIROTOR_STANDARD') {
-          model = buildCivilUasModel(palette);
+          const civilPalette = {
+            body: this.getMaterial('body_civil_obs', () => new THREE.MeshLambertMaterial({ color: 0xe6edf5 })),
+            accent: this.getMaterial('accent_civil_obs', () => new THREE.MeshBasicMaterial({ color: 0x00ff88 })),
+            rotors: this.getMaterial('rotors_civil_obs', () => new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.3 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildCivilUasModel(civilPalette);
+        } else if (signature === 'FRIENDLY_UAS') {
+          const friendPalette = {
+            body: this.getMaterial('body_friend_obs', () => new THREE.MeshLambertMaterial({ color: 0x2b3b48 })),
+            accent: this.getMaterial('accent_friend_obs', () => new THREE.MeshBasicMaterial({ color: COLOR_FRIEND })),
+            rotors: this.getMaterial('rotors_friend_obs', () => new THREE.MeshBasicMaterial({ color: COLOR_FRIEND, transparent: true, opacity: 0.3 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildFriendlyUasModel(friendPalette);
         } else {
-          model = buildReconQuadModel(palette);
+          const reconPalette = {
+            body: this.getMaterial('body_recon_obs', () => new THREE.MeshLambertMaterial({ color: 0x2d3748 })),
+            accent: this.getMaterial('accent_recon_obs', () => new THREE.MeshBasicMaterial({ color: 0x00d2ff })),
+            rotors: this.getMaterial('rotors_recon_obs', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildReconQuadModel(reconPalette);
         }
         break;
       case 'RADAR_SYMBOL':

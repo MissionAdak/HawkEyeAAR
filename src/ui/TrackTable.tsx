@@ -18,6 +18,7 @@ export const TrackTable: React.FC = () => {
   const displayScenarioId = sessionStatus === 'READY' ? selectedScenarioId : currentScenarioId;
   const isEvalLocked = mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0;
   const currentEntry = getScenarioCatalogEntry(displayScenarioId);
+  const activeCount = trackRows.filter((t) => t.step !== 'CLOSED').length;
 
   const getStatusPill = (status: string) => {
     switch (status) {
@@ -108,7 +109,9 @@ export const TrackTable: React.FC = () => {
           TRACK DIRECTORY
         </span>
         <span className="text-[10px] text-text-dim">
-          LIVE: {trackRows.length}
+          {sessionStatus === 'COMPLETED' || sessionStatus === 'ABORTED'
+            ? `TRACKS: ${trackRows.length}`
+            : `ACTIVE: ${activeCount}/${trackRows.length}`}
         </span>
       </div>
 

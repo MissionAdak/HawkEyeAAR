@@ -18,8 +18,7 @@ function getNotionalThreatValue(label?: TrackClass | null): number {
 }
 
 function getStepIndex(step: string, killChainSteps: readonly string[]): number {
-  const idx = killChainSteps.indexOf(step);
-  return Math.max(0, idx);
+  return killChainSteps.indexOf(step);
 }
 
 function getKillChainStepClass(isCurrent: boolean, isPast: boolean): string {
@@ -57,6 +56,7 @@ interface GuidanceBannerProps {
   selectedTrack: UiTrackRow | null;
   trackRows: UiTrackRow[];
   isTargetClosed: boolean;
+  isSessionEnded: boolean;
   isEngagedOrAssess: boolean;
   isUnclassified: boolean;
   bestEffectorEntry: [string, EffectorConfig] | null;
@@ -72,6 +72,7 @@ const EngagementGuidanceBanner: React.FC<GuidanceBannerProps> = ({
   selectedTrack,
   trackRows,
   isTargetClosed,
+  isSessionEnded,
   isEngagedOrAssess,
   isUnclassified,
   bestEffectorEntry,
@@ -82,6 +83,28 @@ const EngagementGuidanceBanner: React.FC<GuidanceBannerProps> = ({
   selectEffector,
   fire,
 }) => {
+  if (isSessionEnded) {
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="font-display font-bold text-[11px] text-friend tracking-wider">
+            SESSION COMPLETED — READ ONLY
+          </span>
+          <span className="text-[9px] text-friend font-bold">AAR READY</span>
+        </div>
+        <p className="text-[10px] text-text-dim leading-snug">
+          Exercise finished. Weapons suite safe. Review doctrine performance and score breakdown.
+        </p>
+        <button
+          onClick={openAar}
+          className="w-full py-1.5 bg-phosphor text-carbon-950 font-display font-bold text-xs tracking-wider hover:bg-phosphorDim transition-all"
+        >
+          📊 OPEN AAR SCORECARD
+        </button>
+      </div>
+    );
+  }
+
   if (!selectedTrack) {
     return (
       <div className="space-y-1.5">
@@ -115,7 +138,7 @@ const EngagementGuidanceBanner: React.FC<GuidanceBannerProps> = ({
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <span className="font-display font-bold text-[11px] text-friend tracking-wider">
-            ✓ THREAT NEUTRALISED
+            ✓ THREAT NEUTRALISED (CLOSED)
           </span>
           <span className="text-[9px] text-friend font-bold">KILL CONFIRMED</span>
         </div>
@@ -370,6 +393,8 @@ interface EffectorCardProps {
   sensorHealth: UiSnapshot['sensorHealth'] | undefined;
   cer: number;
   missileHoldProgress: number;
+  isSessionEnded?: boolean;
+  isTargetClosed?: boolean;
   selectEffector: (effId: EffectorId) => void;
   fire: (trackNo: string) => void;
   handleMissileMouseDown: () => void;
@@ -384,6 +409,8 @@ const EffectorCard: React.FC<EffectorCardProps> = ({
   sensorHealth,
   cer,
   missileHoldProgress,
+  isSessionEnded = false,
+  isTargetClosed = false,
   selectEffector,
   fire,
   handleMissileMouseDown,
@@ -393,19 +420,24 @@ const EffectorCard: React.FC<EffectorCardProps> = ({
   const isWarning = cer > 1 && cer <= 10;
   const isHeavyMissile = effId === 'MISSILE';
 
-  // Gating checks (Rules.md SC-10)
+  // Gating checks (Rules.md SC-10, Task 28 Fix G)
   const isTrackQualityBlocked = !selectedTrack || selectedTrack.q < 0.6;
   const isOutOfEnvelope =
     !selectedTrack ||
     selectedTrack.rangeKm * 1000 < eff.envelopeMinM ||
     selectedTrack.rangeKm * 1000 > eff.envelopeMaxM;
   const isRfJamBlocked = effId === 'RF_SOFTKILL' && sensorHealth?.RF === 'OUT';
-  const isHardBlocked = isTrackQualityBlocked || isOutOfEnvelope || isRfJamBlocked;
-  const hardBlockReason = getHardBlockReason(isTrackQualityBlocked, isOutOfEnvelope, isRfJamBlocked);
+  const isHardBlocked =
+    isSessionEnded || isTargetClosed || isTrackQualityBlocked || isOutOfEnvelope || isRfJamBlocked;
+  const hardBlockReason = isSessionEnded
+    ? 'SESSION ENDED'
+    : isTargetClosed
+    ? 'TARGET CLOSED'
+    : getHardBlockReason(isTrackQualityBlocked, isOutOfEnvelope, isRfJamBlocked);
 
   const isUnclassifiedWarning =
     selectedTrack?.label === 'UNKNOWN_EVIDENCE_INSUFFICIENT' || !selectedTrack?.label;
-  const isInRange = !isOutOfEnvelope && Boolean(selectedTrack);
+  const isInRange = !isSessionEnded && !isTargetClosed && !isOutOfEnvelope && Boolean(selectedTrack);
 
   return (
     <div
@@ -492,6 +524,7 @@ const EffectorCard: React.FC<EffectorCardProps> = ({
 };
 
 export const EngagementPanel: React.FC = () => {
+  const sessionStatus = useSessionStore((s) => s.sessionStatus);
   const selectedTrack = useSessionStore((s) => s.ui.selectedTrack);
   const activeEffector = useSessionStore((s) => s.ui.activeEffector);
   const sensorHealth = useSessionStore((s) => s.ui.sensorHealth);
@@ -502,6 +535,11 @@ export const EngagementPanel: React.FC = () => {
   const assess = useSessionStore((s) => s.assess);
   const designate = useSessionStore((s) => s.designate);
   const openAar = useSessionStore((s) => s.openAar);
+
+  const isSessionEnded = sessionStatus === 'COMPLETED' || sessionStatus === 'ABORTED';
+  const isTargetClosed = selectedTrack?.step === 'CLOSED';
+  const isEngagedOrAssess = selectedTrack?.step === 'ENGAGE' || selectedTrack?.step === 'ASSESS';
+  const isUnclassified = selectedTrack?.label === 'UNKNOWN_EVIDENCE_INSUFFICIENT';
 
   const [missileHoldProgress, setMissileHoldProgress] = useState<number>(0);
   const holdIntervalRef = useRef<number | null>(null);
@@ -602,7 +640,7 @@ export const EngagementPanel: React.FC = () => {
         return;
       }
       if (e.key.toLowerCase() === 'f') {
-        if (!e.repeat) {
+        if (!e.repeat && !isSessionEnded && !isTargetClosed) {
           if (activeEffector === 'MISSILE') {
             if (!isMissileHardBlocked) {
               handleMissileMouseDown();
@@ -631,12 +669,7 @@ export const EngagementPanel: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [activeEffector, selectedTrack, rangeM, fire, handleMissileMouseDown, handleMissileMouseUp]);
-
-  // Determine tactical assistant state
-  const isTargetClosed = selectedTrack?.step === 'CLOSED';
-  const isEngagedOrAssess = selectedTrack?.step === 'ENGAGE' || selectedTrack?.step === 'ASSESS';
-  const isUnclassified = selectedTrack?.label === 'UNKNOWN_EVIDENCE_INSUFFICIENT';
+  }, [activeEffector, selectedTrack, rangeM, fire, handleMissileMouseDown, handleMissileMouseUp, isSessionEnded, isTargetClosed]);
 
   return (
     <aside className="w-[320px] h-full bg-carbon-900 border-l border-line flex flex-col font-mono text-xs select-none">
@@ -657,6 +690,7 @@ export const EngagementPanel: React.FC = () => {
             selectedTrack={selectedTrack}
             trackRows={trackRows}
             isTargetClosed={isTargetClosed}
+            isSessionEnded={isSessionEnded}
             isEngagedOrAssess={isEngagedOrAssess}
             isUnclassified={isUnclassified}
             bestEffectorEntry={bestEffectorEntry}
@@ -676,8 +710,8 @@ export const EngagementPanel: React.FC = () => {
           </div>
           <div className="grid grid-cols-6 gap-0.5 border border-line p-0.5 bg-carbon-950 text-center font-display text-[9px]">
             {killChainSteps.map((step, idx) => {
-              const isPast = idx < activeIdx;
-              const isCurrent = idx === activeIdx;
+              const isPast = isTargetClosed || (activeIdx >= 0 && idx < activeIdx);
+              const isCurrent = !isTargetClosed && !isSessionEnded && idx === activeIdx;
               return (
                 <div
                   key={step}
@@ -741,7 +775,7 @@ export const EngagementPanel: React.FC = () => {
               return (
                 <button
                   key={cls}
-                  disabled={!selectedTrack}
+                  disabled={!selectedTrack || isSessionEnded || isTargetClosed}
                   onClick={() => selectedTrack && classify(selectedTrack.trackNo, cls)}
                   className={`px-1.5 py-1 text-left border text-[10px] font-mono truncate transition-colors ${
                     isSelected
@@ -762,11 +796,19 @@ export const EngagementPanel: React.FC = () => {
         <div className="space-y-1.5">
           <div className="flex justify-between items-center text-[10px] font-display text-text-dim tracking-wider">
             <span>[F] WEAPONS ENGAGEMENT SUITE:</span>
-            {selectedTrack && (
+            {isSessionEnded ? (
+              <span className="text-friend font-mono text-[9px] font-bold">
+                SECURED (COMPLETED)
+              </span>
+            ) : isTargetClosed ? (
+              <span className="text-friend font-mono text-[9px] font-bold">
+                TARGET CLOSED
+              </span>
+            ) : selectedTrack ? (
               <span className="text-phosphor font-mono text-[9px]">
                 {inRangeEffectors.length} IN RANGE
               </span>
-            )}
+            ) : null}
           </div>
 
           {/* Effector Buttons */}
@@ -784,6 +826,8 @@ export const EngagementPanel: React.FC = () => {
                 sensorHealth={sensorHealth}
                 cer={cer}
                 missileHoldProgress={missileHoldProgress}
+                isSessionEnded={isSessionEnded}
+                isTargetClosed={isTargetClosed}
                 selectEffector={selectEffector}
                 fire={fire}
                 handleMissileMouseDown={handleMissileMouseDown}
@@ -800,21 +844,21 @@ export const EngagementPanel: React.FC = () => {
           </div>
           <div className="grid grid-cols-3 gap-1">
             <button
-              disabled={!selectedTrack}
+              disabled={!selectedTrack || isSessionEnded || isTargetClosed}
               onClick={() => selectedTrack && assess(selectedTrack.trackNo, 'KILL')}
               className="py-1 border border-phosphor text-phosphor text-[10px] font-bold hover:bg-phosphorDim/30 disabled:opacity-40"
             >
               CONFIRM KILL
             </button>
             <button
-              disabled={!selectedTrack}
+              disabled={!selectedTrack || isSessionEnded || isTargetClosed}
               onClick={() => selectedTrack && assess(selectedTrack.trackNo, 'NO_KILL')}
               className="py-1 border border-amber text-amber text-[10px] font-bold hover:bg-amber/20 disabled:opacity-40"
             >
               NO KILL
             </button>
             <button
-              disabled={!selectedTrack}
+              disabled={!selectedTrack || isSessionEnded || isTargetClosed}
               onClick={() => selectedTrack && assess(selectedTrack.trackNo, 'UNKNOWN')}
               className="py-1 border border-text-dim text-text-dim text-[10px] hover:bg-carbon-800 disabled:opacity-40"
             >

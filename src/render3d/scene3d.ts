@@ -264,12 +264,15 @@ export class Scene3D {
    * Builds the tactical ground plane, concentric range rings, and cardinal axes.
    */
   private buildStaticGround(maxRangeM: number, rMinM: number): void {
-    // 0. Tactical Illumination (Ambient & Directional inside staticGroup for shader depth)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // 0. Tactical Illumination (Ambient & Dual Directional inside staticGroup for shader depth and airframe visibility)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     this.staticGroup.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
     dirLight.position.set(2000, 5000, 3000);
     this.staticGroup.add(dirLight);
+    const fillLight = new THREE.DirectionalLight(0xa0c4ff, 0.4);
+    fillLight.position.set(-2000, 3000, -3000);
+    this.staticGroup.add(fillLight);
 
     // 1. Tactical Grid
     const gridSize = maxRangeM * 2;
@@ -662,7 +665,9 @@ export class Scene3D {
       } else if (camera) {
         distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
       }
-      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, 32, true);
+      // Distinct readable scale: 34px for radar contact symbols, 48px for resolved optical airframes
+      const targetPixelSize = targetCategory === 'RADAR_SYMBOL' ? 34 : 48;
+      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, targetPixelSize, true);
 
       // Derive orientation from safe velocity vector with stable fallback
       const { headingRad, pitchRad } = calculateAircraftOrientation(track.vel, record.lastHeadingRad);

@@ -114,11 +114,11 @@ export const TopBar: React.FC = () => {
   return (
     <header className="h-[45px] w-full bg-carbon-900 border-b border-line px-3 flex items-center justify-between font-display text-xs select-none">
       {/* Left: ROE Active Banner */}
-      <div className="flex items-center gap-2 max-w-[45%] truncate">
-        <span className="text-[10px] tracking-wider text-text-dim px-1.5 py-0.5 bg-carbon-800 border border-line">
+      <div className="flex items-center gap-2 max-w-[45%] truncate" title={roeText}>
+        <span className="text-[10px] tracking-wider text-text-dim px-1.5 py-0.5 bg-carbon-800 border border-line shrink-0">
           ROE
         </span>
-        <span className="text-amber font-mono text-[11px] font-semibold tracking-wide truncate">
+        <span className="text-amber font-mono text-[11px] font-semibold tracking-wide truncate" title={roeText}>
           {roeText}
         </span>
       </div>

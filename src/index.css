@@ -4,6 +4,7 @@
 
 :root {
   --radar: min(640px, calc(100vh - 180px), calc(100vw - 580px));
+  --radar-w-3d: min(960px, calc(100vw - 720px));
 }
 
 html, body, #root {

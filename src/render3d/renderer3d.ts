@@ -48,6 +48,8 @@ export class Renderer3D {
   private onSelectEnvironmentCallback?: (info: EnvironmentObjectInfo | null) => void;
   private selectedTrackNo: string | null = null;
   private selectedEnvironmentObject: EnvironmentObjectInfo | null = null;
+  private lastFocusedTrackNo: string | null = null;
+  private pendingFocusTrackNo: string | null = null;
 
   private getTracks?: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null };
   private getCoverage?: () => SensorCoverageState;
@@ -216,7 +218,7 @@ export class Renderer3D {
         });
       }
 
-      // 6. Global Navigation Keyboard Handler (F to focus, Home to reset)
+      // 6. Global Navigation Keyboard Handler (G to focus, Home to reset)
       if (typeof window !== 'undefined') {
         const handleKeyDown = (e: KeyboardEvent) => {
           if (
@@ -228,7 +230,7 @@ export class Renderer3D {
           }
           if (e.key === 'Home') {
             this.resetCamera();
-          } else if (e.key === 'f' || e.key === 'F') {
+          } else if (e.key === 'g' || e.key === 'G') {
             this.focusSelection();
           }
         };
@@ -500,6 +502,14 @@ export class Renderer3D {
    * Updates tracks in the 3D scene from safe operator-facing views.
    */
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
+    if (selectedTrackNo && selectedTrackNo !== this.lastFocusedTrackNo) {
+      this.pendingFocusTrackNo = selectedTrackNo;
+      this.lastFocusedTrackNo = selectedTrackNo;
+    } else if (!selectedTrackNo) {
+      this.lastFocusedTrackNo = null;
+      this.pendingFocusTrackNo = null;
+    }
+
     this.selectedTrackNo = selectedTrackNo;
     const health = this.getSensorHealth ? this.getSensorHealth() : undefined;
     const simTimeData = this.getSimTime ? this.getSimTime() : undefined;
@@ -522,6 +532,17 @@ export class Renderer3D {
       mode: this.options.mode,
     };
     this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height, observationContext);
+
+    // Smoothly focus camera when target selection changes (Task 28 Fix D)
+    if (this.pendingFocusTrackNo) {
+      const record = this.scene3d.getTrackRecord(this.pendingFocusTrackNo);
+      if (record) {
+        const worldPos = new THREE.Vector3();
+        record.aircraftGroup.getWorldPosition(worldPos);
+        this.cameraController.focusOnPoint(worldPos, 350, true);
+        this.pendingFocusTrackNo = null;
+      }
+    }
   }
 
   /**

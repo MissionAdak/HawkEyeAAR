@@ -211,7 +211,7 @@ export function useConsoleKeyboard(
       if (handleEngagementKey(lower, e.repeat)) {
         return;
       }
-      if (lower === 'f' && !e.repeat && actions.focusSelection) {
+      if (lower === 'g' && !e.repeat && actions.focusSelection) {
         actions.focusSelection();
         return;
       }
