@@ -146,7 +146,25 @@ async function main() {
       }
       await saveScreenshot(page, 'spectrum_river_detail.png');
 
-      if (await obliqueBtn.isVisible().catch(() => false)) await obliqueBtn.click();
+      if (await obliqueBtn.isVisible().catch(() => false)) {
+        await obliqueBtn.click();
+        await wait(1500);
+      }
+
+      // Frame camera directly on the tactical through-truss bridge and flowing river crossing (X = -1400, Z = 500)
+      await page.evaluate(() => {
+        const r3d = window.__renderer3d;
+        if (r3d) {
+          const ctrl = r3d.getCameraController();
+          ctrl.target.set(-1400, 10, 500);
+          ctrl.spherical.radius = 580;
+          ctrl.spherical.phi = Math.PI / 3.1;
+          ctrl.spherical.theta = Math.PI / 3.1;
+          ctrl.updateCamera();
+        }
+      });
+      await wait(2500);
+      await saveScreenshot(page, 'spectrum_bridge_and_road_detail.png');
     }
 
     if (scen.id === 'PROCEDURAL-1') {
@@ -162,21 +180,19 @@ async function main() {
         await wait(1500);
       }
 
-      // Pan camera directly toward the western beach and coconut palms
-      const canvas = page.locator('canvas').first();
-      const box = await canvas.boundingBox();
-      if (box) {
-        await page.keyboard.down('Shift');
-        await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
-        await page.mouse.down({ button: 'left' });
-        await page.mouse.move(box.x + box.width * 0.85, box.y + box.height * 0.5, { steps: 15 });
-        await page.mouse.up({ button: 'left' });
-        await page.keyboard.up('Shift');
-        await wait(500);
-        // Zoom in to clearly resolve the yellow sand beach and coconut palms
-        await page.mouse.wheel(0, -1800);
-        await wait(2000);
-      }
+      // Frame camera directly on the yellow sand beach, coconut palms and ocean shoreline (X = -1450)
+      await page.evaluate(() => {
+        const r3d = window.__renderer3d;
+        if (r3d) {
+          const ctrl = r3d.getCameraController();
+          ctrl.target.set(-1450, 2, 0);
+          ctrl.spherical.radius = 950;
+          ctrl.spherical.phi = Math.PI / 3.4;
+          ctrl.spherical.theta = Math.PI * 0.75;
+          ctrl.updateCamera();
+        }
+      });
+      await wait(2500);
       await saveScreenshot(page, 'coastal_beach_and_ocean_detail.png');
     }
 

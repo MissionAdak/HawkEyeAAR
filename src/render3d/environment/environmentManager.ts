@@ -19,7 +19,12 @@ export class EnvironmentManager {
 
   private readonly objectsMap: Map<string, EnvironmentObjectInfo> = new Map();
   private readonly selectableMeshes: THREE.Object3D[] = [];
-  private readonly disposables: { geometries: THREE.BufferGeometry[]; materials: THREE.Material[] }[] = [];
+  private readonly disposables: {
+    geometries: THREE.BufferGeometry[];
+    materials: THREE.Material[];
+    textures?: THREE.Texture[];
+  }[] = [];
+  private waterUpdater?: (simMs: number) => void;
 
   constructor(parent: THREE.Group, descriptor: EnvironmentDescriptor, scene?: THREE.Scene) {
     this.descriptor = descriptor;
@@ -42,6 +47,9 @@ export class EnvironmentManager {
     waterRes.objects.forEach((obj) => this.objectsMap.set(obj.id, obj));
     this.selectableMeshes.push(...waterRes.selectableMeshes);
     this.disposables.push(waterRes.disposables);
+    if (waterRes.update) {
+      this.waterUpdater = waterRes.update;
+    }
 
     // 3. Build Buildings, Towers & Installations
     if (!terrainRes.groundMesh) {
@@ -206,10 +214,11 @@ export class EnvironmentManager {
   }
 
   /**
-   * Updates dynamic weather simulation.
+   * Updates dynamic weather simulation and dynamic water flow.
    */
   public update(simMs: number, chaosList?: ChaosSpec[]): void {
     this.weather.update(simMs, chaosList);
+    this.waterUpdater?.(simMs);
   }
 
   public setLowFidelity(lowFi: boolean): void {
@@ -222,6 +231,7 @@ export class EnvironmentManager {
     for (const d of this.disposables) {
       d.geometries.forEach((g) => g.dispose());
       d.materials.forEach((m) => m.dispose());
+      d.textures?.forEach((t) => t.dispose());
     }
     this.disposables.length = 0;
     this.selectableMeshes.length = 0;

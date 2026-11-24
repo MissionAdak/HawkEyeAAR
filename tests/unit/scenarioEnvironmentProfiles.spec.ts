@@ -200,7 +200,7 @@ describe('TASK 30 — Scenario-Specific 3D Environments & Distinct Tactical Maps
   });
 
   describe('4. Procedural Water Subsystem Geometry & Features', () => {
-    it('creates continuous winding river and tactical bridges for SPECTRUM-1', () => {
+    it('creates continuous winding river, dynamic water flow animation, tactical bridges, and connecting roads for SPECTRUM-1', () => {
       const { spec } = loadCatalogScenario('SPECTRUM-1');
       const desc = getScenarioEnvironmentDescriptor(spec.id, spec);
       const waterRes = buildProceduralWater(desc);
@@ -209,10 +209,24 @@ describe('TASK 30 — Scenario-Specific 3D Environments & Distinct Tactical Maps
       const river = waterRes.objects.find((o) => o.id === 'WATER-RIVER-VALLEY');
       expect(river).toBeDefined();
       expect(river?.name).toContain('River');
-      expect(waterRes.group.children.length).toBeGreaterThan(1); // Water mesh + bank mesh + bridges
+
+      // Verify bridges & connecting highways
+      const northBridge = waterRes.objects.find((o) => o.id === 'BRIDGE-TACTICAL-NORTH');
+      const southBridge = waterRes.objects.find((o) => o.id === 'BRIDGE-TACTICAL-SOUTH');
+      const highway = waterRes.objects.find((o) => o.id === 'ROAD-TRANS-VALLEY-HIGHWAY');
+      expect(northBridge).toBeDefined();
+      expect(southBridge).toBeDefined();
+      expect(highway).toBeDefined();
+
+      // Verify dynamic water flow update function
+      expect(typeof waterRes.update).toBe('function');
+      expect(() => waterRes.update?.(1500)).not.toThrow();
+
+      expect(waterRes.group.children.length).toBeGreaterThan(2); // Water mesh + bank mesh + bridges + roads
 
       waterRes.disposables.geometries.forEach((g) => g.dispose());
       waterRes.disposables.materials.forEach((m) => m.dispose());
+      waterRes.disposables.textures?.forEach((t) => t.dispose());
     });
 
     it('creates ocean plane, beach shoreline, and coastal observation post for COASTAL_AIRFIELD', () => {

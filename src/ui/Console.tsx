@@ -645,6 +645,9 @@ let toastCounter = 0;
       xrManagerRef.current = null;
       renderer3dRef.current?.dispose();
       renderer3dRef.current = null;
+      if (typeof window !== 'undefined') {
+        delete (window as unknown as Record<string, unknown>).__renderer3d;
+      }
     };
   }, []);
 
@@ -798,6 +801,9 @@ let toastCounter = 0;
     r3d.setTargetDisplayMode(targetDisplayMode);
     r3d.setActiveSensor(activeSensor);
     renderer3dRef.current = r3d;
+    if (typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>).__renderer3d = r3d;
+    }
     return r3d;
   };
 
@@ -846,6 +852,9 @@ let toastCounter = 0;
     if (viewMode === '3D') {
       xrManagerRef.current?.exitVR();
       renderer3dRef.current?.stop();
+      if (typeof window !== 'undefined') {
+        delete (window as unknown as Record<string, unknown>).__renderer3d;
+      }
       setViewMode('2D');
       return;
     }
