@@ -28,6 +28,14 @@ export function getTerrainElevation(simX: number, simY: number, preset: Environm
       const ridgeFactor = Math.sin(threeX * 0.0012) * Math.cos(threeZ * 0.0009);
       return Math.max(0, ridgeFactor * 180 + (distFromCenter - 1200) * 0.035);
     }
+  } else if (preset === 'URBAN_DENSE') {
+    const threeX = simX;
+    const threeZ = -simY;
+    const distFromCenter = Math.hypot(threeX, threeZ);
+    if (distFromCenter > 2200) {
+      const ridgeFactor = Math.sin(threeX * 0.0010 + 0.5) * Math.cos(threeZ * 0.0008 - 0.3);
+      return Math.max(0, ridgeFactor * 140 + (distFromCenter - 2200) * 0.025);
+    }
   }
   return 0;
 }
@@ -197,6 +205,167 @@ function buildCoastalAirfieldTerrain(
   return landMesh;
 }
 
+function buildUrbanDenseTerrain(
+  terrainSize: number,
+  _mapRadiusM: number,
+  preset: EnvironmentPreset,
+  group: THREE.Group,
+  geometries: THREE.BufferGeometry[],
+  materials: THREE.Material[],
+  objects: EnvironmentObjectInfo[]
+): THREE.Mesh {
+  // 1. Terrain Mesh with Outer Sector Rolling Hills
+  const segments = 36;
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
+  groundGeom.rotateX(-Math.PI / 2);
+
+  const pos = groundGeom.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const distFromCenter = Math.hypot(x, z);
+
+    if (distFromCenter > 2200) {
+      const ridgeFactor = Math.sin(x * 0.0010 + 0.5) * Math.cos(z * 0.0008 - 0.3);
+      const hillElevation = Math.max(0, ridgeFactor * 140 + (distFromCenter - 2200) * 0.025);
+      pos.setY(i, hillElevation);
+    } else {
+      pos.setY(i, 0);
+    }
+  }
+  groundGeom.computeVertexNormals();
+  geometries.push(groundGeom);
+
+  const groundMat = new THREE.MeshLambertMaterial({
+    color: 0x12171e,
+    wireframe: false,
+    flatShading: true,
+  });
+  materials.push(groundMat);
+
+  const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+  groundMesh.position.y = -1;
+  group.add(groundMesh);
+
+  // Outer elevation contour lines
+  const contourMat = new THREE.LineBasicMaterial({
+    color: COLOR_PHOSPHOR_DIM,
+    transparent: true,
+    opacity: 0.35,
+  });
+  materials.push(contourMat);
+  const contourLines = new THREE.LineSegments(new THREE.WireframeGeometry(groundGeom), contourMat);
+  contourLines.position.y = -0.5;
+  group.add(contourLines);
+
+  // 2. Tactical Paved Highway & Road Network (Asphalt + Dashed Lines + Curbs)
+  const asphaltMat = new THREE.MeshLambertMaterial({ color: 0x1c232c, flatShading: true });
+  const markingMat = new THREE.LineBasicMaterial({ color: 0xdde2ea, transparent: true, opacity: 0.9 });
+  const markingAmberMat = new THREE.LineBasicMaterial({ color: 0xffb700, transparent: true, opacity: 0.85 });
+  materials.push(asphaltMat, markingMat, markingAmberMat);
+
+  // North-South Expressway (X = 350m, length 7600m, width 26m)
+  const nsRoadGeom = new THREE.PlaneGeometry(26, 7600);
+  nsRoadGeom.rotateX(-Math.PI / 2);
+  geometries.push(nsRoadGeom);
+  const nsRoadMesh = new THREE.Mesh(nsRoadGeom, asphaltMat);
+  nsRoadMesh.position.set(350, 0.05, 0);
+  group.add(nsRoadMesh);
+
+  // NS Centerline dashed markings
+  const nsMarkPoints: THREE.Vector3[] = [];
+  for (let z = -3700; z <= 3700; z += 60) {
+    nsMarkPoints.push(new THREE.Vector3(350, 0.15, z), new THREE.Vector3(350, 0.15, z + 30));
+  }
+  const nsMarkGeom = new THREE.BufferGeometry().setFromPoints(nsMarkPoints);
+  geometries.push(nsMarkGeom);
+  group.add(new THREE.LineSegments(nsMarkGeom, markingMat));
+
+  // East-West Metropolitan Highway (Z = -300m, length 7600m, width 26m)
+  const ewRoadGeom = new THREE.PlaneGeometry(7600, 26);
+  ewRoadGeom.rotateX(-Math.PI / 2);
+  geometries.push(ewRoadGeom);
+  const ewRoadMesh = new THREE.Mesh(ewRoadGeom, asphaltMat);
+  ewRoadMesh.position.set(0, 0.05, -300);
+  group.add(ewRoadMesh);
+
+  // EW Centerline dashed markings
+  const ewMarkPoints: THREE.Vector3[] = [];
+  for (let x = -3700; x <= 3700; x += 60) {
+    ewMarkPoints.push(new THREE.Vector3(x, 0.15, -300), new THREE.Vector3(x + 30, 0.15, -300));
+  }
+  const ewMarkGeom = new THREE.BufferGeometry().setFromPoints(ewMarkPoints);
+  geometries.push(ewMarkGeom);
+  group.add(new THREE.LineSegments(ewMarkGeom, markingMat));
+
+  // Diagonal Arterial Corridor to East Urban Zone (connecting center toward U1 district)
+  const diagRoadGeom = new THREE.PlaneGeometry(22, 3400);
+  diagRoadGeom.rotateX(-Math.PI / 2);
+  geometries.push(diagRoadGeom);
+  const diagRoadMesh = new THREE.Mesh(diagRoadGeom, asphaltMat);
+  diagRoadMesh.rotation.y = Math.PI / 4;
+  diagRoadMesh.position.set(1300, 0.04, -1300);
+  group.add(diagRoadMesh);
+
+  // Perimeter Ring Highway (Radius = 1400m, Width = 22m)
+  const ringGeom = new THREE.RingGeometry(1389, 1411, 64);
+  ringGeom.rotateX(-Math.PI / 2);
+  geometries.push(ringGeom);
+  const ringMesh = new THREE.Mesh(ringGeom, asphaltMat);
+  ringMesh.position.set(0, 0.03, 0);
+  group.add(ringMesh);
+
+  // Ring Highway Amber Centerline
+  const ringDashPoints: THREE.Vector3[] = [];
+  for (let i = 0; i < 64; i += 2) {
+    const th1 = (i / 64) * Math.PI * 2;
+    const th2 = ((i + 1) / 64) * Math.PI * 2;
+    ringDashPoints.push(
+      new THREE.Vector3(Math.cos(th1) * 1400, 0.12, Math.sin(th1) * 1400),
+      new THREE.Vector3(Math.cos(th2) * 1400, 0.12, Math.sin(th2) * 1400)
+    );
+  }
+  const ringDashGeom = new THREE.BufferGeometry().setFromPoints(ringDashPoints);
+  geometries.push(ringDashGeom);
+  group.add(new THREE.LineSegments(ringDashGeom, markingAmberMat));
+
+  objects.push(
+    {
+      id: 'TERRAIN-NORTH-RIDGE',
+      name: 'Outer Sector Ridgelines & Hill Formations',
+      category: 'RIDGE',
+      preset,
+      position: { x: 0, y: 3000, z: 140 },
+      heightM: 140,
+      elevationM: 140,
+      isObstructionEnvelope: false,
+      description: 'Peripheral rolling hill ridges providing elevated low-altitude topography.',
+    },
+    {
+      id: 'HIGHWAY-METRO-NS',
+      name: 'North-South Arterial Expressway',
+      category: 'AIRFIELD',
+      preset,
+      position: { x: 350, y: 0, z: 0 },
+      heightM: 1,
+      isObstructionEnvelope: false,
+      description: 'Dual-carriageway paved military transport corridor with lane markings.',
+    },
+    {
+      id: 'HIGHWAY-RING-PERIMETER',
+      name: 'Metropolitan Perimeter Ring Highway',
+      category: 'AIRFIELD',
+      preset,
+      position: { x: 0, y: 1400, z: 0 },
+      heightM: 1,
+      isObstructionEnvelope: false,
+      description: '1,400m perimeter beltway encircling inner defense zone.',
+    }
+  );
+
+  return groundMesh;
+}
+
 function buildFlatTacticalTerrain(
   terrainSize: number,
   mapRadiusM: number,
@@ -330,6 +499,8 @@ export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): Terra
     primaryGroundMesh = buildMountainRidgeTerrain(terrainSize, preset, group, geometries, materials, objects);
   } else if (preset === 'COASTAL_AIRFIELD') {
     primaryGroundMesh = buildCoastalAirfieldTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (preset === 'URBAN_DENSE') {
+    primaryGroundMesh = buildUrbanDenseTerrain(terrainSize, mapRadiusM, preset, group, geometries, materials, objects);
   } else {
     primaryGroundMesh = buildFlatTacticalTerrain(terrainSize, mapRadiusM, preset, group, geometries, materials);
   }

@@ -121,23 +121,23 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
     }
   }
 
-  // 2. Additional environmental trees for presets
-  if (preset === 'FOREST_VALLEY' || preset === 'SUBURBAN' || preset === 'OPEN_RURAL') {
+  // 2. Additional environmental trees for presets (including urban parks, boulevards & hill slopes)
+  if (preset === 'FOREST_VALLEY' || preset === 'SUBURBAN' || preset === 'OPEN_RURAL' || preset === 'URBAN_DENSE') {
     let localSeed = Math.abs(seed + 997);
     const lcg = (): number => {
       localSeed = (localSeed * 1664525 + 1013904223) % 4294967296;
       return localSeed / 4294967296;
     };
 
-    const clusters = preset === 'FOREST_VALLEY' ? 5 : 2;
+    const clusters = preset === 'FOREST_VALLEY' ? 5 : preset === 'URBAN_DENSE' ? 4 : 2;
     for (let c = 0; c < clusters; c++) {
       const clusterAngle = (c / clusters) * Math.PI * 2 + lcg() * 0.5;
-      const clusterDist = 1400 + lcg() * 1800;
+      const clusterDist = preset === 'URBAN_DENSE' ? 900 + lcg() * 1200 : 1400 + lcg() * 1800;
       const clusterSimX = Math.cos(clusterAngle) * clusterDist;
       const clusterSimY = Math.sin(clusterAngle) * clusterDist;
       const clusterThree = toThree(clusterSimX, clusterSimY, 0);
 
-      const clusterTreeCount = 15;
+      const clusterTreeCount = preset === 'URBAN_DENSE' ? 18 : 15;
       for (let t = 0; t < clusterTreeCount; t++) {
         const offX = (lcg() - 0.5) * 160;
         const offZ = (lcg() - 0.5) * 160;
@@ -145,7 +145,7 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
           x: clusterThree.x + offX,
           z: clusterThree.z + offZ,
           scale: 0.75 + lcg() * 0.45,
-          isConifer: lcg() > 0.5,
+          isConifer: preset === 'URBAN_DENSE' ? lcg() > 0.7 : lcg() > 0.5,
         });
       }
 
@@ -160,13 +160,15 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
 
       const clInfo: EnvironmentObjectInfo = {
         id: `VEGETATION-CLUSTER-${c + 1}`,
-        name: `Vegetation Cluster ${c + 1}`,
+        name: preset === 'URBAN_DENSE' ? `Urban Park Grove & Green Belt ${c + 1}` : `Vegetation Cluster ${c + 1}`,
         category: 'VEGETATION',
         preset,
         position: { x: clusterSimX, y: clusterSimY, z: 0 },
         heightM: 16,
         isObstructionEnvelope: false,
-        description: 'Scattered tree cluster along tactical sector boundaries.',
+        description: preset === 'URBAN_DENSE'
+          ? 'Metropolitan urban park grove and roadside tree canopy.'
+          : 'Scattered tree cluster along tactical sector boundaries.',
       };
       clMesh.userData = {
         isEnvironmentObject: true,
@@ -175,6 +177,26 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
       };
       objects.push(clInfo);
       selectableMeshes.push(clMesh);
+    }
+
+    // For URBAN_DENSE, also add tree-lined avenues along primary roadways
+    if (preset === 'URBAN_DENSE') {
+      // Along North-South Expressway (X = 350m, boulevard margins at X=324 and X=376)
+      for (let z = -2400; z <= 2400; z += 90) {
+        if (Math.abs(z + 300) < 60) continue; // Skip intersection with EW highway
+        treePositions.push(
+          { x: 324, z, scale: 0.75, isConifer: false },
+          { x: 376, z, scale: 0.75, isConifer: false }
+        );
+      }
+      // Along East-West Metropolitan Highway (Z = -300m, margins at Z=-276 and Z=-324)
+      for (let x = -2400; x <= 2400; x += 90) {
+        if (Math.abs(x - 350) < 60) continue; // Skip intersection with NS highway
+        treePositions.push(
+          { x, z: -276, scale: 0.75, isConifer: false },
+          { x, z: -324, scale: 0.75, isConifer: false }
+        );
+      }
     }
   }
 

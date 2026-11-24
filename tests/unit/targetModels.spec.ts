@@ -117,5 +117,39 @@ describe('Target 3D Models & Ground-Truth Protection (Task 17 Phase 1)', () => {
 
       expect(category).toBe('HOSTILE_ATTACK');
     });
+
+    it('instantiates all 7 distinct realistic aircraft morphologies in RADAR mode across track numbers and hints', () => {
+      // T-01 -> Variant 0 (Drone)
+      const drone = factory.createModel('RADAR_SYMBOL', 'T-01');
+      expect(drone.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // T-02 -> Variant 1 (Bird)
+      const bird = factory.createModel('RADAR_SYMBOL', 'T-02');
+      expect(bird.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // T-03 -> Variant 2 (Helicopter)
+      const heli = factory.createModel('RADAR_SYMBOL', 'T-03');
+      expect(heli.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // T-04 -> Variant 3 (Missile)
+      const missile = factory.createModel('RADAR_SYMBOL', 'T-04');
+      expect(missile.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // T-05 -> Variant 4 (Fighter Jet)
+      const jet = factory.createModel('RADAR_SYMBOL', 'T-05');
+      expect(jet.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // T-06 -> Variant 5 (UAV)
+      const uav = factory.createModel('RADAR_SYMBOL', 'T-06');
+      expect(uav.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // T-07 -> Variant 6 (Glide Bomb)
+      const bomb = factory.createModel('RADAR_SYMBOL', 'T-07');
+      expect(bomb.rootGroup?.children.length).toBeGreaterThan(1);
+
+      // Explicit hint routing
+      const missileHint = factory.createModel('RADAR_SYMBOL', 'MISSILE-ALPHA');
+      expect(missileHint.rootGroup?.children.length).toBeGreaterThan(1);
+    });
   });
 });

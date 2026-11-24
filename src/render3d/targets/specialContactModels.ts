@@ -222,14 +222,168 @@ export function buildRadarContactSymbolModel(palette: TargetModelPalette, trackN
   const accentMat = new THREE.MeshBasicMaterial({ color: 0x94A3B8 });     // Titanium highlight
   materials.push(airframeMat, accentMat);
 
-  // 3. Select distinct airframe morphology based on track identifier
-  const trackNum = trackNo ? (parseInt(trackNo.replace(/\D/g, ''), 10) || 1) : 1;
-  const variant = trackNum % 4;
+  // 3. Select distinct airframe morphology based on track identifier and hints:
+  // Variant 0: Tactical Multirotor Attack Drone (FPV X-frame + rotors + camera)
+  // Variant 1: Avian Contact (Flapping curved wings + fan tail + organic body)
+  // Variant 2: Tactical Heavy Rotary-Wing (Helicopter with main & tail rotor discs)
+  // Variant 3: Supersonic Strike Penetrator (Missile with canards & cruciform tail fins)
+  // Variant 4: Combat Air Patrol Interceptor (Fighter Jet with swept wings & twin canted fins)
+  // Variant 5: Tactical Twin-Boom Pusher UAV (High-aspect glider wings + sensor turret)
+  // Variant 6: Delta-Wing Munition / Standoff Glide Bomb (Delta wing + winglets + seeker)
+  let variant = 0;
+  const upperTrack = (trackNo ?? '').toUpperCase();
+  if (upperTrack.includes('BIRD') || upperTrack.startsWith('B-') || upperTrack.includes('AVIAN')) {
+    variant = 1;
+  } else if (upperTrack.includes('HELI') || upperTrack.includes('COPTER')) {
+    variant = 2;
+  } else if (upperTrack.includes('MISSILE') || upperTrack.startsWith('M-')) {
+    variant = 3;
+  } else if (upperTrack.includes('JET') || upperTrack.includes('FIGHTER') || upperTrack.startsWith('J-')) {
+    variant = 4;
+  } else if (upperTrack.includes('UAV') || upperTrack.startsWith('U-')) {
+    variant = 5;
+  } else if (upperTrack.includes('BOMB') || upperTrack.includes('MUNITION') || upperTrack.startsWith('L-')) {
+    variant = 6;
+  } else if (upperTrack.includes('DRONE') || upperTrack.includes('FPV') || upperTrack.startsWith('H-1')) {
+    variant = 0;
+  } else {
+    const trackNum = trackNo ? (parseInt(trackNo.replace(/\D/g, ''), 10) || 1) : 1;
+    variant = (trackNum - 1) % 7;
+  }
 
   let accentMesh: THREE.Mesh;
 
   if (variant === 0) {
-    // --- Variant 0: Fixed-Wing Jet / Fast Attack Interceptor ---
+    // --- Variant 0: Tactical Multirotor Attack Drone ---
+    const podGeom = new THREE.BoxGeometry(0.48, 0.22, 0.72);
+    geometries.push(podGeom);
+    const podMesh = new THREE.Mesh(podGeom, airframeMat);
+    group.add(podMesh);
+
+    const frameGeom = createQuadcopterFrameGeometry(1.9, 0.04);
+    geometries.push(frameGeom);
+    const frameMesh = new THREE.LineSegments(frameGeom, airframeMat);
+    group.add(frameMesh);
+
+    const rotorsGeom = createRotorDiscsGeometry(1.9, 0.38);
+    geometries.push(rotorsGeom);
+    const rotorsMesh = new THREE.Mesh(rotorsGeom, accentMat);
+    group.add(rotorsMesh);
+
+    const cameraGeom = new THREE.SphereGeometry(0.14, 8, 6);
+    geometries.push(cameraGeom);
+    accentMesh = new THREE.Mesh(cameraGeom, accentMat);
+    accentMesh.position.set(0, -0.12, -0.42);
+    group.add(accentMesh);
+  } else if (variant === 1) {
+    // --- Variant 1: Avian Biological Contact (Bird) ---
+    const birdGeom = createBirdBodyGeometry();
+    geometries.push(birdGeom);
+    const bodyMeshBird = new THREE.Mesh(birdGeom, airframeMat);
+    group.add(bodyMeshBird);
+
+    const headGeom = new THREE.SphereGeometry(0.14, 6, 6);
+    geometries.push(headGeom);
+    accentMesh = new THREE.Mesh(headGeom, accentMat);
+    accentMesh.position.set(0, 0.15, -0.42);
+    group.add(accentMesh);
+  } else if (variant === 2) {
+    // --- Variant 2: Tactical Heavy Rotary-Wing (Helicopter) ---
+    const cabinGeom = new THREE.CylinderGeometry(0.35, 0.40, 2.2, 8);
+    cabinGeom.rotateX(Math.PI / 2);
+    geometries.push(cabinGeom);
+    const cabinMesh = new THREE.Mesh(cabinGeom, airframeMat);
+    group.add(cabinMesh);
+
+    // Overhead rotor mast & dual blade rotor disc
+    const mastGeom = new THREE.CylinderGeometry(0.08, 0.08, 0.45, 6);
+    geometries.push(mastGeom);
+    const mastMesh = new THREE.Mesh(mastGeom, accentMat);
+    mastMesh.position.set(0, 0.45, -0.1);
+    group.add(mastMesh);
+
+    const rotorDiscGeom = new THREE.CircleGeometry(1.7, 16);
+    rotorDiscGeom.rotateX(-Math.PI / 2);
+    geometries.push(rotorDiscGeom);
+    const rotorDisc = new THREE.Mesh(rotorDiscGeom, accentMat);
+    rotorDisc.position.set(0, 0.68, -0.1);
+    group.add(rotorDisc);
+
+    // Tail boom & vertical tail rotor
+    const boomGeom = new THREE.CylinderGeometry(0.12, 0.16, 1.8, 6);
+    boomGeom.rotateX(Math.PI / 2);
+    geometries.push(boomGeom);
+    const boomMesh = new THREE.Mesh(boomGeom, airframeMat);
+    boomMesh.position.set(0, 0.10, 1.6);
+    group.add(boomMesh);
+
+    const finGeom = new THREE.BoxGeometry(0.04, 0.65, 0.45);
+    geometries.push(finGeom);
+    const finMesh = new THREE.Mesh(finGeom, accentMat);
+    finMesh.position.set(0, 0.35, 2.4);
+    group.add(finMesh);
+
+    const tailRotorGeom = new THREE.CircleGeometry(0.40, 12);
+    geometries.push(tailRotorGeom);
+    const tailRotor = new THREE.Mesh(tailRotorGeom, accentMat);
+    tailRotor.position.set(0.12, 0.38, 2.45);
+    group.add(tailRotor);
+
+    const noseCockpitGeom = new THREE.SphereGeometry(0.25, 8, 6);
+    geometries.push(noseCockpitGeom);
+    accentMesh = new THREE.Mesh(noseCockpitGeom, accentMat);
+    accentMesh.position.set(0, 0.08, -1.1);
+    group.add(accentMesh);
+  } else if (variant === 3) {
+    // --- Variant 3: Supersonic Strike Penetrator (Missile) ---
+    const fuselageGeom = new THREE.CylinderGeometry(0.18, 0.18, 2.8, 8);
+    fuselageGeom.rotateX(Math.PI / 2);
+    geometries.push(fuselageGeom);
+    const fuselageMesh = new THREE.Mesh(fuselageGeom, airframeMat);
+    group.add(fuselageMesh);
+
+    const noseConeGeom = new THREE.ConeGeometry(0.18, 0.70, 8);
+    noseConeGeom.rotateX(-Math.PI / 2);
+    geometries.push(noseConeGeom);
+    const noseCone = new THREE.Mesh(noseConeGeom, airframeMat);
+    noseCone.position.set(0, 0, -1.75);
+    group.add(noseCone);
+
+    // Forward steering canards (cruciform)
+    const canardHGeom = new THREE.BoxGeometry(0.9, 0.02, 0.25);
+    geometries.push(canardHGeom);
+    const canardH = new THREE.Mesh(canardHGeom, accentMat);
+    canardH.position.set(0, 0, -1.0);
+    group.add(canardH);
+
+    const canardVGeom = new THREE.BoxGeometry(0.02, 0.9, 0.25);
+    geometries.push(canardVGeom);
+    const canardV = new THREE.Mesh(canardVGeom, accentMat);
+    canardV.position.set(0, 0, -1.0);
+    group.add(canardV);
+
+    // Aft stabilizer delta fins (cruciform)
+    const tailFinHGeom = new THREE.BoxGeometry(1.4, 0.03, 0.55);
+    geometries.push(tailFinHGeom);
+    const tailFinH = new THREE.Mesh(tailFinHGeom, airframeMat);
+    tailFinH.position.set(0, 0, 1.0);
+    group.add(tailFinH);
+
+    const tailFinVGeom = new THREE.BoxGeometry(0.03, 1.4, 0.55);
+    geometries.push(tailFinVGeom);
+    const tailFinV = new THREE.Mesh(tailFinVGeom, airframeMat);
+    tailFinV.position.set(0, 0, 1.0);
+    group.add(tailFinV);
+
+    // Rocket motor nozzle accent
+    const nozzleGeom = new THREE.CylinderGeometry(0.14, 0.16, 0.25, 8);
+    nozzleGeom.rotateX(Math.PI / 2);
+    geometries.push(nozzleGeom);
+    accentMesh = new THREE.Mesh(nozzleGeom, accentMat);
+    accentMesh.position.set(0, 0, 1.5);
+    group.add(accentMesh);
+  } else if (variant === 4) {
+    // --- Variant 4: Combat Air Patrol Interceptor (Fighter Jet) ---
     const airframeGeom = createAircraftBodyGeometry();
     geometries.push(airframeGeom);
     const airframeMesh = new THREE.Mesh(airframeGeom, airframeMat);
@@ -241,8 +395,23 @@ export function buildRadarContactSymbolModel(palette: TargetModelPalette, trackN
     accentMesh = new THREE.Mesh(canopyGeom, accentMat);
     accentMesh.scale.set(0.95, 0.95, 0.95);
     group.add(accentMesh);
-  } else if (variant === 1) {
-    // --- Variant 1: Tactical Twin-Boom Pusher UAV ---
+
+    // Twin canted vertical stabilizers
+    const leftFinGeom = new THREE.BoxGeometry(0.04, 0.70, 0.50);
+    geometries.push(leftFinGeom);
+    const leftFin = new THREE.Mesh(leftFinGeom, accentMat);
+    leftFin.rotation.z = -0.22;
+    leftFin.position.set(-0.45, 0.40, 0.85);
+    group.add(leftFin);
+
+    const rightFinGeom = new THREE.BoxGeometry(0.04, 0.70, 0.50);
+    geometries.push(rightFinGeom);
+    const rightFin = new THREE.Mesh(rightFinGeom, accentMat);
+    rightFin.rotation.z = 0.22;
+    rightFin.position.set(0.45, 0.40, 0.85);
+    group.add(rightFin);
+  } else if (variant === 5) {
+    // --- Variant 5: Tactical Twin-Boom Pusher UAV ---
     const podGeom = new THREE.CylinderGeometry(0.26, 0.30, 1.6, 8);
     podGeom.rotateX(Math.PI / 2);
     geometries.push(podGeom);
@@ -273,30 +442,8 @@ export function buildRadarContactSymbolModel(palette: TargetModelPalette, trackN
     accentMesh = new THREE.Mesh(sensorTurretGeom, accentMat);
     accentMesh.position.set(0, -0.16, -0.75);
     group.add(accentMesh);
-  } else if (variant === 2) {
-    // --- Variant 2: Tactical Multirotor Quadcopter Drone ---
-    const podGeom = new THREE.BoxGeometry(0.48, 0.22, 0.72);
-    geometries.push(podGeom);
-    const podMesh = new THREE.Mesh(podGeom, airframeMat);
-    group.add(podMesh);
-
-    const frameGeom = createQuadcopterFrameGeometry(1.9, 0.04);
-    geometries.push(frameGeom);
-    const frameMesh = new THREE.LineSegments(frameGeom, airframeMat);
-    group.add(frameMesh);
-
-    const rotorsGeom = createRotorDiscsGeometry(1.9, 0.38);
-    geometries.push(rotorsGeom);
-    const rotorsMesh = new THREE.Mesh(rotorsGeom, accentMat);
-    group.add(rotorsMesh);
-
-    const cameraGeom = new THREE.SphereGeometry(0.14, 8, 6);
-    geometries.push(cameraGeom);
-    accentMesh = new THREE.Mesh(cameraGeom, accentMat);
-    accentMesh.position.set(0, -0.12, -0.42);
-    group.add(accentMesh);
   } else {
-    // --- Variant 3: Delta-Wing Loitering Munition / Fast UAS ---
+    // --- Variant 6: Delta-Wing Munition / Standoff Glide Bomb ---
     const bodyGeom = new THREE.ConeGeometry(0.38, 2.0, 6);
     bodyGeom.rotateX(-Math.PI / 2);
     geometries.push(bodyGeom);

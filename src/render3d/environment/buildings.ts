@@ -5,7 +5,6 @@ import { toThree } from '../coords';
 import { getTerrainElevation } from './terrain';
 
 // Tactical colors
-const COLOR_LINE = 0x262b33;
 const COLOR_PHOSPHOR = 0x00ff66;
 
 export interface BuildingsBuildResult {
@@ -683,6 +682,98 @@ function buildPerimeterMasts(ctx: BuildingContext): void {
   }
 }
 
+function buildUrbanInfrastructure(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding, sampleGround } = ctx;
+
+  // 1. West Sector Logistics Warehousing Complex
+  const warehouses = [
+    { x: -1300, y: 350, sizeX: 80, sizeZ: 40, height: 16, name: 'Western Logistics Depot A' },
+    { x: -1300, y: 500, sizeX: 80, sizeZ: 40, height: 16, name: 'Western Logistics Depot B' },
+    { x: -1450, y: 425, sizeX: 50, sizeZ: 70, height: 18, name: 'Air Defense Supply Warehouse' },
+  ];
+
+  for (let i = 0; i < warehouses.length; i++) {
+    const w = warehouses[i];
+    const wGeom = new THREE.BoxGeometry(w.sizeX, w.height, w.sizeZ);
+    geometries.push(wGeom);
+    const wMesh = new THREE.Mesh(wGeom, mats.bldMatHangar);
+    const wThree = toThree(w.x, w.y, 0);
+    wMesh.position.set(wThree.x, w.height / 2 - 1, wThree.z);
+    group.add(wMesh);
+
+    // Edge wireframe accent
+    const edgeGeom = new THREE.EdgesGeometry(wGeom);
+    geometries.push(edgeGeom);
+    const edge = new THREE.LineSegments(edgeGeom, mats.towerWireMat);
+    edge.position.copy(wMesh.position);
+    group.add(edge);
+
+    registerBuilding(wMesh, {
+      id: `URBAN-WAREHOUSE-${i + 1}`,
+      name: w.name,
+      category: 'BUILDING',
+      preset,
+      position: { x: w.x, y: w.y, z: 0 },
+      heightM: w.height,
+      isObstructionEnvelope: false,
+      description: 'Reinforced industrial logistics warehouse supporting municipal & defense logistics.',
+    });
+  }
+
+  // 2. High-Altitude Ridge Communication Mast on Northern Hills
+  const ridgeTowerGeom = new THREE.CylinderGeometry(1.2, 3.5, 48, 6);
+  geometries.push(ridgeTowerGeom);
+  const ridgeTowerMesh = new THREE.Mesh(ridgeTowerGeom, mats.radarMat);
+  const rPos = toThree(-600, 2600, 0);
+  const groundElev = sampleGround(-600, 2600);
+  ridgeTowerMesh.position.set(rPos.x, groundElev + 24, rPos.z);
+  group.add(ridgeTowerMesh);
+
+  // Red beacon on top
+  const beaconGeom = new THREE.SphereGeometry(1.4, 6, 6);
+  geometries.push(beaconGeom);
+  const ridgeBeacon = new THREE.Mesh(beaconGeom, mats.beaconMat);
+  ridgeBeacon.position.set(rPos.x, groundElev + 48, rPos.z);
+  group.add(ridgeBeacon);
+
+  registerBuilding(ridgeTowerMesh, {
+    id: 'TOWER-RIDGE-RELAY',
+    name: 'Northern Ridge Microwave & Radar Relay Mast',
+    category: 'TOWER',
+    preset,
+    position: { x: -600, y: 2600, z: groundElev },
+    heightM: 48,
+    elevationM: groundElev + 48,
+    isObstructionEnvelope: false,
+    description: 'High-elevation tactical microwave communications and radar data relay node.',
+  });
+
+  // 3. Highway Checkpoint & Surveillance Tower at Expressway Junction
+  const cpTowerGeom = new THREE.BoxGeometry(14, 32, 14);
+  geometries.push(cpTowerGeom);
+  const cpTowerMesh = new THREE.Mesh(cpTowerGeom, mats.bldMatConcrete);
+  const cpPos = toThree(350, 1400, 0);
+  cpTowerMesh.position.set(cpPos.x, 15, cpPos.z);
+  group.add(cpTowerMesh);
+
+  const cpEdgeGeom = new THREE.EdgesGeometry(cpTowerGeom);
+  geometries.push(cpEdgeGeom);
+  const cpEdge = new THREE.LineSegments(cpEdgeGeom, mats.towerWireMat);
+  cpEdge.position.copy(cpTowerMesh.position);
+  group.add(cpEdge);
+
+  registerBuilding(cpTowerMesh, {
+    id: 'TOWER-HIGHWAY-JUNCTION',
+    name: 'Expressway Perimeter Control Post',
+    category: 'TOWER',
+    preset,
+    position: { x: 350, y: 1400, z: 0 },
+    heightM: 32,
+    isObstructionEnvelope: false,
+    description: 'Perimeter arterial observation post and airspace surveillance node.',
+  });
+}
+
 /**
  * Builds 3D buildings, radar installations, command towers, and air defense infrastructure.
  * Uses shared geometries, instancing, and seeded deterministic layout.
@@ -725,12 +816,12 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   }
 
   // 1. Core Materials
-  const bldMatConcrete = new THREE.MeshLambertMaterial({ color: 0x272e39 });
-  const bldMatDark = new THREE.MeshLambertMaterial({ color: 0x1c222b });
-  const bldMatHangar = new THREE.MeshLambertMaterial({ color: 0x2d3642 });
-  const radarMat = new THREE.MeshLambertMaterial({ color: 0x3d4959 });
+  const bldMatConcrete = new THREE.MeshLambertMaterial({ color: 0x3d4756 });
+  const bldMatDark = new THREE.MeshLambertMaterial({ color: 0x28303d });
+  const bldMatHangar = new THREE.MeshLambertMaterial({ color: 0x364150 });
+  const radarMat = new THREE.MeshLambertMaterial({ color: 0x4a5668 });
   const beaconMat = new THREE.MeshBasicMaterial({ color: COLOR_PHOSPHOR });
-  const towerWireMat = new THREE.LineBasicMaterial({ color: COLOR_LINE, transparent: true, opacity: 0.8 });
+  const towerWireMat = new THREE.LineBasicMaterial({ color: 0x5a687c, transparent: true, opacity: 0.85 });
 
   materials.push(bldMatConcrete, bldMatDark, bldMatHangar, radarMat, beaconMat, towerWireMat);
 
@@ -811,12 +902,17 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   // B. Scenario Zones Integration: Deterministic Seeded Scatter Placement
   buildUrbanDistrictClusters(zones, ctx);
 
-  // C. Airfield Hangars & Control Tower (for COASTAL_AIRFIELD)
+  // C. Metropolitan Secondary Logistics & Communications Infrastructure (for URBAN_DENSE)
+  if (preset === 'URBAN_DENSE') {
+    buildUrbanInfrastructure(ctx);
+  }
+
+  // D. Airfield Hangars & Control Tower (for COASTAL_AIRFIELD)
   if (preset === 'COASTAL_AIRFIELD') {
     buildAirfieldStructures(ctx);
   }
 
-  // D. Perimeter Industrial & Observation Structures (SUBURBAN / OPEN_RURAL)
+  // E. Perimeter Industrial & Observation Structures (SUBURBAN / OPEN_RURAL)
   if (preset === 'SUBURBAN' || preset === 'OPEN_RURAL') {
     buildPerimeterMasts(ctx);
   }
