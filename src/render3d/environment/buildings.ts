@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { ZoneSpec } from '@/sim/types';
-import type { EnvironmentDescriptor, EnvironmentObjectInfo, EnvironmentPreset } from './types';
+import type { EnvironmentDescriptor, EnvironmentObjectInfo, EnvironmentPreset, ScenarioVisualProfile } from './types';
 import { toThree } from '../coords';
 import { getTerrainElevation } from './terrain';
 
@@ -187,6 +187,7 @@ interface BuildingMats {
 
 interface BuildingContext {
   preset: EnvironmentPreset;
+  visualProfile?: ScenarioVisualProfile;
   rMinM: number;
   group: THREE.Group;
   geometries: THREE.BufferGeometry[];
@@ -774,6 +775,292 @@ function buildUrbanInfrastructure(ctx: BuildingContext): void {
   });
 }
 
+function buildSuburbanIndustrialPark(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding, sampleGround } = ctx;
+
+  const warehouses = [
+    { id: 'LOGISTICS-HUB-NORTH', name: 'Northern Automated Distribution Terminal', x: 700, y: 550, w: 75, d: 45, h: 16 },
+    { id: 'LOGISTICS-DEPOT-WEST', name: 'Western Cargo Freight Warehouse', x: -650, y: 450, w: 85, d: 40, h: 15 },
+    { id: 'LOGISTICS-SHED-SOUTH', name: 'Southern Cold Storage Distribution Facility', x: 550, y: -650, w: 60, d: 35, h: 14 },
+    { id: 'LOGISTICS-DEPOT-SW', name: 'Southwestern Heavy Equipment Depot', x: -600, y: -600, w: 70, d: 38, h: 14 },
+    { id: 'LOGISTICS-FLEET-MAINT', name: 'Fleet Maintenance & Vehicle Bay', x: -250, y: -450, w: 50, d: 30, h: 12 },
+  ];
+
+  for (const wh of warehouses) {
+    const geom = new THREE.BoxGeometry(wh.w, wh.h, wh.d);
+    geometries.push(geom);
+    const mesh = new THREE.Mesh(geom, mats.bldMatHangar);
+    const elev = sampleGround(wh.x, wh.y);
+    const p = toThree(wh.x, wh.y, 0);
+    mesh.position.set(p.x, elev + wh.h / 2, p.z);
+    group.add(mesh);
+
+    const edgeGeom = new THREE.EdgesGeometry(geom);
+    geometries.push(edgeGeom);
+    const edge = new THREE.LineSegments(edgeGeom, mats.towerWireMat);
+    edge.position.copy(mesh.position);
+    group.add(edge);
+
+    registerBuilding(mesh, {
+      id: wh.id,
+      name: wh.name,
+      category: 'BUILDING',
+      preset,
+      position: { x: wh.x, y: wh.y, z: elev },
+      heightM: wh.h,
+      elevationM: elev + wh.h,
+      isObstructionEnvelope: false,
+      description: 'Industrial logistics distribution facility supporting regional material supply.',
+    });
+  }
+
+  // Industrial Security Watchtowers with alert beacons
+  const towers = [
+    { id: 'TOWER-IND-NE', name: 'Northeast Perimeter Watchtower', x: 1100, y: 1100, h: 26 },
+    { id: 'TOWER-IND-NW', name: 'Northwest Perimeter Watchtower', x: -1100, y: 1100, h: 26 },
+    { id: 'TOWER-IND-SE', name: 'Southeast Perimeter Watchtower', x: 1200, y: -1100, h: 26 },
+  ];
+
+  for (const t of towers) {
+    const tGeom = new THREE.BoxGeometry(10, t.h, 10);
+    geometries.push(tGeom);
+    const tMesh = new THREE.Mesh(tGeom, mats.bldMatConcrete);
+    const elev = sampleGround(t.x, t.y);
+    const p = toThree(t.x, t.y, 0);
+    tMesh.position.set(p.x, elev + t.h / 2, p.z);
+    group.add(tMesh);
+
+    const edgeGeom = new THREE.EdgesGeometry(tGeom);
+    geometries.push(edgeGeom);
+    const edge = new THREE.LineSegments(edgeGeom, mats.towerWireMat);
+    edge.position.copy(tMesh.position);
+    group.add(edge);
+
+    const beaconGeom = new THREE.SphereGeometry(1.4, 6, 6);
+    geometries.push(beaconGeom);
+    const beacon = new THREE.Mesh(beaconGeom, mats.beaconMat);
+    beacon.position.set(p.x, elev + t.h + 1, p.z);
+    group.add(beacon);
+
+    registerBuilding(tMesh, {
+      id: t.id,
+      name: t.name,
+      category: 'TOWER',
+      preset,
+      position: { x: t.x, y: t.y, z: elev },
+      heightM: t.h,
+      elevationM: elev + t.h,
+      isObstructionEnvelope: false,
+      description: 'Industrial park perimeter watchtower with optical surveillance and warning beacon.',
+    });
+  }
+}
+
+function buildSwarmMountainOutposts(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding, sampleGround } = ctx;
+
+  const outposts = [
+    { id: 'OUTPOST-SWARM-NE', name: 'Northeast Mountain Radar Outpost', x: 1800, y: 2100, h: 18 },
+    { id: 'OUTPOST-SWARM-NW', name: 'Northwest Ridge Surveillance Post', x: -1800, y: 2100, h: 18 },
+    { id: 'OUTPOST-SWARM-SW', name: 'Southwest Valley Relay Bunker', x: -2100, y: -1600, h: 16 },
+  ];
+
+  for (const op of outposts) {
+    const geom = new THREE.BoxGeometry(16, op.h, 16);
+    geometries.push(geom);
+    const mesh = new THREE.Mesh(geom, mats.bldMatConcrete);
+    const elev = sampleGround(op.x, op.y);
+    const p = toThree(op.x, op.y, 0);
+    mesh.position.set(p.x, elev + op.h / 2, p.z);
+    group.add(mesh);
+
+    const edgeGeom = new THREE.EdgesGeometry(geom);
+    geometries.push(edgeGeom);
+    const edge = new THREE.LineSegments(edgeGeom, mats.towerWireMat);
+    edge.position.copy(mesh.position);
+    group.add(edge);
+
+    // Antenna mast on roof
+    const mastGeom = new THREE.CylinderGeometry(0.8, 1.6, 14, 6);
+    geometries.push(mastGeom);
+    const mastMesh = new THREE.Mesh(mastGeom, mats.radarMat);
+    mastMesh.position.set(p.x, elev + op.h + 7, p.z);
+    group.add(mastMesh);
+
+    // Beacon
+    const beaconGeom = new THREE.SphereGeometry(1.2, 6, 6);
+    geometries.push(beaconGeom);
+    const beacon = new THREE.Mesh(beaconGeom, mats.beaconMat);
+    beacon.position.set(p.x, elev + op.h + 14, p.z);
+    group.add(beacon);
+
+    registerBuilding(mesh, {
+      id: op.id,
+      name: op.name,
+      category: 'TOWER',
+      preset,
+      position: { x: op.x, y: op.y, z: elev },
+      heightM: op.h + 14,
+      elevationM: elev + op.h + 14,
+      isObstructionEnvelope: false,
+      description: 'Mountain ridge early warning surveillance outpost and sensor relay.',
+    });
+  }
+}
+
+function buildForestRiverStructures(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding, sampleGround } = ctx;
+
+  // River pump station
+  const pumpGeom = new THREE.BoxGeometry(26, 10, 18);
+  geometries.push(pumpGeom);
+  const pumpMesh = new THREE.Mesh(pumpGeom, mats.bldMatConcrete);
+  const pumpElev = sampleGround(350, 300);
+  const pumpP = toThree(350, 300, 0);
+  pumpMesh.position.set(pumpP.x, pumpElev + 5, pumpP.z);
+  group.add(pumpMesh);
+  registerBuilding(pumpMesh, {
+    id: 'FOREST-PUMP-STATION',
+    name: 'Valley River Water Filtration Facility',
+    category: 'BUILDING',
+    preset,
+    position: { x: 350, y: 300, z: pumpElev },
+    heightM: 10,
+    elevationM: pumpElev + 10,
+    isObstructionEnvelope: false,
+    description: 'Riverbank intake and water purification pumping facility.',
+  });
+
+  // Fire watchtower
+  const towerGeom = new THREE.CylinderGeometry(1.5, 3.2, 34, 6);
+  geometries.push(towerGeom);
+  const towerMesh = new THREE.Mesh(towerGeom, mats.radarMat);
+  const tElev = sampleGround(-800, 800);
+  const tP = toThree(-800, 800, 0);
+  towerMesh.position.set(tP.x, tElev + 17, tP.z);
+  group.add(towerMesh);
+
+  const beaconGeom = new THREE.SphereGeometry(1.2, 6, 6);
+  geometries.push(beaconGeom);
+  const beacon = new THREE.Mesh(beaconGeom, mats.beaconMat);
+  beacon.position.set(tP.x, tElev + 34, tP.z);
+  group.add(beacon);
+
+  registerBuilding(towerMesh, {
+    id: 'TOWER-FOREST-LOOKOUT',
+    name: 'Dense Valley Forestry Lookout Tower',
+    category: 'TOWER',
+    preset,
+    position: { x: -800, y: 800, z: tElev },
+    heightM: 34,
+    elevationM: tElev + 34,
+    isObstructionEnvelope: false,
+    description: 'High-elevation forestry fire lookout and airspace observation mast.',
+  });
+}
+
+function buildAlpinePassStructures(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding, sampleGround } = ctx;
+
+  // Mount Apex High Altitude Observatory
+  const obsGeom = new THREE.CylinderGeometry(8, 12, 20, 12);
+  geometries.push(obsGeom);
+  const obsMesh = new THREE.Mesh(obsGeom, mats.bldMatConcrete);
+  const obsElev = sampleGround(1800, 1200);
+  const obsP = toThree(1800, 1200, 0);
+  obsMesh.position.set(obsP.x, obsElev + 10, obsP.z);
+  group.add(obsMesh);
+
+  // Dome atop observatory
+  const domeGeom = new THREE.SphereGeometry(8, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  geometries.push(domeGeom);
+  const domeMesh = new THREE.Mesh(domeGeom, mats.radarMat);
+  domeMesh.position.set(obsP.x, obsElev + 20, obsP.z);
+  group.add(domeMesh);
+
+  registerBuilding(obsMesh, {
+    id: 'ALPINE-OBSERVATORY',
+    name: 'Mount Apex High-Altitude Meteorological Observatory',
+    category: 'BUILDING',
+    preset,
+    position: { x: 1800, y: 1200, z: obsElev },
+    heightM: 28,
+    elevationM: obsElev + 28,
+    isObstructionEnvelope: false,
+    description: 'High-altitude summit optical and meteorological observatory atop Mount Apex ridge.',
+  });
+
+  // Weather Radar Station on opposite peak
+  const radarGeom = new THREE.BoxGeometry(14, 22, 14);
+  geometries.push(radarGeom);
+  const radarMesh = new THREE.Mesh(radarGeom, mats.bldMatConcrete);
+  const rElev = sampleGround(-1600, 1400);
+  const rP = toThree(-1600, 1400, 0);
+  radarMesh.position.set(rP.x, rElev + 11, rP.z);
+  group.add(radarMesh);
+
+  const radomeGeom = new THREE.SphereGeometry(6, 12, 12);
+  geometries.push(radomeGeom);
+  const radomeMesh = new THREE.Mesh(radomeGeom, mats.radarMat);
+  radomeMesh.position.set(rP.x, rElev + 27, rP.z);
+  group.add(radomeMesh);
+
+  registerBuilding(radarMesh, {
+    id: 'ALPINE-WEATHER-RADAR',
+    name: 'Mount Summit Alpine Weather Radar Station',
+    category: 'RADAR_INSTALLATION',
+    preset,
+    position: { x: -1600, y: 1400, z: rElev },
+    heightM: 33,
+    elevationM: rElev + 33,
+    isObstructionEnvelope: false,
+    description: 'High-altitude Doppler radar and storm tracking station atop Mount Summit.',
+  });
+}
+
+function buildPopupCorridorBuildings(ctx: BuildingContext): void {
+  const { group, geometries, mats, preset, registerBuilding, sampleGround } = ctx;
+
+  const blocks = [
+    { id: 'POPUP-MIDRISE-1', name: 'West Commercial Block A', x: -320, y: 400, w: 32, d: 24, h: 28 },
+    { id: 'POPUP-MIDRISE-2', name: 'West Commercial Block B', x: -580, y: 650, w: 36, d: 28, h: 32 },
+    { id: 'POPUP-MIDRISE-3', name: 'West Commercial Block C', x: -340, y: -450, w: 30, d: 22, h: 26 },
+    { id: 'POPUP-MIDRISE-4', name: 'West Commercial Block D', x: -600, y: -750, w: 34, d: 26, h: 30 },
+    { id: 'POPUP-MIDRISE-5', name: 'East Commercial Block A', x: 380, y: 350, w: 38, d: 28, h: 30 },
+    { id: 'POPUP-MIDRISE-6', name: 'East Commercial Block B', x: 550, y: -500, w: 42, d: 30, h: 34 },
+    { id: 'POPUP-MIDRISE-7', name: 'East Commercial Block C', x: 420, y: -800, w: 32, d: 24, h: 26 },
+    { id: 'POPUP-SUBSTATION', name: 'Corridor Distribution Substation', x: -280, y: 950, w: 28, d: 20, h: 12 },
+  ];
+
+  for (const b of blocks) {
+    const geom = new THREE.BoxGeometry(b.w, b.h, b.d);
+    geometries.push(geom);
+    const mesh = new THREE.Mesh(geom, mats.bldMatConcrete);
+    const elev = sampleGround(b.x, b.y);
+    const p = toThree(b.x, b.y, 0);
+    mesh.position.set(p.x, elev + b.h / 2, p.z);
+    group.add(mesh);
+
+    const edgeGeom = new THREE.EdgesGeometry(geom);
+    geometries.push(edgeGeom);
+    const edge = new THREE.LineSegments(edgeGeom, mats.towerWireMat);
+    edge.position.copy(mesh.position);
+    group.add(edge);
+
+    registerBuilding(mesh, {
+      id: b.id,
+      name: b.name,
+      category: 'BUILDING',
+      preset,
+      position: { x: b.x, y: b.y, z: elev },
+      heightM: b.h,
+      elevationM: elev + b.h,
+      isObstructionEnvelope: false,
+      description: 'Urban mid-rise structure lining the pop-up low-altitude ingress corridor.',
+    });
+  }
+}
+
 /**
  * Builds 3D buildings, radar installations, command towers, and air defense infrastructure.
  * Uses shared geometries, instancing, and seeded deterministic layout.
@@ -786,7 +1073,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
 
-  const { preset, zones, rMinM } = descriptor;
+  const { preset, visualProfile, zones, rMinM } = descriptor;
 
   if (groundMesh) {
     groundMesh.updateMatrixWorld(true);
@@ -812,7 +1099,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
       );
     }
     // Case A: No ground mesh supplied -> preserve analytical fallback for direct-call compatibility
-    return getTerrainElevation(simX, simY, preset) - 1;
+    return getTerrainElevation(simX, simY, visualProfile ?? preset) - 1;
   }
 
   // 1. Core Materials
@@ -884,6 +1171,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
 
   const ctx: BuildingContext = {
     preset,
+    visualProfile,
     rMinM,
     group,
     geometries,
@@ -902,18 +1190,22 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   // B. Scenario Zones Integration: Deterministic Seeded Scatter Placement
   buildUrbanDistrictClusters(zones, ctx);
 
-  // C. Metropolitan Secondary Logistics & Communications Infrastructure (for URBAN_DENSE)
-  if (preset === 'URBAN_DENSE') {
+  // C. Profile/Preset-specific Infrastructure
+  if (visualProfile === 'DEMO_1_URBAN_METRO' || preset === 'URBAN_DENSE') {
     buildUrbanInfrastructure(ctx);
-  }
-
-  // D. Airfield Hangars & Control Tower (for COASTAL_AIRFIELD)
-  if (preset === 'COASTAL_AIRFIELD') {
+  } else if (visualProfile === 'DEMO_2_SUBURBAN_LOGISTICS') {
+    buildSuburbanIndustrialPark(ctx);
+  } else if (visualProfile === 'SWARM_MOUNTAIN_VALLEY') {
+    buildSwarmMountainOutposts(ctx);
+  } else if (visualProfile === 'SPECTRUM_FOREST_RIVER') {
+    buildForestRiverStructures(ctx);
+  } else if (visualProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || preset === 'COASTAL_AIRFIELD') {
     buildAirfieldStructures(ctx);
-  }
-
-  // E. Perimeter Industrial & Observation Structures (SUBURBAN / OPEN_RURAL)
-  if (preset === 'SUBURBAN' || preset === 'OPEN_RURAL') {
+  } else if (visualProfile === 'FORMATION_ALPINE_PASS') {
+    buildAlpinePassStructures(ctx);
+  } else if (visualProfile === 'POPUP_URBAN_CORRIDOR') {
+    buildPopupCorridorBuildings(ctx);
+  } else if (preset === 'SUBURBAN' || preset === 'OPEN_RURAL') {
     buildPerimeterMasts(ctx);
   }
 

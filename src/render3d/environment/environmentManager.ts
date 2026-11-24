@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './types';
 import { buildProceduralTerrain } from './terrain';
+import { buildProceduralWater } from './water';
 import { buildProceduralBuildings } from './buildings';
 import { buildProceduralVegetation } from './vegetation';
 import { WeatherManager } from './weather';
@@ -34,6 +35,13 @@ export class EnvironmentManager {
     this.group.add(terrainRes.group);
     terrainRes.objects.forEach((obj) => this.objectsMap.set(obj.id, obj));
     this.disposables.push(terrainRes.disposables);
+
+    // 2.5. Build Procedural Water Features (Lakes, Rivers, Oceans, Reservoirs, Canals)
+    const waterRes = buildProceduralWater(descriptor);
+    this.group.add(waterRes.group);
+    waterRes.objects.forEach((obj) => this.objectsMap.set(obj.id, obj));
+    this.selectableMeshes.push(...waterRes.selectableMeshes);
+    this.disposables.push(waterRes.disposables);
 
     // 3. Build Buildings, Towers & Installations
     if (!terrainRes.groundMesh) {

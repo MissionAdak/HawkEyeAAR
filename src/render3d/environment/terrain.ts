@@ -1,9 +1,13 @@
 import * as THREE from 'three';
-import type { EnvironmentDescriptor, EnvironmentObjectInfo, EnvironmentPreset } from './types';
+import type {
+  EnvironmentDescriptor,
+  EnvironmentObjectInfo,
+  EnvironmentPreset,
+  ScenarioVisualProfile,
+} from './types';
 
 // Tactical palette colors
 const COLOR_CARBON_950 = 0x0D1117;
-const COLOR_LINE = 0x262B33;
 const COLOR_PHOSPHOR_DIM = 0x003B1A;
 const COLOR_AMBER = 0xFF9900;
 
@@ -15,36 +19,148 @@ export interface TerrainBuildResult {
 }
 
 /**
+ * Calculates perpendicular distance from a 2D point (px, py) to a 2D line segment (x1, y1) -> (x2, y2).
+ */
+function distToLineSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+  const projX = x1 + t * dx;
+  const projY = y1 + t * dy;
+  return Math.hypot(px - projX, py - projY);
+}
+
+/**
+ * Swarm battlefield terrain elevation with open multi-axis flight corridors (Task 30 Fix A).
+ * Preserves rugged mountain ridges up to 240m elevation while ensuring flight corridors
+ * have guaranteed visual clearance (>= 23m) along all swarm approach paths.
+ */
+export function getSwarmMountainElevation(simX: number, simY: number): number {
+  const dist = Math.hypot(simX, simY);
+  if (dist < 1200) return 0;
+
+  // Swarm threat flight paths:
+  // H-SWM-1: (2500, 1000) -> (0, 0)
+  // H-SWM-2: (-2200, 1600) -> (0, 0)
+  // H-SWM-3: (1400, -2300) -> (0, 0)
+  const paths = [
+    { x1: 2500, y1: 1000, x2: 0, y2: 0 },
+    { x1: -2200, y1: 1600, x2: 0, y2: 0 },
+    { x1: 1400, y1: -2300, x2: 0, y2: 0 },
+  ];
+
+  let minCorridorDist = Infinity;
+  for (const p of paths) {
+    const d = distToLineSegment(simX, simY, p.x1, p.y1, p.x2, p.y2);
+    if (d < minCorridorDist) minCorridorDist = d;
+  }
+
+  // Smooth corridor attenuation:
+  // Inside 350m: flat valley floor (0m).
+  // 350m to 850m: smoothstep ascent up to the mountain ridges.
+  const corridorFactor = Math.min(1, Math.max(0, (minCorridorDist - 350) / 500));
+  const smoothCorridor = corridorFactor * corridorFactor * (3 - 2 * corridorFactor);
+
+  // Central valley basin attenuation (smooth transition outward from 1200m to 1800m)
+  const valleyFactor = Math.min(1, Math.max(0, (dist - 1200) / 600));
+  const smoothValley = valleyFactor * valleyFactor * (3 - 2 * valleyFactor);
+
+  if (smoothCorridor === 0 || smoothValley === 0) return 0;
+
+  const threeX = simX;
+  const threeZ = -simY;
+  const primaryRidge = Math.sin(threeX * 0.0014 + 0.4) * Math.cos(threeZ * 0.0011 - 0.2);
+  const detailNoise = Math.sin(threeX * 0.0028 - 0.5) * Math.cos(threeZ * 0.0025 + 0.8) * 0.35;
+  const rawMountainHeight = Math.max(0, (primaryRidge + detailNoise) * 160 + (dist - 1200) * 0.025);
+
+  return rawMountainHeight * smoothCorridor * smoothValley;
+}
+
+/**
+ * Alpine pass terrain elevation featuring twin dominant massifs (Mount Apex & Mount Summit)
+ * with a high-altitude mountain pass and lake plateau.
+ */
+export function getAlpinePassElevation(simX: number, simY: number): number {
+  const threeX = simX;
+  const threeZ = -simY;
+  const dist = Math.hypot(threeX, threeZ);
+  if (dist < 1000) return 0;
+
+  // Peak 1: Mount Apex (North-West massif)
+  const d1 = Math.hypot(threeX - (-2800), threeZ - 2400);
+  const peak1 = Math.max(0, 260 * Math.exp(-(d1 * d1) / (2 * 1100 * 1100)));
+
+  // Peak 2: Mount Summit (North-East massif)
+  const d2 = Math.hypot(threeX - 2600, threeZ - 2200);
+  const peak2 = Math.max(0, 240 * Math.exp(-(d2 * d2) / (2 * 1050 * 1050)));
+
+  // Flanking pass ridges
+  const passRidge = Math.max(0, Math.sin(threeX * 0.0009) * Math.cos(threeZ * 0.0012) * 110 + (dist - 1000) * 0.02);
+
+  // Winding pass corridor attenuation along X = 0
+  const passCorridorFactor = Math.min(1, Math.abs(threeX) / 800);
+  const smoothPass = passCorridorFactor * passCorridorFactor;
+
+  // Lake depression at (-700, 2200)
+  const dLake = Math.hypot(threeX - (-700), threeZ - 2200);
+  let lakePlateau = 0;
+  if (dLake < 500) {
+    lakePlateau = 18;
+  }
+
+  return Math.max(lakePlateau, Math.max(peak1, peak2, passRidge * smoothPass));
+}
+
+/**
  * Queries authoritative procedural ground surface elevation in metres at the given simulation coordinates (simX, simY).
  * Sim X -> Three.js X; Sim Y -> Three.js -Z.
  * Ensures building foundations and ground assets align with the actual terrain geometry (Task 23.1 Section 6 & 7).
  */
-export function getTerrainElevation(simX: number, simY: number, preset: EnvironmentPreset): number {
-  if (preset === 'MOUNTAIN_RIDGE') {
-    const threeX = simX;
-    const threeZ = -simY;
-    const distFromCenter = Math.hypot(threeX, threeZ);
+export function getTerrainElevation(
+  simX: number,
+  simY: number,
+  presetOrProfile: EnvironmentPreset | ScenarioVisualProfile = 'URBAN_DENSE'
+): number {
+  const threeX = simX;
+  const threeZ = -simY;
+  const distFromCenter = Math.hypot(threeX, threeZ);
+
+  if (presetOrProfile === 'SWARM_MOUNTAIN_VALLEY') {
+    return getSwarmMountainElevation(simX, simY);
+  }
+  if (presetOrProfile === 'MOUNTAIN_RIDGE') {
     if (distFromCenter > 1200) {
       const ridgeFactor = Math.sin(threeX * 0.0012) * Math.cos(threeZ * 0.0009);
       return Math.max(0, ridgeFactor * 180 + (distFromCenter - 1200) * 0.035);
     }
-  } else if (preset === 'URBAN_DENSE') {
-    const threeX = simX;
-    const threeZ = -simY;
-    const distFromCenter = Math.hypot(threeX, threeZ);
+    return 0;
+  }
+  if (presetOrProfile === 'FORMATION_ALPINE_PASS') {
+    return getAlpinePassElevation(simX, simY);
+  }
+  if (presetOrProfile === 'URBAN_DENSE' || presetOrProfile === 'DEMO_1_URBAN_METRO') {
     if (distFromCenter > 2200) {
       const ridgeFactor = Math.sin(threeX * 0.0010 + 0.5) * Math.cos(threeZ * 0.0008 - 0.3);
       return Math.max(0, ridgeFactor * 140 + (distFromCenter - 2200) * 0.025);
     }
+    return 0;
+  }
+  if (presetOrProfile === 'SPECTRUM_FOREST_RIVER' || presetOrProfile === 'FOREST_VALLEY') {
+    if (distFromCenter > 1600) {
+      const roll = Math.sin(threeX * 0.0008) * Math.cos(threeZ * 0.0007);
+      return Math.max(0, roll * 45 + (distFromCenter - 1600) * 0.015);
+    }
+    return 0;
   }
   return 0;
 }
 
 /**
- * Builds procedural 3D terrain surface, roads, and landscape features.
- * Adheres strictly to native Three.js geometry with zero external texture dependencies.
+ * 1. SWARM-1: Rugged Mountain Swarm Battlefield with Flight Corridors.
  */
-function buildMountainRidgeTerrain(
+function buildSwarmMountainTerrain(
   terrainSize: number,
   preset: EnvironmentPreset,
   group: THREE.Group,
@@ -52,7 +168,7 @@ function buildMountainRidgeTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const segments = 32;
+  const segments = 48; // Higher mesh resolution for crisp, detailed mountain ridgelines
   const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   groundGeom.rotateX(-Math.PI / 2);
 
@@ -60,22 +176,17 @@ function buildMountainRidgeTerrain(
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const distFromCenter = Math.hypot(x, z);
-
-    if (distFromCenter > 1200) {
-      const ridgeFactor = Math.sin(x * 0.0012) * Math.cos(z * 0.0009);
-      const hillElevation = Math.max(0, ridgeFactor * 180 + (distFromCenter - 1200) * 0.035);
-      pos.setY(i, hillElevation);
-    } else {
-      pos.setY(i, 0);
-    }
+    // Three.js X = simX, Three.js Z = -simY
+    const simX = x;
+    const simY = -z;
+    const elevation = getSwarmMountainElevation(simX, simY);
+    pos.setY(i, elevation);
   }
   groundGeom.computeVertexNormals();
   geometries.push(groundGeom);
 
   const groundMat = new THREE.MeshLambertMaterial({
-    color: 0x1a211e,
-    wireframe: false,
+    color: 0x1f2723, // Rugged dark basalt rock
     flatShading: true,
   });
   materials.push(groundMat);
@@ -84,6 +195,7 @@ function buildMountainRidgeTerrain(
   groundMesh.position.y = -1;
   group.add(groundMesh);
 
+  // Phosphor contour lines for altitude visualization
   const contourMat = new THREE.LineBasicMaterial({
     color: COLOR_PHOSPHOR_DIM,
     transparent: true,
@@ -94,22 +206,38 @@ function buildMountainRidgeTerrain(
   contourLines.position.y = -0.5;
   group.add(contourLines);
 
-  objects.push({
-    id: 'TERRAIN-NORTH-RIDGE',
-    name: 'Northern Alpine Ridge Sector',
-    category: 'RIDGE',
-    preset,
-    position: { x: 0, y: 3200, z: 180 },
-    heightM: 180,
-    elevationM: 180,
-    isObstructionEnvelope: false,
-    description: 'Elevated low-poly ridge formation providing significant natural radar shadowing.',
-  });
+  objects.push(
+    {
+      id: 'TERRAIN-NORTH-RIDGE',
+      name: 'Northern Alpine Ridge Sector',
+      category: 'RIDGE',
+      preset,
+      position: { x: 0, y: 3400, z: 180 },
+      heightM: 180,
+      elevationM: 180,
+      isObstructionEnvelope: false,
+      description: 'Elevated basalt mountain formation flanking the north corridor.',
+    },
+    {
+      id: 'TERRAIN-WEST-ESCARPMENT',
+      name: 'Western Escarpment Ridge',
+      category: 'RIDGE',
+      preset,
+      position: { x: -3400, y: 0, z: 220 },
+      heightM: 220,
+      elevationM: 220,
+      isObstructionEnvelope: false,
+      description: 'Towering western rock face bounding multi-axis swarm ingress.',
+    }
+  );
 
   return groundMesh;
 }
 
-function buildCoastalAirfieldTerrain(
+/**
+ * 2. FORMATION-*: Alpine Pass Terrain with Twin Peaks (Mount Apex & Mount Summit).
+ */
+function buildAlpinePassTerrain(
   terrainSize: number,
   preset: EnvironmentPreset,
   group: THREE.Group,
@@ -117,94 +245,140 @@ function buildCoastalAirfieldTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const landWidth = terrainSize;
-  const landHeight = terrainSize;
+  const segments = 48;
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
+  groundGeom.rotateX(-Math.PI / 2);
 
-  const landGeom = new THREE.PlaneGeometry(landWidth, landHeight);
-  landGeom.rotateX(-Math.PI / 2);
-  geometries.push(landGeom);
-
-  const landMat = new THREE.MeshLambertMaterial({ color: 0x161c22, flatShading: true });
-  materials.push(landMat);
-  const landMesh = new THREE.Mesh(landGeom, landMat);
-  landMesh.position.y = -1;
-  group.add(landMesh);
-
-  const seaGeom = new THREE.PlaneGeometry(terrainSize * 0.5, terrainSize);
-  seaGeom.rotateX(-Math.PI / 2);
-  geometries.push(seaGeom);
-
-  const seaMat = new THREE.MeshLambertMaterial({
-    color: 0x091b29,
-    transparent: true,
-    opacity: 0.85,
-  });
-  materials.push(seaMat);
-
-  const seaMesh = new THREE.Mesh(seaGeom, seaMat);
-  seaMesh.position.set(-terrainSize * 0.35, -0.2, 0);
-  group.add(seaMesh);
-
-  const shoreGeom = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-terrainSize * 0.1, 0, -terrainSize * 0.5),
-    new THREE.Vector3(-terrainSize * 0.1, 0, terrainSize * 0.5),
-  ]);
-  geometries.push(shoreGeom);
-  const shoreMat = new THREE.LineBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.4 });
-  materials.push(shoreMat);
-  group.add(new THREE.Line(shoreGeom, shoreMat));
-
-  const runwayGeom = new THREE.PlaneGeometry(2400, 70);
-  runwayGeom.rotateX(-Math.PI / 2);
-  geometries.push(runwayGeom);
-
-  const runwayMat = new THREE.MeshLambertMaterial({ color: 0x222831 });
-  materials.push(runwayMat);
-
-  const runwayMesh = new THREE.Mesh(runwayGeom, runwayMat);
-  runwayMesh.position.set(600, 0.2, 800);
-  group.add(runwayMesh);
-
-  const clPoints: THREE.Vector3[] = [];
-  for (let rx = -1100; rx <= 1100; rx += 80) {
-    clPoints.push(new THREE.Vector3(rx, 0.4, 0), new THREE.Vector3(rx + 40, 0.4, 0));
+  const pos = groundGeom.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const simX = x;
+    const simY = -z;
+    const elevation = getAlpinePassElevation(simX, simY);
+    pos.setY(i, elevation);
   }
-  const clGeom = new THREE.BufferGeometry().setFromPoints(clPoints);
-  geometries.push(clGeom);
-  const clMat = new THREE.LineBasicMaterial({ color: 0xdde2ea });
-  materials.push(clMat);
-  const clLines = new THREE.LineSegments(clGeom, clMat);
-  clLines.position.set(600, 0.2, 800);
-  group.add(clLines);
+  groundGeom.computeVertexNormals();
+  geometries.push(groundGeom);
 
-  const threshGeom = new THREE.PlaneGeometry(40, 60);
-  threshGeom.rotateX(-Math.PI / 2);
-  geometries.push(threshGeom);
-  const threshMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  materials.push(threshMat);
-
-  const thresh1 = new THREE.Mesh(threshGeom, threshMat);
-  thresh1.position.set(-560, 0.3, 800);
-  group.add(thresh1);
-
-  const thresh2 = new THREE.Mesh(threshGeom, threshMat);
-  thresh2.position.set(1760, 0.3, 800);
-  group.add(thresh2);
-
-  objects.push({
-    id: 'AIRFIELD-RWY-09',
-    name: 'Primary Military Runway 09/27',
-    category: 'AIRFIELD',
-    preset,
-    position: { x: 600, y: -800, z: 0 },
-    heightM: 2,
-    isObstructionEnvelope: false,
-    description: '2,400m reinforced concrete runway with threshold lighting and taxiways.',
+  const groundMat = new THREE.MeshLambertMaterial({
+    color: 0x222a27, // Alpine rock and slate
+    flatShading: true,
   });
+  materials.push(groundMat);
 
-  return landMesh;
+  const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+  groundMesh.position.y = -1;
+  group.add(groundMesh);
+
+  const contourMat = new THREE.LineBasicMaterial({
+    color: 0x34d399, // Crisp emerald alpine wireframe
+    transparent: true,
+    opacity: 0.38,
+  });
+  materials.push(contourMat);
+  const contourLines = new THREE.LineSegments(new THREE.WireframeGeometry(groundGeom), contourMat);
+  contourLines.position.y = -0.5;
+  group.add(contourLines);
+
+  objects.push(
+    {
+      id: 'TERRAIN-MOUNT-APEX',
+      name: 'Mount Apex Alpine Massif',
+      category: 'RIDGE',
+      preset,
+      position: { x: -2800, y: -2400, z: 260 },
+      heightM: 260,
+      elevationM: 260,
+      isObstructionEnvelope: false,
+      description: 'Highest alpine mountain peak (260m) towering over the western pass.',
+    },
+    {
+      id: 'TERRAIN-MOUNT-SUMMIT',
+      name: 'Mount Summit Eastern Peak',
+      category: 'RIDGE',
+      preset,
+      position: { x: 2600, y: -2200, z: 240 },
+      heightM: 240,
+      elevationM: 240,
+      isObstructionEnvelope: false,
+      description: 'Major eastern alpine peak (240m) defining the formation pass boundary.',
+    }
+  );
+
+  return groundMesh;
 }
 
+/**
+ * 3. SPECTRUM-1: Forest Valley Rolling Terrain with River Basin.
+ */
+function buildForestRiverTerrain(
+  terrainSize: number,
+  preset: EnvironmentPreset,
+  group: THREE.Group,
+  geometries: THREE.BufferGeometry[],
+  materials: THREE.Material[],
+  objects: EnvironmentObjectInfo[]
+): THREE.Mesh {
+  const segments = 44;
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
+  groundGeom.rotateX(-Math.PI / 2);
+
+  const pos = groundGeom.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const dist = Math.hypot(x, z);
+
+    if (dist > 1600) {
+      const roll = Math.sin(x * 0.0008) * Math.cos(z * 0.0007);
+      const elev = Math.max(0, roll * 45 + (dist - 1600) * 0.015);
+      pos.setY(i, elev);
+    } else {
+      pos.setY(i, 0);
+    }
+  }
+  groundGeom.computeVertexNormals();
+  geometries.push(groundGeom);
+
+  const groundMat = new THREE.MeshLambertMaterial({
+    color: 0x15231c, // Lush dark coniferous woodland soil
+    flatShading: true,
+  });
+  materials.push(groundMat);
+
+  const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+  groundMesh.position.y = -1;
+  group.add(groundMesh);
+
+  const contourMat = new THREE.LineBasicMaterial({
+    color: 0x059669,
+    transparent: true,
+    opacity: 0.32,
+  });
+  materials.push(contourMat);
+  const contourLines = new THREE.LineSegments(new THREE.WireframeGeometry(groundGeom), contourMat);
+  contourLines.position.y = -0.5;
+  group.add(contourLines);
+
+  objects.push({
+    id: 'TERRAIN-FOREST-BASIN',
+    name: 'Emerald River Valley Basin',
+    category: 'TERRAIN_ZONE',
+    preset,
+    position: { x: -1400, y: 0, z: 0 },
+    heightM: 45,
+    elevationM: 0,
+    isObstructionEnvelope: false,
+    description: 'Undulating river basin offering low-altitude masking and heavy coniferous canopy.',
+  });
+
+  return groundMesh;
+}
+
+/**
+ * 4. DEMO-1: High-Density Urban Metropolitan Center with Highways and Outer Hills.
+ */
 function buildUrbanDenseTerrain(
   terrainSize: number,
   _mapRadiusM: number,
@@ -214,8 +388,7 @@ function buildUrbanDenseTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  // 1. Terrain Mesh with Outer Sector Rolling Hills
-  const segments = 36;
+  const segments = 40;
   const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   groundGeom.rotateX(-Math.PI / 2);
 
@@ -247,7 +420,6 @@ function buildUrbanDenseTerrain(
   groundMesh.position.y = -1;
   group.add(groundMesh);
 
-  // Outer elevation contour lines
   const contourMat = new THREE.LineBasicMaterial({
     color: COLOR_PHOSPHOR_DIM,
     transparent: true,
@@ -258,169 +430,304 @@ function buildUrbanDenseTerrain(
   contourLines.position.y = -0.5;
   group.add(contourLines);
 
-  // 2. Tactical Paved Highway & Road Network (Asphalt + Dashed Lines + Curbs)
-  const asphaltMat = new THREE.MeshLambertMaterial({ color: 0x1c232c, flatShading: true });
-  const markingMat = new THREE.LineBasicMaterial({ color: 0xdde2ea, transparent: true, opacity: 0.9 });
-  const markingAmberMat = new THREE.LineBasicMaterial({ color: 0xffb700, transparent: true, opacity: 0.85 });
-  materials.push(asphaltMat, markingMat, markingAmberMat);
+  // Tactical Expressway Network: North-South & East-West highways with lane markings
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x1c232c });
+  materials.push(roadMat);
 
-  // North-South Expressway (X = 350m, length 7600m, width 26m)
-  const nsRoadGeom = new THREE.PlaneGeometry(26, 7600);
-  nsRoadGeom.rotateX(-Math.PI / 2);
-  geometries.push(nsRoadGeom);
-  const nsRoadMesh = new THREE.Mesh(nsRoadGeom, asphaltMat);
-  nsRoadMesh.position.set(350, 0.05, 0);
-  group.add(nsRoadMesh);
+  const roadGeomNS = new THREE.PlaneGeometry(26, 7600);
+  roadGeomNS.rotateX(-Math.PI / 2);
+  geometries.push(roadGeomNS);
+  const roadMeshNS = new THREE.Mesh(roadGeomNS, roadMat);
+  roadMeshNS.position.set(350, -0.9, 0);
+  group.add(roadMeshNS);
 
-  // NS Centerline dashed markings
-  const nsMarkPoints: THREE.Vector3[] = [];
-  for (let z = -3700; z <= 3700; z += 60) {
-    nsMarkPoints.push(new THREE.Vector3(350, 0.15, z), new THREE.Vector3(350, 0.15, z + 30));
-  }
-  const nsMarkGeom = new THREE.BufferGeometry().setFromPoints(nsMarkPoints);
-  geometries.push(nsMarkGeom);
-  group.add(new THREE.LineSegments(nsMarkGeom, markingMat));
+  const roadGeomEW = new THREE.PlaneGeometry(7600, 26);
+  roadGeomEW.rotateX(-Math.PI / 2);
+  geometries.push(roadGeomEW);
+  const roadMeshEW = new THREE.Mesh(roadGeomEW, roadMat);
+  roadMeshEW.position.set(0, -0.9, -300);
+  group.add(roadMeshEW);
 
-  // East-West Metropolitan Highway (Z = -300m, length 7600m, width 26m)
-  const ewRoadGeom = new THREE.PlaneGeometry(7600, 26);
-  ewRoadGeom.rotateX(-Math.PI / 2);
-  geometries.push(ewRoadGeom);
-  const ewRoadMesh = new THREE.Mesh(ewRoadGeom, asphaltMat);
-  ewRoadMesh.position.set(0, 0.05, -300);
-  group.add(ewRoadMesh);
+  // Perimeter Ring Highway (1400m radius)
+  const ringRoadGeom = new THREE.RingGeometry(1386, 1414, 64);
+  ringRoadGeom.rotateX(-Math.PI / 2);
+  geometries.push(ringRoadGeom);
+  const ringRoadMesh = new THREE.Mesh(ringRoadGeom, roadMat);
+  ringRoadMesh.position.set(0, -0.9, 0);
+  group.add(ringRoadMesh);
 
-  // EW Centerline dashed markings
-  const ewMarkPoints: THREE.Vector3[] = [];
-  for (let x = -3700; x <= 3700; x += 60) {
-    ewMarkPoints.push(new THREE.Vector3(x, 0.15, -300), new THREE.Vector3(x + 30, 0.15, -300));
-  }
-  const ewMarkGeom = new THREE.BufferGeometry().setFromPoints(ewMarkPoints);
-  geometries.push(ewMarkGeom);
-  group.add(new THREE.LineSegments(ewMarkGeom, markingMat));
+  // Dashed lane stripes
+  const stripeMat = new THREE.LineDashedMaterial({
+    color: 0xdde2ea,
+    dashSize: 20,
+    gapSize: 15,
+  });
+  materials.push(stripeMat);
 
-  // Diagonal Arterial Corridor to East Urban Zone (connecting center toward U1 district)
-  const diagRoadGeom = new THREE.PlaneGeometry(22, 3400);
-  diagRoadGeom.rotateX(-Math.PI / 2);
-  geometries.push(diagRoadGeom);
-  const diagRoadMesh = new THREE.Mesh(diagRoadGeom, asphaltMat);
-  diagRoadMesh.rotation.y = Math.PI / 4;
-  diagRoadMesh.position.set(1300, 0.04, -1300);
-  group.add(diagRoadMesh);
+  const stripePtsNS = [new THREE.Vector3(350, -0.8, -3800), new THREE.Vector3(350, -0.8, 3800)];
+  const stripeGeomNS = new THREE.BufferGeometry().setFromPoints(stripePtsNS);
+  geometries.push(stripeGeomNS);
+  const stripeLineNS = new THREE.Line(stripeGeomNS, stripeMat);
+  stripeLineNS.computeLineDistances();
+  group.add(stripeLineNS);
 
-  // Perimeter Ring Highway (Radius = 1400m, Width = 22m)
-  const ringGeom = new THREE.RingGeometry(1389, 1411, 64);
-  ringGeom.rotateX(-Math.PI / 2);
-  geometries.push(ringGeom);
-  const ringMesh = new THREE.Mesh(ringGeom, asphaltMat);
-  ringMesh.position.set(0, 0.03, 0);
-  group.add(ringMesh);
-
-  // Ring Highway Amber Centerline
-  const ringDashPoints: THREE.Vector3[] = [];
-  for (let i = 0; i < 64; i += 2) {
-    const th1 = (i / 64) * Math.PI * 2;
-    const th2 = ((i + 1) / 64) * Math.PI * 2;
-    ringDashPoints.push(
-      new THREE.Vector3(Math.cos(th1) * 1400, 0.12, Math.sin(th1) * 1400),
-      new THREE.Vector3(Math.cos(th2) * 1400, 0.12, Math.sin(th2) * 1400)
-    );
-  }
-  const ringDashGeom = new THREE.BufferGeometry().setFromPoints(ringDashPoints);
-  geometries.push(ringDashGeom);
-  group.add(new THREE.LineSegments(ringDashGeom, markingAmberMat));
-
-  objects.push(
-    {
-      id: 'TERRAIN-NORTH-RIDGE',
-      name: 'Outer Sector Ridgelines & Hill Formations',
-      category: 'RIDGE',
-      preset,
-      position: { x: 0, y: 3000, z: 140 },
-      heightM: 140,
-      elevationM: 140,
-      isObstructionEnvelope: false,
-      description: 'Peripheral rolling hill ridges providing elevated low-altitude topography.',
-    },
-    {
-      id: 'HIGHWAY-METRO-NS',
-      name: 'North-South Arterial Expressway',
-      category: 'AIRFIELD',
-      preset,
-      position: { x: 350, y: 0, z: 0 },
-      heightM: 1,
-      isObstructionEnvelope: false,
-      description: 'Dual-carriageway paved military transport corridor with lane markings.',
-    },
-    {
-      id: 'HIGHWAY-RING-PERIMETER',
-      name: 'Metropolitan Perimeter Ring Highway',
-      category: 'AIRFIELD',
-      preset,
-      position: { x: 0, y: 1400, z: 0 },
-      heightM: 1,
-      isObstructionEnvelope: false,
-      description: '1,400m perimeter beltway encircling inner defense zone.',
-    }
-  );
+  objects.push({
+    id: 'TERRAIN-NORTH-RIDGE',
+    name: 'Metropolitan Outer Ridge Sector',
+    category: 'RIDGE',
+    preset,
+    position: { x: 0, y: 3200, z: 140 },
+    heightM: 140,
+    elevationM: 140,
+    isObstructionEnvelope: false,
+    description: 'Elevated outer urban ridgeline framing the metropolitan perimeter.',
+  });
 
   return groundMesh;
 }
 
-function buildFlatTacticalTerrain(
+/**
+ * 5. POPUP-*: Urban Ingress Defense Corridor with Canal and Mid-Rise Blocks.
+ */
+function buildPopupCorridorTerrain(
   terrainSize: number,
-  mapRadiusM: number,
   preset: EnvironmentPreset,
   group: THREE.Group,
   geometries: THREE.BufferGeometry[],
-  materials: THREE.Material[]
+  materials: THREE.Material[],
+  objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize);
+  const segments = 36;
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   groundGeom.rotateX(-Math.PI / 2);
+
+  const pos = groundGeom.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const dist = Math.hypot(x, z);
+
+    // Subtle low peripheral berms beyond 2600m
+    if (dist > 2600) {
+      pos.setY(i, Math.sin(x * 0.001) * Math.cos(z * 0.001) * 35 + (dist - 2600) * 0.015);
+    } else {
+      pos.setY(i, 0);
+    }
+  }
+  groundGeom.computeVertexNormals();
   geometries.push(groundGeom);
 
-  let groundColor = COLOR_CARBON_950;
-  if (preset === 'FOREST_VALLEY') {
-    groundColor = 0x121b15;
-  } else if (preset === 'OPEN_RURAL') {
-    groundColor = 0x1a1e16;
-  }
-
-  const groundMat = new THREE.MeshLambertMaterial({ color: groundColor });
+  const groundMat = new THREE.MeshLambertMaterial({
+    color: 0x141a22,
+    flatShading: true,
+  });
   materials.push(groundMat);
 
   const groundMesh = new THREE.Mesh(groundGeom, groundMat);
   groundMesh.position.y = -1;
   group.add(groundMesh);
 
-  if (preset === 'OPEN_RURAL' || preset === 'SUBURBAN') {
-    const parcelGeom = new THREE.BufferGeometry();
-    const parcelPoints: THREE.Vector3[] = [];
-    const step = 800;
-    for (let x = -mapRadiusM + 400; x <= mapRadiusM - 400; x += step) {
-      for (let z = -mapRadiusM + 400; z <= mapRadiusM - 400; z += step) {
-        if (Math.hypot(x, z) < 700) continue;
-        parcelPoints.push(
-          new THREE.Vector3(x - 300, 0.1, z - 300),
-          new THREE.Vector3(x + 300, 0.1, z - 300),
-          new THREE.Vector3(x + 300, 0.1, z - 300),
-          new THREE.Vector3(x + 300, 0.1, z + 300),
-          new THREE.Vector3(x + 300, 0.1, z + 300),
-          new THREE.Vector3(x - 300, 0.1, z + 300),
-          new THREE.Vector3(x - 300, 0.1, z + 300),
-          new THREE.Vector3(x - 300, 0.1, z - 300)
-        );
-      }
-    }
-    parcelGeom.setFromPoints(parcelPoints);
-    geometries.push(parcelGeom);
-    const parcelMat = new THREE.LineBasicMaterial({
-      color: COLOR_LINE,
-      transparent: true,
-      opacity: 0.4,
-    });
-    materials.push(parcelMat);
-    group.add(new THREE.LineSegments(parcelGeom, parcelMat));
+  // Mid-rise urban street avenues
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x222a36 });
+  materials.push(roadMat);
+
+  const avenueGeom = new THREE.PlaneGeometry(22, 6400);
+  avenueGeom.rotateX(-Math.PI / 2);
+  geometries.push(avenueGeom);
+
+  const aveEast = new THREE.Mesh(avenueGeom, roadMat);
+  aveEast.position.set(400, -0.9, 0);
+  const aveWest = new THREE.Mesh(avenueGeom, roadMat);
+  aveWest.position.set(-850, -0.9, 0);
+  group.add(aveEast, aveWest);
+
+  objects.push({
+    id: 'TERRAIN-POPUP-CORRIDOR',
+    name: 'Pop-Up Low-Altitude Ingress Corridor',
+    category: 'TERRAIN_ZONE',
+    preset,
+    position: { x: 0, y: 1500, z: 0 },
+    heightM: 28,
+    elevationM: 0,
+    isObstructionEnvelope: false,
+    description: 'Street canyon corridor channelizing sudden pop-up threats.',
+  });
+
+  return groundMesh;
+}
+
+/**
+ * 6. DEMO-2: Suburban Logistics & Industrial Park Terrain.
+ */
+function buildSuburbanLogisticsTerrain(
+  terrainSize: number,
+  preset: EnvironmentPreset,
+  group: THREE.Group,
+  geometries: THREE.BufferGeometry[],
+  materials: THREE.Material[],
+  objects: EnvironmentObjectInfo[]
+): THREE.Mesh {
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, 24, 24);
+  groundGeom.rotateX(-Math.PI / 2);
+  geometries.push(groundGeom);
+
+  const groundMat = new THREE.MeshLambertMaterial({
+    color: 0x181e22,
+    flatShading: true,
+  });
+  materials.push(groundMat);
+
+  const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+  groundMesh.position.y = -1;
+  group.add(groundMesh);
+
+  // Wide industrial access roads and freight lanes
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x262f38 });
+  materials.push(roadMat);
+
+  const freightRoadGeom = new THREE.PlaneGeometry(32, 6000);
+  freightRoadGeom.rotateX(-Math.PI / 2);
+  geometries.push(freightRoadGeom);
+
+  const freightRoad = new THREE.Mesh(freightRoadGeom, roadMat);
+  freightRoad.position.set(-600, -0.9, 0);
+  group.add(freightRoad);
+
+  // Logistics compound perimeter ring
+  const compoundGeom = new THREE.PlaneGeometry(2800, 24);
+  compoundGeom.rotateX(-Math.PI / 2);
+  geometries.push(compoundGeom);
+
+  const crossRoad = new THREE.Mesh(compoundGeom, roadMat);
+  crossRoad.position.set(400, -0.9, -600);
+  group.add(crossRoad);
+
+  objects.push({
+    id: 'TERRAIN-LOGISTICS-PERIMETER',
+    name: 'Suburban Logistics Industrial Perimeter',
+    category: 'TERRAIN_ZONE',
+    preset,
+    position: { x: -600, y: 0, z: 0 },
+    heightM: 18,
+    elevationM: 0,
+    isObstructionEnvelope: false,
+    description: 'Flat industrial warehousing plain bounded by freight access roads.',
+  });
+
+  return groundMesh;
+}
+
+/**
+ * 7. PROCEDURAL / COASTAL: Military Airfield with Runway & Taxiways.
+ */
+function buildCoastalAirfieldTerrain(
+  terrainSize: number,
+  preset: EnvironmentPreset,
+  group: THREE.Group,
+  geometries: THREE.BufferGeometry[],
+  materials: THREE.Material[],
+  objects: EnvironmentObjectInfo[]
+): THREE.Mesh {
+  const landGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, 24, 24);
+  landGeom.rotateX(-Math.PI / 2);
+  geometries.push(landGeom);
+
+  const landMat = new THREE.MeshLambertMaterial({ color: 0x161c22, flatShading: true });
+  materials.push(landMat);
+  const landMesh = new THREE.Mesh(landGeom, landMat);
+  landMesh.position.y = -1;
+  group.add(landMesh);
+
+  // Main 2.8km Concrete Runway: X: -800 to 1400 (length 2200m, width 64m)
+  const runwayGeom = new THREE.PlaneGeometry(2200, 64);
+  runwayGeom.rotateX(-Math.PI / 2);
+  geometries.push(runwayGeom);
+
+  const runwayMat = new THREE.MeshLambertMaterial({ color: 0x242a32 });
+  materials.push(runwayMat);
+
+  const runwayMesh = new THREE.Mesh(runwayGeom, runwayMat);
+  runwayMesh.position.set(300, -0.85, 0);
+  group.add(runwayMesh);
+
+  // Runway White Centerline Stripe
+  const stripePts = [new THREE.Vector3(-760, -0.75, 0), new THREE.Vector3(1360, -0.75, 0)];
+  const stripeGeom = new THREE.BufferGeometry().setFromPoints(stripePts);
+  geometries.push(stripeGeom);
+
+  const stripeMat = new THREE.LineDashedMaterial({
+    color: 0xffffff,
+    dashSize: 30,
+    gapSize: 20,
+  });
+  materials.push(stripeMat);
+
+  const stripeLine = new THREE.Line(stripeGeom, stripeMat);
+  stripeLine.computeLineDistances();
+  group.add(stripeLine);
+
+  objects.push({
+    id: 'TERRAIN-COASTAL-RUNWAY',
+    name: 'Military Airfield Runway 09/27',
+    category: 'AIRFIELD',
+    preset,
+    position: { x: 300, y: 0, z: 0 },
+    heightM: 2,
+    elevationM: 0,
+    isObstructionEnvelope: false,
+    description: 'Active 2,200m asphalt runway aligned with eastern maritime approach.',
+  });
+
+  return landMesh;
+}
+
+/**
+ * 8. RANDOM: Deterministically Seeded Procedural Landscape.
+ */
+function buildSeededProceduralTerrain(
+  terrainSize: number,
+  _mapRadiusM: number,
+  descriptor: EnvironmentDescriptor,
+  group: THREE.Group,
+  geometries: THREE.BufferGeometry[],
+  materials: THREE.Material[],
+  objects: EnvironmentObjectInfo[]
+): THREE.Mesh {
+  const seedMod = Math.abs(descriptor.seed) % 4;
+
+  if (seedMod === 0) {
+    return buildForestRiverTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
+  } else if (seedMod === 1) {
+    return buildSwarmMountainTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
+  } else if (seedMod === 2) {
+    return buildCoastalAirfieldTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
+  } else {
+    return buildSuburbanLogisticsTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
   }
+}
+
+function buildFlatTacticalTerrain(
+  terrainSize: number,
+  _mapRadiusM: number,
+  _preset: EnvironmentPreset,
+  group: THREE.Group,
+  geometries: THREE.BufferGeometry[],
+  materials: THREE.Material[]
+): THREE.Mesh {
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, 16, 16);
+  groundGeom.rotateX(-Math.PI / 2);
+  geometries.push(groundGeom);
+
+  const groundMat = new THREE.MeshLambertMaterial({
+    color: COLOR_CARBON_950,
+    wireframe: false,
+    flatShading: true,
+  });
+  materials.push(groundMat);
+
+  const groundMesh = new THREE.Mesh(groundGeom, groundMat);
+  groundMesh.position.y = -1;
+  group.add(groundMesh);
 
   return groundMesh;
 }
@@ -468,39 +775,61 @@ function buildTacticalRings(
   group.add(new THREE.LineLoop(pnrGeom, pnrMat));
 
   objects.push({
-    id: 'ZONE-PNR-CORE',
-    name: 'Restricted Defense Bubble (PNR Perimeter)',
+    id: 'TERRAIN-PNR-CORE',
+    name: 'Point of No Return (PNR) Defense Core',
     category: 'PROTECTED_FACILITY',
     preset,
     position: { x: 0, y: 0, z: 0 },
-    heightM: 500,
+    heightM: 2,
+    elevationM: 0,
     isObstructionEnvelope: false,
-    description: '500m radius Point of No Return. Unauthorized aerial crossing constitutes a terminal breach.',
+    description: `Defended base perimeter at rMin=${rMinM}m. Unclassified penetration is an automatic threat condition.`,
   });
 }
 
 /**
- * Builds procedural 3D terrain surface, roads, and landscape features.
- * Adheres strictly to native Three.js geometry with zero external texture dependencies.
+ * Procedural Terrain Entrypoint.
+ * Selects and constructs the unique terrain morphology based on the scenario's visual profile.
  */
 export function buildProceduralTerrain(descriptor: EnvironmentDescriptor): TerrainBuildResult {
   const group = new THREE.Group();
   group.name = 'ProceduralTerrain';
+
   const objects: EnvironmentObjectInfo[] = [];
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
   let primaryGroundMesh: THREE.Mesh | undefined;
 
-  const { preset, mapRadiusM, rMinM } = descriptor;
+  const { preset, mapRadiusM, rMinM, visualProfile } = descriptor;
   const terrainSize = mapRadiusM * 2.2;
 
-  // 1. Base Ground Surface
-  if (preset === 'MOUNTAIN_RIDGE') {
-    primaryGroundMesh = buildMountainRidgeTerrain(terrainSize, preset, group, geometries, materials, objects);
+  // 1. Base Ground Surface matched to Scenario Visual Profile
+  if (visualProfile === 'SWARM_MOUNTAIN_VALLEY') {
+    primaryGroundMesh = buildSwarmMountainTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'FORMATION_ALPINE_PASS') {
+    primaryGroundMesh = buildAlpinePassTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'SPECTRUM_FOREST_RIVER') {
+    primaryGroundMesh = buildForestRiverTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'DEMO_1_URBAN_METRO') {
+    primaryGroundMesh = buildUrbanDenseTerrain(terrainSize, mapRadiusM, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'POPUP_URBAN_CORRIDOR') {
+    primaryGroundMesh = buildPopupCorridorTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'DEMO_2_SUBURBAN_LOGISTICS') {
+    primaryGroundMesh = buildSuburbanLogisticsTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'PROCEDURAL_COASTAL_AIRFIELD') {
+    primaryGroundMesh = buildCoastalAirfieldTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (visualProfile === 'RANDOM_SEEDED_LANDSCAPE') {
+    primaryGroundMesh = buildSeededProceduralTerrain(terrainSize, mapRadiusM, descriptor, group, geometries, materials, objects);
+  } else if (preset === 'MOUNTAIN_RIDGE') {
+    primaryGroundMesh = buildSwarmMountainTerrain(terrainSize, preset, group, geometries, materials, objects);
   } else if (preset === 'COASTAL_AIRFIELD') {
     primaryGroundMesh = buildCoastalAirfieldTerrain(terrainSize, preset, group, geometries, materials, objects);
   } else if (preset === 'URBAN_DENSE') {
     primaryGroundMesh = buildUrbanDenseTerrain(terrainSize, mapRadiusM, preset, group, geometries, materials, objects);
+  } else if (preset === 'FOREST_VALLEY') {
+    primaryGroundMesh = buildForestRiverTerrain(terrainSize, preset, group, geometries, materials, objects);
+  } else if (preset === 'SUBURBAN') {
+    primaryGroundMesh = buildSuburbanLogisticsTerrain(terrainSize, preset, group, geometries, materials, objects);
   } else {
     primaryGroundMesh = buildFlatTacticalTerrain(terrainSize, mapRadiusM, preset, group, geometries, materials);
   }
