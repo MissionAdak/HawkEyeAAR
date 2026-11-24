@@ -214,4 +214,30 @@ test.describe('TASK 28 — Tactical Viewport, Distinct Presentation, Auto Focus 
     const shotPath = path.join(process.cwd(), 'tests/e2e/screenshots/task28_03_active_engagement.png');
     await page.screenshot({ path: shotPath, fullPage: true });
   });
+
+  test('Fix D: Default 3D view on startup displays 3D canvas and [V] 2D RADAR toggle button', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/?view=3D');
+
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // Verify 3D canvas is active on startup
+    const canvas3D = page.locator('.radar-frame canvas.cursor-grab');
+    await expect(canvas3D).toBeVisible();
+
+    // Verify toggle button says [V] 2D RADAR
+    const toggle2DBtn = page.getByRole('button', { name: /\[V\] 2D RADAR/i });
+    await expect(toggle2DBtn).toBeVisible();
+
+    // Click [V] 2D RADAR to switch to 2D
+    await toggle2DBtn.click();
+    const canvas2D = page.locator('.radar-frame canvas.cursor-crosshair');
+    await expect(canvas2D).toBeVisible();
+
+    // Toggle button should now say [V] 3D VIEW
+    const toggle3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DBtn).toBeVisible();
+  });
 });
