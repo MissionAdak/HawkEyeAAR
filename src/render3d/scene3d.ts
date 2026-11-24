@@ -657,7 +657,10 @@ export class Scene3D {
       const targetPixelSize = targetCategory === 'RADAR_SYMBOL' ? 34 : 48;
 
       // Update dedicated time-normalized motion filter (Task 29)
-      const xform = this.motionFilter.updateTrack(track, camera, viewportHeight, targetPixelSize);
+      const nowMs = typeof observationContext?.currentSimMs === 'number' && Number.isFinite(observationContext.currentSimMs)
+        ? observationContext.currentSimMs
+        : undefined;
+      const xform = this.motionFilter.updateTrack(track, camera, viewportHeight, targetPixelSize, nowMs);
 
       record.group.position.set(xform.position.x, 0, xform.position.z);
       record.modelAnchor.position.set(0, xform.altitudeM, 0);

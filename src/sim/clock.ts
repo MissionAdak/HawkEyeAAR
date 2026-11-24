@@ -56,6 +56,10 @@ export class SimClock {
     return this.isPaused;
   }
 
+  public get isRunning(): boolean {
+    return this.isInitialized && !this.isPaused;
+  }
+
   /**
    * Advances accumulator and returns number of 50ms ticks to execute this frame,
    * plus the interpolation alpha [0, 1) for rendering.

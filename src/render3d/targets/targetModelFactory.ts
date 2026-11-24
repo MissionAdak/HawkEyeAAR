@@ -192,7 +192,7 @@ export class TargetModelFactory {
         }
         break;
       case 'RADAR_SYMBOL':
-        model = buildRadarContactSymbolModel(palette);
+        model = buildRadarContactSymbolModel(palette, trackNo);
         break;
       case 'UNKNOWN_AIRFRAME':
         model = buildUnresolvedAirframeModel(palette);

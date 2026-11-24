@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --radar: min(640px, calc(100vh - 180px), calc(100vw - 580px));
-  --radar-w-3d: min(960px, max(var(--radar), calc(100vw - 778px)));
+  --radar: min(640px, calc(100vh - 180px), calc(100vw - 760px));
+  --radar-w-3d: min(960px, calc(100vw - 760px));
 }
 
 html, body, #root {

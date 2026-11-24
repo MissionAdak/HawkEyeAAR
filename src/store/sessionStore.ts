@@ -197,7 +197,7 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } | null {
     return null;
   }
   const currentTick = engineInstance.tickIndex;
-  const tRawMs = typeof performance !== 'undefined'
+  const tRawMs = typeof performance !== 'undefined' && clockInstance.isRunning
     ? clockInstance.getRawMs()
     : currentTick * 50;
   const applyTick = applyTickFor(tRawMs, currentTick);

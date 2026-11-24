@@ -991,7 +991,7 @@ let toastCounter = 0;
       <div className="console-center bg-carbon-950">
         <div className="flex items-center justify-between w-full h-full relative px-1">
           {/* Left Gutter: Range Rings Legend (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pr-1 select-none shrink-0 w-[92px] overflow-hidden">
+          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pr-1 select-none shrink-0 w-[84px] overflow-hidden">
             <div className="border-l border-phosphorDim pl-1">
               <span className="text-phosphor block font-bold whitespace-nowrap">5.0 km</span>
               <span className="whitespace-nowrap tracking-tighter">MAX RADAR</span>
@@ -1015,12 +1015,13 @@ let toastCounter = 0;
             style={
               viewMode === '3D'
                 ? {
-                    width: 'var(--radar-w-3d, min(960px, max(var(--radar), calc(100vw - 778px))))',
-                    maxWidth: 'calc(100% - 194px)',
+                    width: 'var(--radar-w-3d, min(960px, calc(100vw - 760px)))',
+                    maxWidth: 'calc(100% - 180px)',
                     height: 'var(--radar)',
                   }
                 : {
                     width: 'var(--radar)',
+                    maxWidth: 'calc(100% - 180px)',
                     height: 'var(--radar)',
                   }
             }
@@ -1156,7 +1157,7 @@ let toastCounter = 0;
           </div>
 
           {/* Right Gutter: Active Mode Telemetry (restored across tactical displays) */}
-          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pl-1 select-none shrink-0 w-[92px] text-right overflow-hidden">
+          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pl-1 select-none shrink-0 w-[84px] text-right overflow-hidden">
             <div className="border-r border-line pr-1 text-right">
               <span className="text-text-main block font-bold whitespace-nowrap">30 RPM</span>
               <span className="whitespace-nowrap tracking-tighter">SWEEP RATE</span>
