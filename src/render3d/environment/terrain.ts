@@ -5,6 +5,8 @@ import type {
   EnvironmentPreset,
   ScenarioVisualProfile,
 } from './types';
+import { SPECTRUM_RIVER_POINTS } from './water';
+import { resolveRandomBiome } from './descriptor';
 
 // Tactical palette colors
 const COLOR_CARBON_950 = 0x0D1117;
@@ -80,13 +82,12 @@ export function getSwarmMountainElevation(simX: number, simY: number): number {
 
 /**
  * Alpine pass terrain elevation featuring twin dominant massifs (Mount Apex & Mount Summit)
- * with a high-altitude mountain pass and lake plateau.
+ * with a high-altitude mountain pass and excavated glacial tarn lake basin.
  */
 export function getAlpinePassElevation(simX: number, simY: number): number {
   const threeX = simX;
   const threeZ = -simY;
   const dist = Math.hypot(threeX, threeZ);
-  if (dist < 1000) return 0;
 
   // Peak 1: Mount Apex (North-West massif)
   const d1 = Math.hypot(threeX - (-2800), threeZ - 2400);
@@ -97,20 +98,138 @@ export function getAlpinePassElevation(simX: number, simY: number): number {
   const peak2 = Math.max(0, 240 * Math.exp(-(d2 * d2) / (2 * 1050 * 1050)));
 
   // Flanking pass ridges
-  const passRidge = Math.max(0, Math.sin(threeX * 0.0009) * Math.cos(threeZ * 0.0012) * 110 + (dist - 1000) * 0.02);
+  let passRidge = 0;
+  if (dist > 1000) {
+    passRidge = Math.max(0, Math.sin(threeX * 0.0009) * Math.cos(threeZ * 0.0012) * 110 + (dist - 1000) * 0.02);
+  }
 
   // Winding pass corridor attenuation along X = 0
   const passCorridorFactor = Math.min(1, Math.abs(threeX) / 800);
   const smoothPass = passCorridorFactor * passCorridorFactor;
 
-  // Lake depression at (-700, 2200)
-  const dLake = Math.hypot(threeX - (-700), threeZ - 2200);
-  let lakePlateau = 0;
-  if (dLake < 500) {
-    lakePlateau = 18;
+  const mountainHeight = dist < 1000 ? 0 : Math.max(peak1, peak2, passRidge * smoothPass);
+
+  // Glacial tarn lake basin at (-700, 2200)
+  const dxLake = (threeX - (-700)) / 420;
+  const dzLake = (threeZ - 2200) / 302;
+  const dLakeNorm = Math.hypot(dxLake, dzLake);
+
+  if (dLakeNorm <= 1.0) {
+    // Inside lake water surface (water at 18m, world Y = 18m)
+    // Floor elevation: 13m at center to 16.5m at edge (world Y = 12m to 15.5m)
+    return 13 + 3.5 * dLakeNorm * dLakeNorm;
+  } else if (dLakeNorm <= 1.25) {
+    // Rocky moraine rim enclosing the lake: rises to 26m
+    const t = (dLakeNorm - 1.0) / 0.25;
+    const smoothT = t * t * (3 - 2 * t);
+    return 16.5 + (26 - 16.5) * smoothT;
+  } else if (dLakeNorm <= 1.7) {
+    // Transition from moraine rim (26m) into surrounding mountain slope
+    const t = (dLakeNorm - 1.25) / 0.45;
+    const smoothT = t * t * (3 - 2 * t);
+    return 26 + (mountainHeight - 26) * smoothT;
   }
 
-  return Math.max(lakePlateau, Math.max(peak1, peak2, passRidge * smoothPass));
+  return mountainHeight;
+}
+
+let cachedRiverPoints: Array<{ x: number; z: number }> | null = null;
+function getSampledRiverPoints(): Array<{ x: number; z: number }> {
+  if (!cachedRiverPoints) {
+    const vPoints = SPECTRUM_RIVER_POINTS.map((p) => new THREE.Vector2(p.x, p.z));
+    const curve = new THREE.SplineCurve(vPoints);
+    const pts = curve.getPoints(120);
+    cachedRiverPoints = pts.map((p) => ({ x: p.x, z: p.y }));
+  }
+  return cachedRiverPoints;
+}
+
+export function getDistanceToRiverSpline(threeX: number, threeZ: number): number {
+  const pts = getSampledRiverPoints();
+  let minDist = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const d = distToLineSegment(threeX, threeZ, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+export function getForestRiverElevation(simX: number, simY: number): number {
+  const threeX = simX;
+  const threeZ = -simY;
+  const distFromCenter = Math.hypot(threeX, threeZ);
+
+  let baseElev = 0;
+  if (distFromCenter > 1600) {
+    const roll = Math.sin(threeX * 0.0008) * Math.cos(threeZ * 0.0007);
+    baseElev = Math.max(0, roll * 45 + (distFromCenter - 1600) * 0.015);
+  }
+
+  const distRiver = getDistanceToRiverSpline(threeX, threeZ);
+  const riverHalfWidth = 70;
+  const bankTransition = 70;
+
+  if (distRiver <= riverHalfWidth) {
+    // River channel floor: -2.5m (rendered Y = -3.5m, water at -0.6m -> depth 2.9m)
+    return -2.5;
+  } else if (distRiver < riverHalfWidth + bankTransition) {
+    const t = (distRiver - riverHalfWidth) / bankTransition;
+    const smoothT = t * t * (3 - 2 * t);
+    return -2.5 + (baseElev - (-2.5)) * smoothT;
+  }
+
+  return baseElev;
+}
+
+export function getCoastalAirfieldElevation(simX: number, _simY: number): number {
+  if (simX <= 1350) return 0;
+  if (simX >= 1650) return -4.0;
+  const t = (simX - 1350) / 300;
+  const smoothT = t * t * (3 - 2 * t);
+  return -4.0 * smoothT;
+}
+
+export function getSuburbanReservoirElevation(threeX: number, threeZ: number): number {
+  const dx = Math.abs(threeX - 1600);
+  const dz = Math.abs(threeZ - (-1400));
+  const halfW = 170;
+  const halfL = 130;
+
+  if (dx <= halfW && dz <= halfL) {
+    return -2.5;
+  }
+  const margin = 35;
+  if (dx <= halfW + margin && dz <= halfL + margin) {
+    const tx = Math.max(0, (dx - halfW) / margin);
+    const tz = Math.max(0, (dz - halfL) / margin);
+    const t = Math.max(tx, tz);
+    const smoothT = t * t * (3 - 2 * t);
+    return -2.5 + 2.5 * smoothT;
+  }
+  return 0;
+}
+
+export function getPopupCanalElevation(threeX: number, threeZ: number): number {
+  const inLength = threeZ >= -2650 && threeZ <= 2650;
+  if (inLength) {
+    const distCanal = Math.abs(threeX - (-450));
+    const canalHalfW = 23;
+    if (distCanal <= canalHalfW) {
+      return -3.5;
+    }
+    const margin = 12;
+    if (distCanal <= canalHalfW + margin) {
+      const t = (distCanal - canalHalfW) / margin;
+      const smoothT = t * t * (3 - 2 * t);
+      return -3.5 + 3.5 * smoothT;
+    }
+  }
+
+  const dist = Math.hypot(threeX, threeZ);
+  if (dist > 2600) {
+    return Math.sin(threeX * 0.001) * Math.cos(threeZ * 0.001) * 35 + (dist - 2600) * 0.015;
+  }
+  return 0;
 }
 
 /**
@@ -121,11 +240,17 @@ export function getAlpinePassElevation(simX: number, simY: number): number {
 export function getTerrainElevation(
   simX: number,
   simY: number,
-  presetOrProfile: EnvironmentPreset | ScenarioVisualProfile = 'URBAN_DENSE'
+  presetOrProfile: EnvironmentPreset | ScenarioVisualProfile = 'URBAN_DENSE',
+  seed?: number
 ): number {
   const threeX = simX;
   const threeZ = -simY;
   const distFromCenter = Math.hypot(threeX, threeZ);
+
+  if (presetOrProfile === 'RANDOM_SEEDED_LANDSCAPE' && seed !== undefined) {
+    const biome = resolveRandomBiome(seed);
+    return getTerrainElevation(simX, simY, biome.visualProfile);
+  }
 
   if (presetOrProfile === 'SWARM_MOUNTAIN_VALLEY') {
     return getSwarmMountainElevation(simX, simY);
@@ -140,17 +265,22 @@ export function getTerrainElevation(
   if (presetOrProfile === 'FORMATION_ALPINE_PASS') {
     return getAlpinePassElevation(simX, simY);
   }
+  if (presetOrProfile === 'SPECTRUM_FOREST_RIVER' || presetOrProfile === 'FOREST_VALLEY') {
+    return getForestRiverElevation(simX, simY);
+  }
+  if (presetOrProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || presetOrProfile === 'COASTAL_AIRFIELD') {
+    return getCoastalAirfieldElevation(simX, simY);
+  }
+  if (presetOrProfile === 'DEMO_2_SUBURBAN_LOGISTICS' || presetOrProfile === 'SUBURBAN') {
+    return getSuburbanReservoirElevation(threeX, threeZ);
+  }
+  if (presetOrProfile === 'POPUP_URBAN_CORRIDOR') {
+    return getPopupCanalElevation(threeX, threeZ);
+  }
   if (presetOrProfile === 'URBAN_DENSE' || presetOrProfile === 'DEMO_1_URBAN_METRO') {
     if (distFromCenter > 2200) {
       const ridgeFactor = Math.sin(threeX * 0.0010 + 0.5) * Math.cos(threeZ * 0.0008 - 0.3);
       return Math.max(0, ridgeFactor * 140 + (distFromCenter - 2200) * 0.025);
-    }
-    return 0;
-  }
-  if (presetOrProfile === 'SPECTRUM_FOREST_RIVER' || presetOrProfile === 'FOREST_VALLEY') {
-    if (distFromCenter > 1600) {
-      const roll = Math.sin(threeX * 0.0008) * Math.cos(threeZ * 0.0007);
-      return Math.max(0, roll * 45 + (distFromCenter - 1600) * 0.015);
     }
     return 0;
   }
@@ -328,15 +458,7 @@ function buildForestRiverTerrain(
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const dist = Math.hypot(x, z);
-
-    if (dist > 1600) {
-      const roll = Math.sin(x * 0.0008) * Math.cos(z * 0.0007);
-      const elev = Math.max(0, roll * 45 + (dist - 1600) * 0.015);
-      pos.setY(i, elev);
-    } else {
-      pos.setY(i, 0);
-    }
+    pos.setY(i, getForestRiverElevation(x, -z));
   }
   groundGeom.computeVertexNormals();
   geometries.push(groundGeom);
@@ -497,7 +619,7 @@ function buildPopupCorridorTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const segments = 36;
+  const segments = 48;
   const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   groundGeom.rotateX(-Math.PI / 2);
 
@@ -505,14 +627,7 @@ function buildPopupCorridorTerrain(
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const dist = Math.hypot(x, z);
-
-    // Subtle low peripheral berms beyond 2600m
-    if (dist > 2600) {
-      pos.setY(i, Math.sin(x * 0.001) * Math.cos(z * 0.001) * 35 + (dist - 2600) * 0.015);
-    } else {
-      pos.setY(i, 0);
-    }
+    pos.setY(i, getPopupCanalElevation(x, z));
   }
   groundGeom.computeVertexNormals();
   geometries.push(groundGeom);
@@ -567,8 +682,17 @@ function buildSuburbanLogisticsTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, 24, 24);
+  const segments = 44;
+  const groundGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   groundGeom.rotateX(-Math.PI / 2);
+
+  const pos = groundGeom.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    pos.setY(i, getSuburbanReservoirElevation(x, z));
+  }
+  groundGeom.computeVertexNormals();
   geometries.push(groundGeom);
 
   const groundMat = new THREE.MeshLambertMaterial({
@@ -628,8 +752,17 @@ function buildCoastalAirfieldTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const landGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, 24, 24);
+  const segments = 48;
+  const landGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
   landGeom.rotateX(-Math.PI / 2);
+
+  const pos = landGeom.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    pos.setY(i, getCoastalAirfieldElevation(x, -z));
+  }
+  landGeom.computeVertexNormals();
   geometries.push(landGeom);
 
   const landMat = new THREE.MeshLambertMaterial({ color: 0x161c22, flatShading: true });
@@ -693,14 +826,17 @@ function buildSeededProceduralTerrain(
   materials: THREE.Material[],
   objects: EnvironmentObjectInfo[]
 ): THREE.Mesh {
-  const seedMod = Math.abs(descriptor.seed) % 4;
-
-  if (seedMod === 0) {
+  const biome = resolveRandomBiome(descriptor.seed);
+  if (biome.visualProfile === 'SPECTRUM_FOREST_RIVER') {
     return buildForestRiverTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
-  } else if (seedMod === 1) {
+  } else if (biome.visualProfile === 'SWARM_MOUNTAIN_VALLEY') {
     return buildSwarmMountainTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
-  } else if (seedMod === 2) {
+  } else if (biome.visualProfile === 'PROCEDURAL_COASTAL_AIRFIELD') {
     return buildCoastalAirfieldTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
+  } else if (biome.visualProfile === 'FORMATION_ALPINE_PASS') {
+    return buildAlpinePassTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
+  } else if (biome.visualProfile === 'POPUP_URBAN_CORRIDOR') {
+    return buildPopupCorridorTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
   } else {
     return buildSuburbanLogisticsTerrain(terrainSize, descriptor.preset, group, geometries, materials, objects);
   }

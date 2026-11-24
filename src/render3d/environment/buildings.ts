@@ -3,6 +3,7 @@ import type { ZoneSpec } from '@/sim/types';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo, EnvironmentPreset, ScenarioVisualProfile } from './types';
 import { toThree } from '../coords';
 import { getTerrainElevation } from './terrain';
+import { resolveRandomBiome } from './descriptor';
 
 // Tactical colors
 const COLOR_PHOSPHOR = 0x00ff66;
@@ -1074,6 +1075,10 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   const materials: THREE.Material[] = [];
 
   const { preset, visualProfile, zones, rMinM } = descriptor;
+  let activeProfile = visualProfile;
+  if (visualProfile === 'RANDOM_SEEDED_LANDSCAPE') {
+    activeProfile = resolveRandomBiome(descriptor.seed).visualProfile;
+  }
 
   if (groundMesh) {
     groundMesh.updateMatrixWorld(true);
@@ -1099,7 +1104,7 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
       );
     }
     // Case A: No ground mesh supplied -> preserve analytical fallback for direct-call compatibility
-    return getTerrainElevation(simX, simY, visualProfile ?? preset) - 1;
+    return getTerrainElevation(simX, simY, activeProfile ?? preset, descriptor.seed) - 1;
   }
 
   // 1. Core Materials
@@ -1191,19 +1196,19 @@ export function buildProceduralBuildings(descriptor: EnvironmentDescriptor, grou
   buildUrbanDistrictClusters(zones, ctx);
 
   // C. Profile/Preset-specific Infrastructure
-  if (visualProfile === 'DEMO_1_URBAN_METRO' || preset === 'URBAN_DENSE') {
+  if (activeProfile === 'DEMO_1_URBAN_METRO' || (!activeProfile && preset === 'URBAN_DENSE')) {
     buildUrbanInfrastructure(ctx);
-  } else if (visualProfile === 'DEMO_2_SUBURBAN_LOGISTICS') {
+  } else if (activeProfile === 'DEMO_2_SUBURBAN_LOGISTICS') {
     buildSuburbanIndustrialPark(ctx);
-  } else if (visualProfile === 'SWARM_MOUNTAIN_VALLEY') {
+  } else if (activeProfile === 'SWARM_MOUNTAIN_VALLEY') {
     buildSwarmMountainOutposts(ctx);
-  } else if (visualProfile === 'SPECTRUM_FOREST_RIVER') {
+  } else if (activeProfile === 'SPECTRUM_FOREST_RIVER') {
     buildForestRiverStructures(ctx);
-  } else if (visualProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || preset === 'COASTAL_AIRFIELD') {
+  } else if (activeProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || (!activeProfile && preset === 'COASTAL_AIRFIELD')) {
     buildAirfieldStructures(ctx);
-  } else if (visualProfile === 'FORMATION_ALPINE_PASS') {
+  } else if (activeProfile === 'FORMATION_ALPINE_PASS') {
     buildAlpinePassStructures(ctx);
-  } else if (visualProfile === 'POPUP_URBAN_CORRIDOR') {
+  } else if (activeProfile === 'POPUP_URBAN_CORRIDOR') {
     buildPopupCorridorBuildings(ctx);
   } else if (preset === 'SUBURBAN' || preset === 'OPEN_RURAL') {
     buildPerimeterMasts(ctx);

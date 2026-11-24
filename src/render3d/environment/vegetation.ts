@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './types';
 import { toThree } from '../coords';
 import { getTerrainElevation } from './terrain';
+import { resolveRandomBiome } from './descriptor';
 
 export interface VegetationBuildResult {
   group: THREE.Group;
@@ -20,6 +21,10 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
   const materials: THREE.Material[] = [];
 
   const { preset, visualProfile, zones, seed } = descriptor;
+  let activeProfile = visualProfile;
+  if (visualProfile === 'RANDOM_SEEDED_LANDSCAPE') {
+    activeProfile = resolveRandomBiome(seed).visualProfile;
+  }
 
   // Base materials for procedural trees
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x3d2817 });
@@ -114,7 +119,7 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
   };
 
   // Distinct cluster parameters per scenario visual profile
-  if (visualProfile === 'SPECTRUM_FOREST_RIVER' || preset === 'FOREST_VALLEY') {
+  if (activeProfile === 'SPECTRUM_FOREST_RIVER' || (!activeProfile && preset === 'FOREST_VALLEY')) {
     // Dense woodland: 7 forest clusters flanking the river
     const clusters = 7;
     for (let c = 0; c < clusters; c++) {
@@ -252,7 +257,7 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
         { x, z: -324, scale: 0.75, isConifer: false }
       );
     }
-  } else if (visualProfile === 'POPUP_URBAN_CORRIDOR') {
+  } else if (activeProfile === 'POPUP_URBAN_CORRIDOR') {
     // Mid-rise street trees along urban avenues
     for (let z = -2200; z <= 2200; z += 110) {
       treePositions.push(
@@ -260,7 +265,7 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
         { x: -866, z, scale: 0.7, isConifer: false }
       );
     }
-  } else if (visualProfile === 'DEMO_2_SUBURBAN_LOGISTICS' || preset === 'SUBURBAN') {
+  } else if (activeProfile === 'DEMO_2_SUBURBAN_LOGISTICS' || (!activeProfile && preset === 'SUBURBAN')) {
     // Sparse perimeter trees around logistics park
     const clusters = 3;
     for (let c = 0; c < clusters; c++) {
@@ -279,7 +284,7 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
         });
       }
     }
-  } else if (visualProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || preset === 'COASTAL_AIRFIELD') {
+  } else if (activeProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || (!activeProfile && preset === 'COASTAL_AIRFIELD')) {
     // Coastal scrub near airfield perimeter
     for (let t = 0; t < 25; t++) {
       treePositions.push({
@@ -313,7 +318,7 @@ export function buildProceduralVegetation(descriptor: EnvironmentDescriptor): Ve
     for (let i = 0; i < totalTrees; i++) {
       const t = treePositions[i];
       // Accurate terrain elevation sampling: Tree foundation sits directly on ground surface (Task 30 Fix E)
-      const groundElev = getTerrainElevation(t.x, -t.z, visualProfile ?? preset);
+      const groundElev = getTerrainElevation(t.x, -t.z, activeProfile ?? preset, seed);
 
       dummy.position.set(t.x, groundElev - 1, t.z);
       dummy.scale.set(t.scale, t.scale, t.scale);

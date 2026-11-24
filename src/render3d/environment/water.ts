@@ -1,13 +1,26 @@
 import * as THREE from 'three';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './types';
+import { resolveRandomBiome } from './descriptor';
+
+export const SPECTRUM_RIVER_POINTS: Array<{ x: number; z: number }> = [
+  { x: -800, z: 4600 },
+  { x: -1200, z: 3200 },
+  { x: -1600, z: 1800 },
+  { x: -1400, z: 500 },
+  { x: -1700, z: -900 },
+  { x: -2300, z: -2200 },
+  { x: -1800, z: -3500 },
+  { x: 400, z: -4300 },
+  { x: 2600, z: -4700 },
+];
 
 // Tactical military water palette
-const COLOR_DEEP_OCEAN = 0x0f3b60;
+const COLOR_DEEP_OCEAN = 0x0c4a6e;
 const COLOR_RIVER_WATER = 0x0284c7;
 const COLOR_ALPINE_LAKE = 0x0ea5e9;
 const COLOR_RESERVOIR_WATER = 0x1e3a5f;
 const COLOR_CANAL_WATER = 0x164e63;
-const COLOR_BEACH_SAND = 0xc2b280;
+const COLOR_BEACH_SAND = 0xd4b886;
 const COLOR_RIVERBANK = 0x57534e;
 const COLOR_ROCKY_SHORE = 0x52525b;
 const COLOR_CONCRETE_WALL = 0x475569;
@@ -231,6 +244,10 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
   const materials: THREE.Material[] = [];
 
   const { preset, visualProfile } = descriptor;
+  let activeProfile = visualProfile;
+  if (visualProfile === 'RANDOM_SEEDED_LANDSCAPE') {
+    activeProfile = resolveRandomBiome(descriptor.seed).visualProfile;
+  }
 
   // Helper to register an inspectable water feature
   function registerWaterFeature(
@@ -258,20 +275,8 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
   }
 
   // 1. SPECTRUM-1: Dense Forest Valley with Winding Blue River & Tactical Bridges
-  if (visualProfile === 'SPECTRUM_FOREST_RIVER' || preset === 'FOREST_VALLEY') {
-    const riverPoints = [
-      { x: -800, z: 4600 },
-      { x: -1200, z: 3200 },
-      { x: -1600, z: 1800 },
-      { x: -1400, z: 500 },
-      { x: -1700, z: -900 },
-      { x: -2300, z: -2200 },
-      { x: -1800, z: -3500 },
-      { x: 400, z: -4300 },
-      { x: 2600, z: -4700 },
-    ];
-
-    const { waterMesh } = buildWindingRiver(riverPoints, 140, -0.6, group, geometries, materials);
+  if (activeProfile === 'SPECTRUM_FOREST_RIVER' || (!activeProfile && preset === 'FOREST_VALLEY')) {
+    const { waterMesh } = buildWindingRiver(SPECTRUM_RIVER_POINTS, 140, -0.6, group, geometries, materials);
     registerWaterFeature(
       'WATER-RIVER-VALLEY',
       'Emerald Valley Meandering River',
@@ -287,14 +292,17 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
   }
 
   // 2. PROCEDURAL / COASTAL_AIRFIELD: Ocean, Beach & Breakwater Jetty
-  else if (visualProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || preset === 'COASTAL_AIRFIELD') {
-    // Ocean Plane on eastern flank: X from 1650m to 5200m, Z from -5200m to 5200m
-    const oceanGeom = new THREE.PlaneGeometry(3600, 10400, 32, 32);
+  else if (activeProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || (!activeProfile && preset === 'COASTAL_AIRFIELD')) {
+    // 1. Ocean Water Plane on eastern flank: X from 1490m to 5200m (width 3710m, centered at X = 3345m)
+    // Water surface at Y = -0.5m. Seafloor is at Y = -5.0m (elev -4.0m), so depth is 4.5m.
+    const oceanWidth = 3710;
+    const oceanLength = 10400;
+    const oceanGeom = new THREE.PlaneGeometry(oceanWidth, oceanLength, 32, 32);
     oceanGeom.rotateX(-Math.PI / 2);
     geometries.push(oceanGeom);
 
     const oceanMat = new THREE.MeshLambertMaterial({
-      color: COLOR_DEEP_OCEAN,
+      color: COLOR_DEEP_OCEAN, // Deep oceanic marine blue
       transparent: true,
       opacity: 0.88,
       flatShading: true,
@@ -302,64 +310,144 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
     materials.push(oceanMat);
 
     const oceanMesh = new THREE.Mesh(oceanGeom, oceanMat);
-    oceanMesh.position.set(3450, -2.2, 0);
+    oceanMesh.position.set(3345, -0.5, 0);
     group.add(oceanMesh);
 
     registerWaterFeature(
       'WATER-OCEAN-COAST',
       'Eastern Maritime Ocean & Horizon',
       'OCEAN',
-      { x: 3200, y: 0, z: -2 },
+      { x: 3345, y: 0, z: -0.5 },
       oceanMesh,
       'Active maritime sea lane and open ocean horizon bordering military coastal airfield.'
     );
 
-    // Sandy beach shoreline transition strip (X: 1480m to 1680m)
-    const beachGeom = new THREE.PlaneGeometry(240, 10400, 12, 32);
+    // 2. Sandy Beach: Sloping intertidal beach from X = 1350m to X = 1510m (width 160m, centered at X = 1430m)
+    // Meets the flat airfield tarmac at X = 1350 (Y = -0.85m) and slopes down into the water at X = 1500 (Y = -0.95m).
+    const beachWidth = 160;
+    const beachGeom = new THREE.PlaneGeometry(beachWidth, 10400, 16, 32);
     beachGeom.rotateX(-Math.PI / 2);
+    const beachPos = beachGeom.attributes.position;
+    for (let i = 0; i < beachPos.count; i++) {
+      const lx = beachPos.getX(i);
+      const lz = beachPos.getZ(i);
+      const t = (lx + beachWidth / 2) / beachWidth; // 0 at west, 1 at east
+      // Subtle natural dune undulations along Z
+      const undulation = Math.sin(lz * 0.005) * Math.cos(lz * 0.002) * 0.2;
+      const vy = 0.15 - t * 0.55 + undulation * (1 - t * 0.7);
+      beachPos.setY(i, vy);
+    }
+    beachGeom.computeVertexNormals();
     geometries.push(beachGeom);
 
     const beachMat = new THREE.MeshLambertMaterial({
-      color: COLOR_BEACH_SAND,
+      color: COLOR_BEACH_SAND, // Natural warm coastal beach sand
       flatShading: true,
     });
     materials.push(beachMat);
 
     const beachMesh = new THREE.Mesh(beachGeom, beachMat);
-    beachMesh.position.set(1560, -1.2, 0);
+    beachMesh.position.set(1430, -0.9, 0);
     group.add(beachMesh);
 
     registerWaterFeature(
       'WATER-BEACH-SHORE',
       'Coastal Shoreline & Sandy Beach',
       'BEACH',
-      { x: 1560, y: 0, z: -1 },
+      { x: 1430, y: 0, z: -0.9 },
       beachMesh,
       'Intertidal sand bar and sloping coastal beach transitioning from military runway to deep water.'
     );
 
-    // Breakwater Jetty extending 360m into the sea at (X: 1650 to 2010, Z: -600)
-    const jettyGeom = new THREE.BoxGeometry(360, 4, 32);
+    // 3. Wet Sand Shoreline Margin (X: 1490m to 1540m, width 50m, centered at X = 1515m)
+    // Darker, damp wet sand lapped by waves just at the waterline
+    const wetSandWidth = 50;
+    const wetSandGeom = new THREE.PlaneGeometry(wetSandWidth, 10400, 4, 32);
+    wetSandGeom.rotateX(-Math.PI / 2);
+    geometries.push(wetSandGeom);
+
+    const wetSandMat = new THREE.MeshLambertMaterial({
+      color: 0x9e875a, // Darker wet sand
+      flatShading: true,
+    });
+    materials.push(wetSandMat);
+
+    const wetSandMesh = new THREE.Mesh(wetSandGeom, wetSandMat);
+    wetSandMesh.position.set(1515, -0.65, 0);
+    group.add(wetSandMesh);
+
+    // 4. Surf Foam / Breaking Wave Wash Ribbon (X: 1495m to 1515m, width 20m, centered at X = 1505m)
+    // Translucent wave froth along the shoreline where water meets the beach
+    const foamWidth = 20;
+    const foamGeom = new THREE.PlaneGeometry(foamWidth, 10400, 2, 32);
+    foamGeom.rotateX(-Math.PI / 2);
+    geometries.push(foamGeom);
+
+    const foamMat = new THREE.MeshBasicMaterial({
+      color: 0xf0fdfa,
+      transparent: true,
+      opacity: 0.65,
+    });
+    materials.push(foamMat);
+
+    const foamMesh = new THREE.Mesh(foamGeom, foamMat);
+    foamMesh.position.set(1505, -0.48, 0);
+    group.add(foamMesh);
+
+    // 5. Heavy Armored Breakwater Jetty extending into the sea at Z = -600 (X: 1460 to 1960, length 500m)
+    const jettyLen = 500;
+    const jettyGeom = new THREE.BoxGeometry(jettyLen, 4.5, 36);
     geometries.push(jettyGeom);
-    const jettyMat = new THREE.MeshLambertMaterial({ color: COLOR_ROCKY_SHORE });
+    const jettyMat = new THREE.MeshLambertMaterial({ color: 0x334155 }); // Slate armored breakwater stone
     materials.push(jettyMat);
 
     const jettyMesh = new THREE.Mesh(jettyGeom, jettyMat);
-    jettyMesh.position.set(1830, -0.2, -600);
+    jettyMesh.position.set(1460 + jettyLen / 2, 1.2, -600);
     group.add(jettyMesh);
 
-    // Navigation beacon light on jetty tip
-    const beaconGeom = new THREE.CylinderGeometry(1.2, 1.8, 12, 8);
+    // Upper concrete pier walkway on jetty
+    const pierGeom = new THREE.BoxGeometry(jettyLen - 20, 1.2, 22);
+    geometries.push(pierGeom);
+    const pierMat = new THREE.MeshLambertMaterial({ color: COLOR_CONCRETE_WALL });
+    materials.push(pierMat);
+    const pierMesh = new THREE.Mesh(pierGeom, pierMat);
+    pierMesh.position.set(1460 + jettyLen / 2, 3.6, -600);
+    group.add(pierMesh);
+
+    // Lighthouse / Navigation beacon tower on jetty tip
+    const beaconGeom = new THREE.CylinderGeometry(2.0, 3.2, 16, 12);
     geometries.push(beaconGeom);
-    const beaconMat = new THREE.MeshLambertMaterial({ color: 0xe2e8f0 });
+    const beaconMat = new THREE.MeshLambertMaterial({ color: 0xf1f5f9 });
     materials.push(beaconMat);
     const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
-    beaconMesh.position.set(1990, 6, -600);
+    beaconMesh.position.set(1940, 11, -600);
     group.add(beaconMesh);
+
+    // Flashing lantern atop lighthouse
+    const lanternGeom = new THREE.SphereGeometry(1.6, 8, 8);
+    geometries.push(lanternGeom);
+    const lanternMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+    materials.push(lanternMat);
+    const lanternMesh = new THREE.Mesh(lanternGeom, lanternMat);
+    lanternMesh.position.set(1940, 20, -600);
+    group.add(lanternMesh);
+
+    // 6. Offshore Navigational Channel Buoys
+    const buoyGeom = new THREE.CylinderGeometry(1.2, 1.8, 4, 8);
+    geometries.push(buoyGeom);
+    const greenMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+    const redMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    materials.push(greenMat, redMat);
+
+    const buoyPort = new THREE.Mesh(buoyGeom, greenMat);
+    buoyPort.position.set(2300, 1.0, -450);
+    const buoyStbd = new THREE.Mesh(buoyGeom, redMat);
+    buoyStbd.position.set(2300, 1.0, -750);
+    group.add(buoyPort, buoyStbd);
   }
 
   // 3. FORMATION_ALPINE_PASS: Alpine Glacial Lake
-  else if (visualProfile === 'FORMATION_ALPINE_PASS') {
+  else if (activeProfile === 'FORMATION_ALPINE_PASS') {
     // Elliptical glacial lake nestled high in the alpine valley
     const lakeGeom = new THREE.RingGeometry(0, 420, 48, 1);
     lakeGeom.rotateX(-Math.PI / 2);
@@ -405,7 +493,7 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
   }
 
   // 4. DEMO-2: Suburban Logistics Industrial Retention Reservoir
-  else if (visualProfile === 'DEMO_2_SUBURBAN_LOGISTICS' || preset === 'SUBURBAN') {
+  else if (activeProfile === 'DEMO_2_SUBURBAN_LOGISTICS' || (!activeProfile && preset === 'SUBURBAN')) {
     // Rectangular industrial retention basin with concrete embankments
     const resW = 340;
     const resL = 260;
@@ -422,7 +510,7 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
     materials.push(resMat);
 
     const resMesh = new THREE.Mesh(resGeom, resMat);
-    resMesh.position.set(1600, -1.8, -1400);
+    resMesh.position.set(1600, -1.2, -1400);
     group.add(resMesh);
 
     // Concrete perimeter bund / embankment walls
@@ -441,14 +529,14 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
       'WATER-RESERVOIR-LOGISTICS',
       'Industrial Perimeter Retention Reservoir',
       'RESERVOIR',
-      { x: 1600, y: 1400, z: -1.8 },
+      { x: 1600, y: 1400, z: -1.2 },
       resMesh,
       'Concrete-bunded industrial stormwater retention basin protecting logistics facility perimeter.'
     );
   }
 
   // 5. POPUP-*: Urban Ingress Drainage Canal
-  else if (visualProfile === 'POPUP_URBAN_CORRIDOR') {
+  else if (activeProfile === 'POPUP_URBAN_CORRIDOR') {
     // Concrete-lined drainage canal along X = -450 from Z = -2600 to 2600
     const canalLen = 5200;
     const canalW = 46;
@@ -464,7 +552,7 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
     materials.push(canalMat);
 
     const canalMesh = new THREE.Mesh(canalGeom, canalMat);
-    canalMesh.position.set(-450, -3.2, 0);
+    canalMesh.position.set(-450, -2.5, 0);
     group.add(canalMesh);
 
     // Concrete channel walls
@@ -474,9 +562,9 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
     materials.push(concreteMat);
 
     const leftWall = new THREE.Mesh(leftWallGeom, concreteMat);
-    leftWall.position.set(-450 - canalW / 2 - 2, -1.4, 0);
+    leftWall.position.set(-450 - canalW / 2 - 2, -1.0, 0);
     const rightWall = new THREE.Mesh(leftWallGeom, concreteMat);
-    rightWall.position.set(-450 + canalW / 2 + 2, -1.4, 0);
+    rightWall.position.set(-450 + canalW / 2 + 2, -1.0, 0);
     group.add(leftWall, rightWall);
 
     // Street overpass bridges across the canal
@@ -487,14 +575,14 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
       'WATER-CANAL-URBAN',
       'Metropolitan Stormwater Drainage Canal',
       'DRAINAGE_CHANNEL',
-      { x: -450, y: 0, z: -3.2 },
+      { x: -450, y: 0, z: -2.5 },
       canalMesh,
       'Deep concrete urban drainage canal running through the center of the pop-up ingress corridor.'
     );
   }
 
   // 6. SWARM-1: Rocky Dry Riverbed / Arroyo Landmark in the Northern Valley
-  else if (visualProfile === 'SWARM_MOUNTAIN_VALLEY') {
+  else if (activeProfile === 'SWARM_MOUNTAIN_VALLEY') {
     const arroyoPoints = [
       { x: 750, z: 3400 },
       { x: 300, z: 2800 },

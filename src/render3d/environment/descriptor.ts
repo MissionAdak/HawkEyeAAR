@@ -16,6 +16,61 @@ export const ENVIRONMENT_PRESETS: EnvironmentPreset[] = [
   'OPEN_RURAL',
 ];
 
+export interface SeededBiomeResult {
+  visualProfile: ScenarioVisualProfile;
+  preset: EnvironmentPreset;
+  terrainType: string;
+  description: string;
+}
+
+export const RANDOM_BIOME_CANDIDATES: SeededBiomeResult[] = [
+  {
+    visualProfile: 'SPECTRUM_FOREST_RIVER',
+    preset: 'FOREST_VALLEY',
+    terrainType: 'Dense Forest Valley & Winding River',
+    description: 'Procedural forest river basin with dense coniferous canopy and tactical bridges.',
+  },
+  {
+    visualProfile: 'SWARM_MOUNTAIN_VALLEY',
+    preset: 'MOUNTAIN_RIDGE',
+    terrainType: 'Rugged Mountainous Ridge & Valley',
+    description: 'Procedural mountain ridgelines and defensive valley flight corridors.',
+  },
+  {
+    visualProfile: 'PROCEDURAL_COASTAL_AIRFIELD',
+    preset: 'COASTAL_AIRFIELD',
+    terrainType: 'Coastal Military Airfield & Naval Shoreline',
+    description: 'Procedural coastal airfield with sandy beach, ocean waters, and breakwater jetty.',
+  },
+  {
+    visualProfile: 'DEMO_2_SUBURBAN_LOGISTICS',
+    preset: 'SUBURBAN',
+    terrainType: 'Suburban Logistics & Industrial Perimeter',
+    description: 'Procedural industrial logistics park with warehousing and retention reservoir.',
+  },
+  {
+    visualProfile: 'POPUP_URBAN_CORRIDOR',
+    preset: 'URBAN_DENSE',
+    terrainType: 'Urban Ingress Corridor & Retention Canal',
+    description: 'Procedural urban street canyons, mid-rise structures, and concrete canal.',
+  },
+  {
+    visualProfile: 'FORMATION_ALPINE_PASS',
+    preset: 'MOUNTAIN_RIDGE',
+    terrainType: 'Alpine Ridge Pass & Glacial Lake',
+    description: 'Procedural alpine pass flanked by high peaks and an elevated glacial tarn.',
+  },
+];
+
+/**
+ * Deterministically binds a seed to a single, coherent biome decision.
+ * Shared across descriptor, terrain, water, buildings, vegetation, and elevation sampling.
+ */
+export function resolveRandomBiome(seed: number): SeededBiomeResult {
+  const idx = Math.abs(seed) % RANDOM_BIOME_CANDIDATES.length;
+  return RANDOM_BIOME_CANDIDATES[idx];
+}
+
 /**
  * Deterministically derives the environment descriptor for a scenario.
  * Supports canonical scenario families and dynamic IDs (e.g. PROCEDURAL-*, FORMATION-*, RANDOM-*).
@@ -101,10 +156,10 @@ export function getScenarioEnvironmentDescriptor(
   else if (upperId.startsWith('RANDOM-')) {
     scenarioFamily = 'RANDOM';
     visualProfile = 'RANDOM_SEEDED_LANDSCAPE';
-    const idx = Math.abs(seed) % ENVIRONMENT_PRESETS.length;
-    preset = ENVIRONMENT_PRESETS[idx];
-    terrainType = `Procedural Sector (${preset.replace('_', ' ')})`;
-    description = 'Procedurally synthesized tactical terrain generated deterministically from exercise seed.';
+    const biome = resolveRandomBiome(seed);
+    preset = biome.preset;
+    terrainType = biome.terrainType;
+    description = biome.description;
   } else {
     // Default fallback based on zones present in scenario
     if (zones.some((z) => z.type === 'FOREST')) {
