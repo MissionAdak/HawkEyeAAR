@@ -88,14 +88,37 @@ export const TopBar: React.FC = () => {
     }
   };
 
+  const renderPauseControl = () => {
+    if (mode === 'EVAL') {
+      return (
+        <button
+          disabled
+          className="px-2 py-0.5 border border-line text-[11px] font-mono bg-carbon-800 text-text-dim opacity-50 cursor-not-allowed"
+          title="Pause disabled in EVAL mode. Press Esc to Abort."
+        >
+          NO PAUSE (EVAL)
+        </button>
+      );
+    }
+    return (
+      <button
+        onClick={() => (isPaused ? resume() : pause())}
+        className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
+        title="Pause / Resume Sim (P)"
+      >
+        {isPaused ? '[P] RESUME' : '[P] PAUSE'}
+      </button>
+    );
+  };
+
   return (
     <header className="h-[45px] w-full bg-carbon-900 border-b border-line px-3 flex items-center justify-between font-display text-xs select-none">
       {/* Left: ROE Active Banner */}
-      <div className="flex items-center gap-2 max-w-[45%] truncate">
-        <span className="text-[10px] tracking-wider text-text-dim px-1.5 py-0.5 bg-carbon-800 border border-line">
+      <div className="flex items-center gap-2 max-w-[45%] truncate" title={roeText}>
+        <span className="text-[10px] tracking-wider text-text-dim px-1.5 py-0.5 bg-carbon-800 border border-line shrink-0">
           ROE
         </span>
-        <span className="text-amber font-mono text-[11px] font-semibold tracking-wide truncate">
+        <span className="text-amber font-mono text-[11px] font-semibold tracking-wide truncate" title={roeText}>
           {roeText}
         </span>
       </div>
@@ -192,23 +215,7 @@ export const TopBar: React.FC = () => {
               [START SESSION]
             </button>
           </>
-        ) : mode === 'EVAL' ? (
-          <button
-            disabled
-            className="px-2 py-0.5 border border-line text-[11px] font-mono bg-carbon-800 text-text-dim opacity-50 cursor-not-allowed"
-            title="Pause disabled in EVAL mode. Press Esc to Abort."
-          >
-            NO PAUSE (EVAL)
-          </button>
-        ) : (
-          <button
-            onClick={() => (isPaused ? resume() : pause())}
-            className="px-2 py-0.5 border border-line hover:border-phosphor text-[11px] font-mono bg-carbon-800 text-text-main hover:text-phosphor transition-colors"
-            title="Pause / Resume Sim (P)"
-          >
-            {isPaused ? '[P] RESUME' : '[P] PAUSE'}
-          </button>
-        )}
+        ) : renderPauseControl()}
       </div>
     </header>
   );

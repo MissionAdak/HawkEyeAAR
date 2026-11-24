@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SimEvent, EffectorId } from '@/sim/types';
+import type { SimEvent, OperatorEventView, EffectorId } from '@/sim/types';
 import type { EngagementEffect, EngagementEffectContext } from './engagementEffectTypes';
 import { createEngagementEffect } from './weaponEffectFactory';
 import { toThree } from '../coords';
@@ -27,80 +27,102 @@ export class EngagementEffectManager {
    * Compatible with both live 20Hz stepping and post-session AAR timeline scrubbing.
    */
   public syncEvents(
-    events: SimEvent[],
+    events: (SimEvent | OperatorEventView)[],
     currentSimMs: number,
     getTrackPosition?: (trackNo: string) => THREE.Vector3 | null
   ): void {
-    // 1. Handle backward scrubbing in AAR replay:
-    // If user scrubbed back in time, prune all effects started after currentSimMs
     if (currentSimMs < this.lastSimMs) {
-      for (const [id, effect] of this.activeEffects.entries()) {
-        if (effect.startTMs > currentSimMs) {
-          this.group.remove(effect.group);
-          effect.dispose();
-          this.activeEffects.delete(id);
-          this.processedEventSeqs.delete(effect.seq);
-        }
-      }
-      // Also unmark future processed events
-      for (const event of events) {
-        if (event.tMs > currentSimMs) {
-          this.processedEventSeqs.delete(event.seq);
-        }
-      }
+      this.pruneFutureEffects(events, currentSimMs);
     }
     this.lastSimMs = currentSimMs;
 
-    // 2. Process incoming events
     for (const event of events) {
       if (event.tMs > currentSimMs) continue;
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
 
       if (event.type === 'ENGAGE') {
-        if (this.processedEventSeqs.has(event.seq)) continue;
-        this.processedEventSeqs.add(event.seq);
-
-        const effectorId = event.payload.effector as EffectorId;
-        const trackNo = event.trackNo ?? 'UNKNOWN_TRACK';
-
-        // Authoritative target position from event payload or track provider
-        let targetPos: THREE.Vector3;
-        if (
-          event.payload.targetPos &&
-          typeof event.payload.targetPos === 'object' &&
-          'x' in (event.payload.targetPos as Record<string, unknown>)
-        ) {
-          const tp = event.payload.targetPos as { x: number; y: number; z?: number };
-          targetPos = toThree(tp.x, tp.y, tp.z ?? 30);
-        } else {
-          const livePos = getTrackPosition?.(trackNo);
-          targetPos = livePos ? livePos.clone() : new THREE.Vector3(0, 50, -500);
-        }
-
-        const effectId = `eng_${event.seq}_${trackNo}`;
-        const effect = createEngagementEffect({
-          id: effectId,
-          seq: event.seq,
-          effectorId,
-          trackNo,
-          startTMs: event.tMs,
-          originPos: this.getDefaultWeaponOrigin(),
-          targetPos,
-          killed: typeof event.payload.killed === 'boolean' ? event.payload.killed : null,
-        });
-
-        this.activeEffects.set(effectId, effect);
-        this.group.add(effect.group);
+        this.handleEngageEvent(event, payload, getTrackPosition);
       } else if (event.type === 'ENGAGE_RESULT') {
-        const trackNo = event.trackNo;
-        if (!trackNo) continue;
-        const killed = Boolean(event.payload.killed);
+        this.handleEngageResultEvent(event, payload);
+      }
+    }
+  }
 
-        // Find matching active effect for this track and resolve outcome
-        for (const effect of this.activeEffects.values()) {
-          if (effect.trackNo === trackNo && effect.killed === null) {
-            effect.resolveOutcome(killed);
-          }
-        }
+  private pruneFutureEffects(
+    events: (SimEvent | OperatorEventView)[],
+    currentSimMs: number
+  ): void {
+    for (const [id, effect] of this.activeEffects.entries()) {
+      if (effect.startTMs > currentSimMs) {
+        this.group.remove(effect.group);
+        effect.dispose();
+        this.activeEffects.delete(id);
+        this.processedEventSeqs.delete(effect.seq);
+      }
+    }
+    for (const event of events) {
+      if (event.tMs > currentSimMs) {
+        this.processedEventSeqs.delete(event.seq);
+      }
+    }
+  }
+
+  private resolveTargetPosition(
+    payload: Record<string, unknown>,
+    trackNo: string,
+    getTrackPosition?: (trackNo: string) => THREE.Vector3 | null
+  ): THREE.Vector3 {
+    if (
+      payload.targetPos &&
+      typeof payload.targetPos === 'object' &&
+      'x' in (payload.targetPos as Record<string, unknown>)
+    ) {
+      const tp = payload.targetPos as { x: number; y: number; z?: number };
+      return toThree(tp.x, tp.y, tp.z ?? 30);
+    }
+    const livePos = getTrackPosition?.(trackNo);
+    return livePos ? livePos.clone() : new THREE.Vector3(0, 50, -500);
+  }
+
+  private handleEngageEvent(
+    event: SimEvent | OperatorEventView,
+    payload: Record<string, unknown>,
+    getTrackPosition?: (trackNo: string) => THREE.Vector3 | null
+  ): void {
+    if (this.processedEventSeqs.has(event.seq)) return;
+    this.processedEventSeqs.add(event.seq);
+
+    const effectorId = (payload.effector as EffectorId) ?? 'GUN';
+    const trackNo = event.trackNo ?? 'UNKNOWN_TRACK';
+    const targetPos = this.resolveTargetPosition(payload, trackNo, getTrackPosition);
+    const effectId = `eng_${event.seq}_${trackNo}`;
+
+    const effect = createEngagementEffect({
+      id: effectId,
+      seq: event.seq,
+      effectorId,
+      trackNo,
+      startTMs: event.tMs,
+      originPos: this.getDefaultWeaponOrigin(),
+      targetPos,
+      killed: typeof payload.killed === 'boolean' ? payload.killed : null,
+    });
+
+    this.activeEffects.set(effectId, effect);
+    this.group.add(effect.group);
+  }
+
+  private handleEngageResultEvent(
+    event: SimEvent | OperatorEventView,
+    payload: Record<string, unknown>
+  ): void {
+    const trackNo = event.trackNo;
+    if (!trackNo) return;
+    const killed = Boolean(payload.killed);
+
+    for (const effect of this.activeEffects.values()) {
+      if (effect.trackNo === trackNo && effect.killed === null) {
+        effect.resolveOutcome(killed);
       }
     }
   }

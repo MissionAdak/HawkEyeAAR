@@ -354,31 +354,76 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
   });
 
   describe('Truth Gating, EVAL Aids Lock & 2D/3D/VR Parity', () => {
-    it('locks decision aids in EVAL mode on in-VR operator panel', () => {
-      // Load EVAL scenario
-      const evalSpec: ScenarioSpec = {
+    function withRecordedPanel(mode: 'EVAL' | 'TRAIN', fn: (panel: WebXRPanel, drawnTexts: string[]) => void): void {
+      const spec: ScenarioSpec = {
         ...(demo1Json as unknown as ScenarioSpec),
-        mode: 'EVAL',
+        mode,
       };
-      engineInstance.load(evalSpec);
+      engineInstance.load(spec);
 
-      const panel = new WebXRPanel();
-      panel.update();
+      const drawnTexts: string[] = [];
+      const origCreateElement = document.createElement.bind(document);
+      let panel: WebXRPanel | null = null;
+      try {
+        document.createElement = ((_tagName: string) => {
+          const c = createMockCanvas();
+          const ctx = c.getContext('2d') as unknown as { fillText: (text: string, x: number, y: number) => void };
+          const origFill = ctx.fillText.bind(ctx);
+          ctx.fillText = (text: string, x: number, y: number) => {
+            drawnTexts.push(text);
+            return origFill(text, x, y);
+          };
+          return c;
+        }) as unknown as typeof document.createElement;
 
-      // Inspect panel mesh geometry & properties
-      expect(panel.mesh).toBeDefined();
-      expect(panel.mesh.geometry).toBeDefined();
-      expect(panel.mesh.position.z).toBeCloseTo(-0.65, 2);
+        panel = new WebXRPanel();
+        panel.update();
+        fn(panel, drawnTexts);
+      } finally {
+        document.createElement = origCreateElement;
+        panel?.dispose();
+      }
+    }
 
-      panel.dispose();
+    it('locks decision aids in EVAL mode on in-VR operator panel', () => {
+      // 1. EVAL mode: verify decision-aid lockout through the panel's actual drawing path
+      withRecordedPanel('EVAL', (evalPanel, drawnTextsEval) => {
+        expect(evalPanel.mesh).toBeDefined();
+        expect(evalPanel.mesh.geometry).toBeDefined();
+        expect(evalPanel.mesh.position.z).toBeCloseTo(-0.65, 2);
+        expect(drawnTextsEval.some((t) => t.includes('[DECISION AIDS LOCKED IN EVAL MODE]'))).toBe(true);
+        expect(drawnTextsEval.some((t) => t.includes('TRAINING MODE'))).toBe(false);
+      });
+
+      // 2. TRAIN control case confirming decision aid is available
+      withRecordedPanel('TRAIN', (_trainPanel, drawnTextsTrain) => {
+        expect(drawnTextsTrain.some((t) => t.includes('TRAINING MODE'))).toBe(true);
+        expect(drawnTextsTrain.some((t) => t.includes('[DECISION AIDS LOCKED IN EVAL MODE]'))).toBe(false);
+      });
     });
 
     it('preserves exact event and score parity regardless of presentation mode', () => {
-      // Run identical scenario with scripted actions in two runs
-      const runScenario = () => {
+      // Run identical scenario with scripted actions across distinct presentation paths (standard desktop vs VR)
+      const runScenario = (presentation: 'STANDARD' | 'VR') => {
         const engine = new SimEngine();
         engine.load(demo1Json as unknown as ScenarioSpec);
 
+        let xrManager: WebXRManager | null = null;
+        let consoleRenderer: ConsoleRenderer | null = null;
+
+        if (presentation === 'VR') {
+          const canvas = createMockCanvas();
+          consoleRenderer = new ConsoleRenderer(canvas);
+          const mockThreeRenderer = {
+            xr: { enabled: true, setSession: vi.fn() },
+            setAnimationLoop: vi.fn(),
+            render: vi.fn(),
+          } as unknown as THREE.WebGLRenderer;
+          const scene = new THREE.Scene();
+          xrManager = new WebXRManager(mockThreeRenderer, scene, consoleRenderer, () => {});
+        }
+
+        // Identical scripted user actions pushed into inputQueue
         engine.inputQueue.push({
           tRawMs: 10000,
           applyTick: 200,
@@ -407,18 +452,33 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
 
         for (let tick = 0; tick < 2400; tick++) {
           engine.step();
+          if (presentation === 'VR' && xrManager) {
+            xrManager.update(tick * 50);
+          }
         }
-        return aggregateAARMetrics(engine.events, demo1Json as unknown as ScenarioSpec);
+
+        if (xrManager) {
+          xrManager.dispose();
+        }
+        if (consoleRenderer) {
+          consoleRenderer.stop();
+        }
+
+        return {
+          events: engine.events.map((e) => ({ ...e })),
+          metrics: aggregateAARMetrics(engine.events, demo1Json as unknown as ScenarioSpec),
+        };
       };
 
-      const run1 = runScenario();
-      const run2 = runScenario();
+      const run1 = runScenario('STANDARD');
+      const run2 = runScenario('VR');
 
-      expect(run1.score).toBeCloseTo(run2.score, 6);
-      expect(run1.score).toBeCloseTo(79.21, 1);
-      expect(run1.grade).toBe(run2.grade);
-      expect(run1.leakers).toBe(0);
-      expect(run1.roeViolations).toBe(0);
+      expect(run1.events).toEqual(run2.events);
+      expect(run1.metrics.score).toBeCloseTo(run2.metrics.score, 6);
+      expect(run1.metrics.score).toBeCloseTo(79.21, 1);
+      expect(run1.metrics.grade).toBe(run2.metrics.grade);
+      expect(run1.metrics.leakers).toBe(0);
+      expect(run1.metrics.roeViolations).toBe(0);
     });
   });
 
@@ -452,14 +512,18 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
       expect(typeof res.reason).toBe('string');
     });
 
-    it('exits VR gracefully and restores windowDriver without stopping sim', () => {
+    it('exits VR gracefully and restores windowDriver without stopping sim', async () => {
       const canvas = createMockCanvas();
       const renderer = new ConsoleRenderer(canvas);
       renderer.start();
 
       const mockThreeRenderer = {
-        xr: { enabled: true, setSession: vi.fn() },
+        xr: {
+          enabled: false,
+          setSession: vi.fn().mockImplementation(async () => {}),
+        },
         setAnimationLoop: vi.fn(),
+        render: vi.fn(),
       } as unknown as THREE.WebGLRenderer;
 
       const scene = new THREE.Scene();
@@ -468,15 +532,65 @@ describe('OPTIONAL TASK 14 — Experimental WebXR VR Renderer', () => {
       const manager = new WebXRManager(mockThreeRenderer, scene, renderer, onExit);
       expect(manager.isActive()).toBe(false);
 
-      // Exit VR when not active does not crash
-      manager.exitVR();
-      expect(manager.isActive()).toBe(false);
+      // Begin with an active mock XR session before triggering exit
+      const endMock = vi.fn().mockResolvedValue(undefined);
+      const mockSession = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        end: endMock,
+        inputSources: [],
+      } as unknown as XRSession;
 
-      // Renderer frame driver is still running
-      expect(renderer.getFrameDriver().isRunning()).toBe(true);
+      const origWindow = (globalThis as unknown as { window?: unknown }).window;
+      (globalThis as unknown as { window: unknown }).window = globalThis;
+      const origXr = (globalThis.navigator as unknown as { xr?: unknown }).xr;
+      (globalThis.navigator as unknown as { xr: unknown }).xr = {
+        isSessionSupported: vi.fn().mockResolvedValue(true),
+        requestSession: vi.fn().mockResolvedValue(mockSession),
+      };
 
-      manager.dispose();
-      renderer.stop();
+      try {
+        const enterRes = await manager.enterVR();
+        expect(enterRes.success).toBe(true);
+        expect(manager.isActive()).toBe(true);
+        expect(renderer.getFrameDriver().name).toContain('WebXRDriver');
+
+        // Advance simulation ticks during active session
+        engineInstance.step();
+        const tickBeforeExit = engineInstance.tickIndex;
+        expect(tickBeforeExit).toBeGreaterThan(0);
+        const tracksCountBeforeExit = engineInstance.curr.length;
+
+        // Trigger exit VR
+        manager.exitVR();
+
+        // Assert XR loop has stopped and session ended
+        expect(manager.isActive()).toBe(false);
+        expect(endMock).toHaveBeenCalled();
+        expect(mockThreeRenderer.xr.enabled).toBe(false);
+
+        // Assert window frame driver resumes
+        expect(renderer.getFrameDriver().name).toContain('WindowDriver');
+        expect(renderer.getFrameDriver().isRunning()).toBe(true);
+
+        // Assert simulation ticks continue without resetting simulation state
+        engineInstance.step();
+        expect(engineInstance.tickIndex).toBe(tickBeforeExit + 1);
+        expect(engineInstance.curr).toHaveLength(tracksCountBeforeExit);
+      } finally {
+        if (origWindow !== undefined) {
+          (globalThis as unknown as { window: unknown }).window = origWindow;
+        } else {
+          delete (globalThis as unknown as { window?: unknown }).window;
+        }
+        if (origXr !== undefined) {
+          (globalThis.navigator as unknown as { xr: unknown }).xr = origXr;
+        } else {
+          delete (globalThis.navigator as unknown as { xr?: unknown }).xr;
+        }
+        manager.dispose();
+        renderer.stop();
+      }
     });
 
     it('disposes WebXRManager idempotently and cleans up tableTop and controllers', () => {

@@ -134,6 +134,9 @@ export interface TriggerSpec {
 
 export type SessionMode = 'TRAIN' | 'EVAL' | 'DEMO';
 
+export const SIM_VERSION = '1.1.0';
+export const SCHEMA_VERSION = 1;
+
 export interface ScenarioSpec {
   id: string;
   schemaVersion: 1;
@@ -192,6 +195,34 @@ export interface SimEvent {
   payload: Record<string, unknown>;
 }
 
+export type OperatorEventCategory =
+  | 'DETECTION'
+  | 'TRACK'
+  | 'ENGAGEMENT'
+  | 'ROE'
+  | 'SENSOR'
+  | 'SYSTEM';
+
+/**
+ * Sanitized, operator-facing event projection (Domain C).
+ * Guaranteed to exclude all internal simulation ground truth:
+ * - NO trueClass
+ * - NO raw ground truth coordinates or targetPos
+ * - NO exact Pk or kill PRNG draws (u)
+ * - NO secret scoring or monetary valuations
+ */
+export interface OperatorEventView {
+  id: string;
+  seq: number;
+  tMs: number;
+  type: SimEventType;
+  trackNo?: string;
+  category: OperatorEventCategory;
+  message: string;
+  estRangeM?: number;
+  payload?: Record<string, unknown>;
+}
+
 export type Grade = 'PROFICIENT_IN_SIMULATION' | 'DEVELOPING' | 'NEEDS_RETRAINING';
 
 export interface AARMetrics {
@@ -219,6 +250,7 @@ export interface AARMetrics {
   swarmSat: number | null;
   dScore: number;
   cScore: number;
+  gScore?: number;
   econScore: number;
   rScore: number;
   confusion: number[][];
@@ -226,6 +258,8 @@ export interface AARMetrics {
   trainingAidDurationSec?: number;
   trainingAidUsed?: boolean;
 }
+
+export type WeatherType = 'CLEAR' | 'FOG' | 'RAIN' | 'OVERCAST';
 
 export interface UserAction {
   tRawMs: number;

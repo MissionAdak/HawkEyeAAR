@@ -94,10 +94,6 @@ export class ConsoleRenderer {
     // 4. Visual Sensor Chaos Engine: check active environment chaos events
     const { fogSeverity, isJamming } = this.computeChaosState(currentSimMs);
 
-    // Keep sensor health updated based on active chaos state
-    engineInstance.sensorHealth.EOIR = fogSeverity > 0 ? 'DEG' : 'OK';
-    engineInstance.sensorHealth.RF = isJamming ? 'OUT' : 'OK';
-
     // 5. Publish UI snapshot to Zustand once per frame if ticks occurred
     if (ticksToRun > 0) {
       useSessionStore.getState().setUiSnapshot(engineInstance.buildUiSnapshot());
@@ -143,14 +139,15 @@ export class ConsoleRenderer {
     isJamming: boolean
   ): void {
     const activeSensor = engineInstance.activeSensor;
+    const tracks = engineInstance.getOperatorTracks();
+    const rfMeasurements = engineInstance.rfMeasurements;
 
     if (activeSensor === 'RADAR') {
       const { sweepAngleRad } = calculateRadarSweepAngle(currentSimMs);
 
       this.radarLayer.renderDynamic(this.ctx, width, height, {
         sweepAngleRad,
-        currEntities: engineInstance.curr,
-        prevEntities: engineInstance.prev,
+        tracks,
         alpha,
         selectedTrackNo: engineInstance.selectedTrackNo,
         zones: engineInstance.spec?.zones || [],
@@ -158,16 +155,14 @@ export class ConsoleRenderer {
     } else if (activeSensor === 'EOIR') {
       let eoirAzimuth = engineInstance.eoirAzimuthDeg;
       if (engineInstance.selectedTrackNo) {
-        const sel = engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo);
+        const sel = tracks.find((t) => t.trackNo === engineInstance.selectedTrackNo);
         if (sel) {
-          const selRad = Math.atan2(sel.pos.x, sel.pos.y);
-          eoirAzimuth = ((selRad * 180) / Math.PI + 360) % 360;
+          eoirAzimuth = sel.estBearingDeg;
         }
       }
 
       this.eoirLayer.render(this.ctx, width, height, {
-        currEntities: engineInstance.curr,
-        prevEntities: engineInstance.prev,
+        tracks,
         alpha,
         azimuthDeg: eoirAzimuth,
         spec: engineInstance.spec,
@@ -176,8 +171,8 @@ export class ConsoleRenderer {
       });
     } else if (activeSensor === 'RF') {
       this.rfLayer.renderDynamic(this.ctx, width, height, {
-        currEntities: engineInstance.curr,
-        prevEntities: engineInstance.prev,
+        tracks,
+        rfMeasurements,
         alpha,
         simTimeMs: currentSimMs,
         isJamming,

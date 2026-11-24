@@ -20,9 +20,16 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: 'npm run preview',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      command: 'npm run preview:e2e -- --port 4173',
+      url: 'http://127.0.0.1:4173',
+      reuseExistingServer: false,
+    },
+    {
+      command: 'npm run preview -- --port 4174',
+      url: 'http://127.0.0.1:4174',
+      reuseExistingServer: false,
+    },
+  ],
 });

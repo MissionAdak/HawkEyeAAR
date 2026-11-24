@@ -30,9 +30,10 @@ Precedence: `Rules.md` > `ARCHITECTURE.md` > `DESIGN.md` > `Tasks.md` > PRD v1.1
 
 **R2.2 — No `Math.random()` anywhere in `src/`.** All procedural logic and combat rolls use the seeded `mulberry32` streams from `src/sim/rng.ts`:
 - Runtime draws: `draw(master, stream, a, b, c, d)` with `stream ∈ {'traj','sense','kill'}` (keyed, order-independent).
+- Sensor measurement noise: `keyedGaussian(seed, label, a, b)` using Box-Muller transform over orthogonal uniform draws clamped to $[-3.5\sigma, 3.5\sigma]$ with `label ∈ {'meas_radar_rng', 'meas_radar_az', 'meas_eoir_az', 'meas_eoir_el', 'meas_eoir_rng', 'meas_rf_brg'}`.
 - Generation: `sequence(master, 'scenario')`, used only inside `src/director/` while generating (the finished spec is stored).
 - Renderer-only visual noise: `renderRng` in `src/render/fx.ts`; it must never be read by anything outside `render/`.
-- Every new draw site MUST be registered in the key table in `ARCHITECTURE.md` §3.7 in the same change. Changing an existing key tuple requires a `SIM_VERSION` bump.
+- Every new draw site MUST be registered in the key table in `ARCHITECTURE.md` in the same change. Changing an existing key tuple requires a `SIM_VERSION` bump.
 
 **R2.3 — Stream separation.** Trajectory jitter uses `traj`, detection/noise draws use `sense`, kill resolution uses `kill`. Trainee actions MUST NOT change any `traj` or `sense` outcome (the fairness validator depends on this).
 
@@ -78,7 +79,7 @@ for (const file of walk('src')) {
 
 **R3.2 — `UNKNOWN_EVIDENCE_INSUFFICIENT` semantics.** It is a label the trainee may commit ("I looked and cannot tell"). It is never a truth class. `TrackEntity.label === null` means "no label entered yet". For fire control both `null` and `UNKNOWN_EVIDENCE_INSUFFICIENT` count as **not classified**. For scoring, the explicit label earns the matrix's UNKNOWN column; `null` at the deadline earns `C = 0`.
 
-**R3.3 — Ground truth never leaves `src/sim`.** `TruthEntity`, `truthClass`, `droneClass`, `valueInr` of an entity and `truthRef` MUST NOT be imported or received by `render/`, `ui/` or `store/`. The UI receives only `TrackEntity` and operator log lines from `sim/oplog.ts`. The AAR may show truth only on the AAR screens, after the session ends.
+**R3.3 — Ground truth never leaves `src/sim` (TASK 18 Decoupling & Information Boundaries).** `TrackEntity` ground truth (`trueClass`, `droneType`, `valueInr`, `truePos`, `trueVelocity`, `emitsRf`, `remoteId`, `iff`, `spawnTMs`, `waypoints`) MUST NOT be imported or received by `render/`, `render3d/`, `ui/` or `store/`. Live renderers (2D Radar PPI, 2D EO/IR HUD, 2D RF Direction Finder, 3D Three.js Viewport) and operator UI components (`UiTrackRow`, `TrackTable`, `EngagementPanel`, `EventLog`, `OperatorFeedbackToast`) consume ONLY `OperatorTrackView`, `SafeTrackView`, and `OperatorEventView` produced with estimated coordinates, sanitized event payloads, and neutral airframe morphologies. Telemetry in operator views and live feedback toasts is explicitly indicated as estimated (`~RNG`, `~SPD`, `~X.XX km`, `EST ~...m`). Internal simulation keyframes (`SNAPSHOT`), `SPAWN`, and `TRIGGER` events are filtered from live event streams. The AAR displays ground truth strictly in post-session debriefing after the session has completed.
 
 **R3.4 — Symbology reflects the trainee's label, never truth** (`DESIGN.md` §3): `null` → dashed amber `?`; `UNKNOWN_EVIDENCE_INSUFFICIENT` → solid amber `?`; hostile labels → crimson diamonds; `CIVIL_UAS`/`BIRD` → green squares; `FRIENDLY` → cyan circle. Symbols come from `src/render/symbols.ts` only. Describe the scheme as "NATO-inspired"; never as APP-6 or MIL-STD-2525 compliant.
 
@@ -260,3 +261,13 @@ All constants live in `/public/config.json` (schema in `ARCHITECTURE.md` §3.8).
 **R10.14 — Illustrative engagement labelling.** Effector flight visuals and engagement animations in 3D are illustrative representations of a discrete probability roll. Every visualizer must be captioned: `ILLUSTRATIVE — OUTCOME IS A SEEDED PROBABILITY DRAW`.
 
 **R10.15 — WebXR VR claims.** WebXR VR remains an experimental track until empirical validation on a physical VR headset is completed and logged in `MEMORY.md`. The UI must label VR as `EXPERIMENTAL`.
+
+**R10.16 — Zero production debug globals & controlled E2E bridge.** `window.__ENGINE__`, `window.__RENDERER_3D__`, and any direct simulation engine access MUST NOT exist in production builds. Controlled E2E test access is restricted strictly to an isolated test interface (`window.__DRISHTI_TEST__`), compiled into a separate `dist-e2e/` artifact via static build flag (`__DRISHTI_E2E_BUILD__`), with zero test bridge presence in production `dist/`.
+
+**R10.17 — Deterministic sensor-health lifecycle.** Sensor health is computed deterministically at each simulation tick by combining baseline hardware health with temporary environmental chaos under strict severity precedence ($\text{OK} < \text{DEG} < \text{OUT}$). Render loops MUST NOT mutate authoritative sensor health. When temporary fog or jamming ends, effective sensor health MUST automatically recover to baseline without modifying baseline health or repairing permanently damaged sensors.
+
+**R10.18 — Neutral physical airframe recognition taxonomy.** Observable airframe morphology MUST NOT be conflated with tactical threat intent. Physical signatures map to neutral observable categories (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`) with neutral tactical palettes. Operator classification labels (`traineeLabel`) represent operator assessment only and MUST NOT alter physical aircraft geometry or mesh identifiers.
+
+**R10.19 — Fail-closed sensor provenance & mandatory simulation clock contract.** Sensor health inputs and observation contracts MUST fail closed. Missing or malformed sensor health records, missing mode keys, or invalid health strings MUST NOT default to `OK` and MUST prevent resolved optical model presentation (`SENSOR_OFFLINE`). Simulation time (`currentSimMs: number`) is mandatory in `SensorObservationContext`; missing, null, negative, NaN, or infinite simulation time MUST fail closed to `RADAR_SYMBOL`. Renderers MUST NOT substitute zero for unavailable or uninitialized clocks. Observation timestamps MUST be non-negative finite numbers (`timestampMs >= 0`) verified deterministically against authoritative simulation time at 20 Hz; negative timestamps from before simulation start are strictly prohibited. Exact boundary semantics require `timestampMs <= currentSimMs + 50` (accepted) vs `> currentSimMs + 50` (rejected) and `timestampMs >= currentSimMs - 1000` (accepted) vs `< currentSimMs - 1000` (rejected). The observation producer (`evaluateSensorObservation`) MUST validate simulation clock and complete sensor health (`RADAR`, `EOIR`, `RF`), returning `null` on missing/malformed inputs; defaulting missing health data to `OK` is strictly prohibited. Inconsistent observation fields MUST fail closed.
+
+

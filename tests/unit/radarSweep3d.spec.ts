@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import { calculateRadarSweepAngle } from '@/sim/radarMath';
 import { RadarSweep3D } from '@/render3d/radarSweep3d';
 
@@ -58,22 +59,37 @@ describe('3D Tactical Radar Sweep Visualization (Task 17 Phase 5)', () => {
 
     it('adapts visuals dynamically across NOMINAL, DEGRADED, and OUT health states', () => {
       const radar = new RadarSweep3D({ radiusM: 5000 });
+      const beamGroup = (radar as unknown as { beamGroup: THREE.Group }).beamGroup ?? (radar.group.children[1] as THREE.Group);
+      const wedgeMat = (radar as unknown as { wedgeMaterial: THREE.MeshBasicMaterial }).wedgeMaterial ??
+        ((beamGroup.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial);
 
-      // Nominal: green
+      // Nominal: green (0x00ff66)
       radar.setSensorHealth('NOMINAL', 'RADAR');
       radar.update(100);
+      expect(beamGroup.visible).toBe(true);
+      expect(wedgeMat.color.getHex()).toBe(0x00ff66);
 
-      // Degraded: amber
+      // Degraded: amber (0xffaa00)
       radar.setSensorHealth('DEGRADED', 'RADAR');
       radar.update(200);
+      expect(beamGroup.visible).toBe(true);
+      expect(wedgeMat.color.getHex()).toBe(0xffaa00);
 
-      // Out (Radar Dropout or Jamming): disabled
+      // Out (Radar Dropout or Jamming): disabled / hidden
       radar.setSensorHealth('OUT', 'RADAR');
       radar.update(300);
+      expect(beamGroup.visible).toBe(false);
 
-      // If activeSensor is not RADAR, hides beam
+      // Before testing EOIR, restore NOMINAL/RADAR and update so the EOIR assertion verifies sensor selection
+      radar.setSensorHealth('NOMINAL', 'RADAR');
+      radar.update(350);
+      expect(beamGroup.visible).toBe(true);
+      expect(wedgeMat.color.getHex()).toBe(0x00ff66);
+
+      // If activeSensor is not RADAR (e.g. EOIR), hides beam
       radar.setSensorHealth('NOMINAL', 'EOIR');
       radar.update(400);
+      expect(beamGroup.visible).toBe(false);
 
       radar.dispose();
     });

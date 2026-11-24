@@ -9,18 +9,17 @@ import {
   createAircraftBodyGeometry,
   createAircraftAccentGeometry,
   createAircraftHitProxyGeometry,
-  calculateScreenSpaceScale,
-  calculateAircraftOrientation,
 } from './aircraftModel';
 import type { SafeTrackView, Scene3DOptions } from './types';
-import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent } from '@/sim/types';
+import type { TrackClass, ZoneSpec, SensorMode, ChaosSpec, SimEvent, OperatorEventView } from '@/sim/types';
 import { EnvironmentManager, getScenarioEnvironmentDescriptor } from './environment';
 import type { EnvironmentDescriptor, EnvironmentObjectInfo } from './environment/types';
 import { TargetModelFactory, resolveTargetModelCategory } from './targets';
-import type { TargetModelCategory, BuiltTargetModel } from './targets';
+import type { TargetModelCategory, BuiltTargetModel, SensorObservationContext } from './targets';
 import { EngagementEffectManager } from './effects';
 import type { EngagementEffectContext } from './effects';
 import { RadarSweep3D } from './radarSweep3d';
+import { RenderTrackMotionFilter } from './motion/RenderTrackMotionFilter';
 
 // Tactical Color Tokens adhering to DESIGN.md §1 & PALETTE
 const COLOR_CARBON_950 = 0x0D1117;
@@ -38,17 +37,60 @@ export interface TrackMeshRecord {
   group: THREE.Group;
   modelAnchor: THREE.Group;
   aircraftGroup: THREE.Group;
-  bodyMesh: THREE.Mesh;
+  bodyMesh: THREE.Mesh | THREE.LineSegments;
   accentMesh: THREE.Mesh;
   hitProxy: THREE.Mesh;
-  marker: THREE.Mesh;
+  marker: THREE.Mesh | THREE.LineSegments;
   stem: THREE.Line;
   ghostRing: THREE.LineLoop | null;
   labelSprite: THREE.Sprite;
   selectionBox: THREE.LineSegments | null;
   lastHeadingRad: number;
+  lastPitchRad?: number;
+  isInitialized?: boolean;
   currentCategory?: TargetModelCategory;
+  currentSignature?: string;
   targetModelInstance?: BuiltTargetModel;
+  currentLabelText?: string;
+}
+
+export function formatTrackLabelText(track: SafeTrackView): {
+  text: string;
+  labelTag: string;
+  colorHex: string;
+  altM: number;
+} {
+  const label = track.traineeLabel;
+  let labelTag = 'NON';
+  let colorHex = '#FFCC00';
+
+  if (label === 'FRIENDLY') {
+    labelTag = 'FRIEND';
+    colorHex = '#00CCFF';
+  } else if (label === 'CIVIL_UAS') {
+    labelTag = 'CIVIL';
+    colorHex = '#00FF66';
+  } else if (label === 'BIRD') {
+    labelTag = 'BIRD';
+    colorHex = '#8A99A8';
+  } else if (
+    label === 'HOSTILE_ATTACK' ||
+    label === 'HOSTILE_ISR' ||
+    label === 'SWARM_ELEMENT'
+  ) {
+    if (label === 'HOSTILE_ATTACK') {
+      labelTag = 'H-ATK';
+    } else if (label === 'HOSTILE_ISR') {
+      labelTag = 'H-ISR';
+    } else {
+      labelTag = 'SWARM';
+    }
+    colorHex = '#FF3333';
+  }
+
+  const altM = Math.round(track.pos.z);
+  const text = `${track.trackNo} [${labelTag}] ${altM}m`;
+  return { text, labelTag, colorHex, altM };
 }
 
 export class Scene3D {
@@ -69,6 +111,7 @@ export class Scene3D {
 
   // Track marker pool & meshes
   private readonly trackMeshMap: Map<string, TrackMeshRecord> = new Map();
+  private readonly motionFilter = new RenderTrackMotionFilter();
 
   // Shared reusable geometries and materials
   private readonly sharedGeometries: {
@@ -223,12 +266,15 @@ export class Scene3D {
    * Builds the tactical ground plane, concentric range rings, and cardinal axes.
    */
   private buildStaticGround(maxRangeM: number, rMinM: number): void {
-    // 0. Tactical Illumination (Ambient & Directional inside staticGroup for shader depth)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // 0. Tactical Illumination (Ambient & Dual Directional inside staticGroup for shader depth and airframe visibility)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     this.staticGroup.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
     dirLight.position.set(2000, 5000, 3000);
     this.staticGroup.add(dirLight);
+    const fillLight = new THREE.DirectionalLight(0xa0c4ff, 0.4);
+    fillLight.position.set(-2000, 3000, -3000);
+    this.staticGroup.add(fillLight);
 
     // 1. Tactical Grid
     const gridSize = maxRangeM * 2;
@@ -387,20 +433,20 @@ export class Scene3D {
     }
 
     const canvas = document.createElement('canvas');
-    canvas.width = 128;
+    canvas.width = 160;
     canvas.height = 32;
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.fillStyle = 'rgba(13, 17, 23, 0.75)';
-      ctx.fillRect(0, 0, 128, 32);
+      ctx.fillRect(0, 0, 160, 32);
       ctx.strokeStyle = colorHex;
       ctx.lineWidth = 2;
-      ctx.strokeRect(1, 1, 126, 30);
-      ctx.font = 'bold 16px monospace';
+      ctx.strokeRect(1, 1, 158, 30);
+      ctx.font = 'bold 14px monospace';
       ctx.fillStyle = colorHex;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, 64, 16);
+      ctx.fillText(text, 80, 16);
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -411,11 +457,15 @@ export class Scene3D {
       depthTest: false,
     });
     const sprite = new THREE.Sprite(spriteMat);
-    sprite.scale.set(100, 25, 1);
+    sprite.scale.set(125, 25, 1);
     return sprite;
   }
 
-  private getOrCreateTrackRecord(trackNo: string, initialCategory: TargetModelCategory = 'UNKNOWN'): TrackMeshRecord {
+  private getOrCreateTrackRecord(
+    trackNo: string,
+    initialCategory: TargetModelCategory = 'UNKNOWN',
+    initialSignature?: string
+  ): TrackMeshRecord {
     let record = this.trackMeshMap.get(trackNo);
     if (record) return record;
 
@@ -430,7 +480,7 @@ export class Scene3D {
     const aircraftGroup = new THREE.Group();
 
     // Build procedural 3D target model matching initial category
-    const builtModel = this.targetModelFactory.createModel(initialCategory, trackNo);
+    const builtModel = this.targetModelFactory.createModel(initialCategory, trackNo, initialSignature);
     aircraftGroup.add(builtModel.group);
 
     modelAnchor.add(aircraftGroup);
@@ -467,6 +517,7 @@ export class Scene3D {
       selectionBox,
       lastHeadingRad: 0,
       currentCategory: initialCategory,
+      currentSignature: initialSignature,
       targetModelInstance: builtModel,
     };
 
@@ -476,6 +527,12 @@ export class Scene3D {
   }
 
   private applyTrackSymbology(record: TrackMeshRecord, traineeLabel: TrackClass | null): void {
+    // Airframe models preserve authentic physical geometry and neutral materials (Task 17.3 §5)
+    // Operator classification is conveyed via text label badge and selection bracket.
+    if (record.currentCategory !== 'RADAR_SYMBOL') {
+      return;
+    }
+
     if (traineeLabel === 'FRIENDLY') {
       record.accentMesh.material = this.sharedMaterials.friend;
     } else if (traineeLabel === 'CIVIL_UAS') {
@@ -488,6 +545,41 @@ export class Scene3D {
       record.accentMesh.material = this.sharedMaterials.threat;
     } else {
       record.accentMesh.material = this.sharedMaterials.unknown;
+    }
+  }
+
+  private updateLabelSprite(record: TrackMeshRecord, track: SafeTrackView): void {
+    const { text, colorHex } = formatTrackLabelText(track);
+    if (record.currentLabelText === text) {
+      return;
+    }
+    record.currentLabelText = text;
+
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 160;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = 'rgba(13, 17, 23, 0.85)';
+        ctx.fillRect(0, 0, 160, 32);
+        ctx.strokeStyle = colorHex;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, 158, 30);
+        ctx.font = 'bold 14px monospace';
+        ctx.fillStyle = colorHex;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 80, 16);
+      }
+      const newTexture = new THREE.CanvasTexture(canvas);
+      newTexture.minFilter = THREE.LinearFilter;
+      if (record.labelSprite.material.map) {
+        record.labelSprite.material.map.dispose();
+      }
+      record.labelSprite.material.map = newTexture;
+      record.labelSprite.material.needsUpdate = true;
+      record.labelSprite.scale.set(125, 25, 1);
     }
   }
 
@@ -506,6 +598,7 @@ export class Scene3D {
   }
 
   private pruneInactiveTracks(activeTrackNos: Set<string>): void {
+    this.motionFilter.prune(activeTrackNos);
     for (const [trackNo, record] of this.trackMeshMap.entries()) {
       if (!activeTrackNos.has(trackNo)) {
         this.tracksGroup.remove(record.group);
@@ -529,69 +622,70 @@ export class Scene3D {
     tracks: SafeTrackView[],
     selectedTrackNo: string | null,
     camera?: THREE.Camera,
-    viewportHeight: number = 520
+    viewportHeight: number = 520,
+    observationContext?: SensorObservationContext
   ): void {
     const activeTrackNos = new Set<string>();
 
     for (const track of tracks) {
       activeTrackNos.add(track.trackNo);
-      const targetCategory = resolveTargetModelCategory(track);
+      const targetCategory = resolveTargetModelCategory(track, {
+        context: observationContext,
+      });
       let record = this.trackMeshMap.get(track.trackNo);
+      const obsSignature = track.sensorObservation?.signature ?? track.sensorObservation?.observedSignature;
 
       if (!record) {
-        record = this.getOrCreateTrackRecord(track.trackNo, targetCategory);
-      } else if (record.currentCategory !== targetCategory) {
-        // Trainee classification changed -> swap procedural model
+        record = this.getOrCreateTrackRecord(track.trackNo, targetCategory, obsSignature);
+      } else if (record.currentCategory !== targetCategory || record.currentSignature !== obsSignature) {
+        // Observation / classification state changed -> swap procedural model
         if (record.targetModelInstance) {
           record.aircraftGroup.remove(record.targetModelInstance.group);
         }
-        const newModel = this.targetModelFactory.createModel(targetCategory, track.trackNo);
+        const newModel = this.targetModelFactory.createModel(targetCategory, track.trackNo, obsSignature);
         record.aircraftGroup.add(newModel.group);
         record.bodyMesh = newModel.bodyMesh;
         record.accentMesh = newModel.accentMesh;
         record.hitProxy = newModel.hitProxy;
         record.marker = newModel.bodyMesh;
         record.currentCategory = targetCategory;
+        record.currentSignature = obsSignature;
         record.targetModelInstance = newModel;
       }
 
-      // Compute Three.js position from estimated coordinates
-      const threePos = toThree(track.pos.x, track.pos.y, track.pos.z);
-      record.group.position.set(threePos.x, 0, threePos.z);
-      record.modelAnchor.position.set(0, threePos.y, 0);
-      record.stem.scale.set(1, Math.max(1, threePos.y), 1);
+      // Distinct readable scale: 34px for radar contact symbols, 48px for resolved optical airframes
+      const targetPixelSize = targetCategory === 'RADAR_SYMBOL' ? 34 : 48;
 
-      // Calculate distance-dependent screen-space scale
-      let distanceM = 7500;
-      let fovDeg = 45;
-      if (camera instanceof THREE.PerspectiveCamera) {
-        fovDeg = camera.fov;
-        distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
-      } else if (camera) {
-        distanceM = camera.position.distanceTo(new THREE.Vector3(threePos.x, threePos.y, threePos.z));
-      }
-      const scale = calculateScreenSpaceScale(fovDeg, distanceM, viewportHeight, 32);
+      // Update dedicated time-normalized motion filter (Task 29)
+      const nowMs = typeof observationContext?.currentSimMs === 'number' && Number.isFinite(observationContext.currentSimMs)
+        ? observationContext.currentSimMs
+        : undefined;
+      const xform = this.motionFilter.updateTrack(track, camera, viewportHeight, targetPixelSize, nowMs);
 
-      // Derive orientation from safe velocity vector with stable fallback
-      const { headingRad, pitchRad } = calculateAircraftOrientation(track.vel, record.lastHeadingRad);
-      record.lastHeadingRad = headingRad;
-      record.aircraftGroup.rotation.set(pitchRad, -headingRad, 0, 'YXZ');
-      record.aircraftGroup.scale.set(scale, scale, scale);
+      record.group.position.set(xform.position.x, 0, xform.position.z);
+      record.modelAnchor.position.set(0, xform.altitudeM, 0);
+      record.stem.scale.set(1, Math.max(1, xform.altitudeM), 1);
 
-      // Symbology on accent mesh
+      record.lastHeadingRad = xform.headingRad;
+      record.lastPitchRad = xform.pitchRad;
+      record.aircraftGroup.rotation.set(xform.pitchRad, -xform.headingRad, 0, 'YXZ');
+      record.aircraftGroup.scale.set(xform.scale, xform.scale, xform.scale);
+
+      // Symbology on accent mesh & separate label badge
       this.applyTrackSymbology(record, track.traineeLabel);
+      this.updateLabelSprite(record, track);
 
       const isSelected = track.trackNo === selectedTrackNo || track.isSelected;
       if (record.selectionBox) {
         record.selectionBox.visible = isSelected;
-        record.selectionBox.scale.set(scale, scale, scale);
+        record.selectionBox.scale.set(xform.scale, xform.scale, xform.scale);
       }
       record.stem.material = isSelected
         ? this.sharedMaterials.stemSelected
         : this.sharedMaterials.stem;
 
       // Position label sprite above the aircraft
-      record.labelSprite.position.set(0, threePos.y + Math.max(35, scale * 1.5), 0);
+      record.labelSprite.position.set(0, xform.altitudeM + Math.max(35, xform.scale * 1.5), 0);
 
       this.updateGhostRing(record, track);
     }
@@ -613,6 +707,10 @@ export class Scene3D {
 
   public getTrackRecord(trackNo: string): TrackMeshRecord | undefined {
     return this.trackMeshMap.get(trackNo);
+  }
+
+  public getAllTrackRecords(): TrackMeshRecord[] {
+    return Array.from(this.trackMeshMap.values());
   }
 
   /**
@@ -641,7 +739,7 @@ export class Scene3D {
   /**
    * Synchronizes active engagement animations with the authoritative simulation event log.
    */
-  public syncEngagementEvents(events: SimEvent[], simMs: number): void {
+  public syncEngagementEvents(events: (SimEvent | OperatorEventView)[], simMs: number): void {
     this.engagementEffectManager.syncEvents(events, simMs, (trackNo) => this.getTrackWorldPosition(trackNo));
   }
 
@@ -724,6 +822,10 @@ export class Scene3D {
     this.environmentManager.setLowFidelity(lowFi);
   }
 
+  public getMotionFilter(): RenderTrackMotionFilter {
+    return this.motionFilter;
+  }
+
   /**
    * Complete scene teardown and memory cleanup.
    */
@@ -741,7 +843,8 @@ export class Scene3D {
     this.engagementEffectManager.dispose();
     this.targetModelFactory.dispose();
 
-    // 2. Dispose track resources
+    // 2. Dispose track resources & motion filter
+    this.motionFilter.reset();
     for (const record of this.trackMeshMap.values()) {
       if (record.labelSprite.material.map) {
         record.labelSprite.material.map.dispose();

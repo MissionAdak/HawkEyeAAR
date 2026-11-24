@@ -152,7 +152,10 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       engine.load(demo1Json as unknown as ScenarioSpec);
     });
 
-    function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null): SafeTrackView[] {
+    function projectSafeTracks(
+      curr: (TrackEntity | import('@/sim/trackerTypes').OperatorTrackView)[],
+      selectedTrackNo: string | null
+    ): SafeTrackView[] {
       return curr
         .filter(
           (e) =>
@@ -160,18 +163,21 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
             e.step !== 'UNDETECTED' &&
             (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
         )
-        .map((e) => ({
-          trackNo: e.trackNo!,
-          pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
-          vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
-          traineeLabel: e.traineeLabel,
-          step: e.step,
-          q: e.q,
-          masked: e.masked,
-          ghostSigmaM: e.ghostSigmaM,
-          isSelected: e.trackNo === selectedTrackNo,
-          lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
-        }));
+        .map((e) => {
+          const isOp = 'estPos' in e;
+          return {
+            trackNo: e.trackNo!,
+            pos: isOp ? { ...e.estPos } : { ...e.pos },
+            vel: isOp ? { ...e.estVel } : { ...e.vel },
+            traineeLabel: e.traineeLabel,
+            step: e.step,
+            q: e.q,
+            masked: isOp ? e.isCoasting : e.masked,
+            ghostSigmaM: isOp ? e.uncertaintyM : e.ghostSigmaM,
+            isSelected: e.trackNo === selectedTrackNo,
+            lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+          };
+        });
     }
 
     it('strictly excludes undetected tracks from live 3D view', () => {
@@ -849,17 +855,31 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
 
     it('property-tests 100% agreement between calculateModelledLos and canonical evaluateMasking over seeded grid', () => {
       const zones = [testUrbanZone, testRidgeZone];
-      // Deterministic pseudo-random sequence (LCG)
-      let seed = 42;
-      const nextU = () => {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        return seed / 4294967296;
-      };
+      // Deterministic pseudo-random sequence (LCG class with independent instance state)
+      class LcgPrng {
+        private seed: number;
+        constructor(seed: number) {
+          this.seed = seed >>> 0;
+        }
+        next(): number {
+          this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
+          return this.seed / 4294967296;
+        }
+      }
 
+      // Verify that two independent instances initialized with 42 produce matching successive outputs
+      const rng1 = new LcgPrng(42);
+      const rng2 = new LcgPrng(42);
+      for (let i = 0; i < 20; i++) {
+        expect(rng1.next()).toBe(rng2.next());
+      }
+
+      // Independent seeded generator for point-sampling property tests
+      const pointSamplingRng = new LcgPrng(42);
       for (let i = 0; i < 100; i++) {
-        const x = (nextU() - 0.5) * 6000;
-        const y = (nextU() - 0.5) * 6000;
-        const z = 10 + nextU() * 150;
+        const x = (pointSamplingRng.next() - 0.5) * 6000;
+        const y = (pointSamplingRng.next() - 0.5) * 6000;
+        const z = 10 + pointSamplingRng.next() * 150;
         const target = { trackNo: `T-RND-${i}`, pos: { x, y, z } };
 
         const canonical = evaluateMasking(target.pos, zones);
@@ -1417,7 +1437,7 @@ describe('Track X3D — 3D Renderer Foundation & Safe Information Boundary', () 
       const bldA = buildProceduralBuildings(descA);
       const bldB = buildProceduralBuildings(descB);
 
-      expect(bldA.objects.length).toBe(bldB.objects.length);
+      expect(bldA.objects).toHaveLength(bldB.objects.length);
       expect(bldA.objects[0].id).toBe(bldB.objects[0].id);
       expect(bldA.objects[0].position.x).toBe(bldB.objects[0].position.x);
       expect(bldA.objects[0].position.y).toBe(bldB.objects[0].position.y);

@@ -14,11 +14,11 @@ export const WebXrComfortModal: React.FC<WebXrComfortModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
-      role="dialog"
+    <dialog
+      open
       aria-modal="true"
       aria-label="WebXR VR Comfort & Safety Advisory"
-      className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none"
+      className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 m-0 border-0 max-w-none max-h-none w-screen h-screen select-none"
     >
       <div className="w-full max-w-2xl bg-carbon-900 border border-amber/60 flex flex-col font-mono text-xs overflow-hidden shadow-2xl">
         {/* Header */}
@@ -121,6 +121,6 @@ export const WebXrComfortModal: React.FC<WebXrComfortModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };

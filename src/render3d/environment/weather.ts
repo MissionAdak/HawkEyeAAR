@@ -67,7 +67,7 @@ export class WeatherManager {
     this.weatherGroup.add(this.moonLight);
 
     // 2. Sky Background & Tactical Distance Fog
-    this.setupAtmosphere(descriptor.weather, descriptor.fogSeverity, isNight);
+    this.setupAtmosphere(descriptor.weather, isNight, descriptor.fogSeverity);
 
     // 3. Setup Rain Particle System if configured
     this.setupRain(descriptor.seed);
@@ -78,8 +78,8 @@ export class WeatherManager {
 
   private setupAtmosphere(
     weather: WeatherType,
-    fogSeverity: number = DEFAULT_FOG_SEVERITY,
-    isNight: boolean
+    isNight: boolean,
+    fogSeverity: number = DEFAULT_FOG_SEVERITY
   ): void {
     if (!this.scene) return;
     const bgColor = isNight ? 0x070c12 : 0x0d1117;
@@ -119,8 +119,7 @@ export class WeatherManager {
       this.rainInitialOffsets.push({ x, y, z, speed });
 
       // Each streak is a line segment (top and bottom points)
-      positions.push(x, y, z);
-      positions.push(x - 2, y - streakLength, z + 2);
+      positions.push(x, y, z, x - 2, y - streakLength, z + 2);
     }
 
     this.rainGeom = new THREE.BufferGeometry();
@@ -143,10 +142,10 @@ export class WeatherManager {
    * INVARIANT (Rules R2.2 & R2.4):
    * This animation uses simMs (engine ticks * 50) ONLY. Never reads Date.now() or Math.random().
    */
-  public update(simMs: number, chaosList?: ChaosSpec[]): void {
-    const isNight = this.descriptor.dayNight === 'NIGHT';
-
-    // 1. Check dynamic chaos events in simulation schedule
+  private resolveActiveChaos(
+    simMs: number,
+    chaosList?: ChaosSpec[]
+  ): { activeFogSeverity: number | null; isRaining: boolean } {
     let activeFogSeverity: number | null = null;
     let isRaining = this.descriptor.weather === 'RAIN';
 
@@ -162,46 +161,53 @@ export class WeatherManager {
       }
     }
 
-    // 2. Dynamic Fog Adjustment
-    if (this.scene) {
-      const isFog = activeFogSeverity !== null || this.descriptor.weather === 'FOG';
-      const sev = activeFogSeverity ?? this.descriptor.fogSeverity ?? DEFAULT_FOG_SEVERITY;
-      const { color, near, far } = computeFogParameters(isFog, isNight, sev);
+    return { activeFogSeverity, isRaining };
+  }
 
-      if (this.scene.fog instanceof THREE.Fog) {
-        this.scene.fog.near = near;
-        this.scene.fog.far = far;
-        this.scene.fog.color.setHex(color);
-      } else {
-        this.scene.fog = new THREE.Fog(color, near, far);
-      }
+  private updateDynamicFog(activeFogSeverity: number | null, isNight: boolean): void {
+    if (!this.scene) return;
+    const isFog = activeFogSeverity !== null || this.descriptor.weather === 'FOG';
+    const sev = activeFogSeverity ?? this.descriptor.fogSeverity ?? DEFAULT_FOG_SEVERITY;
+    const { color, near, far } = computeFogParameters(isFog, isNight, sev);
+
+    if (this.scene.fog instanceof THREE.Fog) {
+      this.scene.fog.near = near;
+      this.scene.fog.far = far;
+      this.scene.fog.color.setHex(color);
+    } else {
+      this.scene.fog = new THREE.Fog(color, near, far);
+    }
+  }
+
+  private updateRainParticles(simMs: number, isRaining: boolean): void {
+    if (!this.rainLines || !this.rainGeom) return;
+    if (!isRaining) {
+      this.rainLines.visible = false;
+      return;
     }
 
-    // 3. Rain Particles Simulation
-    if (this.rainLines && this.rainGeom) {
-      if (isRaining) {
-        this.rainLines.visible = true;
-        const posAttr = this.rainGeom.attributes.position as THREE.BufferAttribute;
-        const streakLen = 25;
-        const boxHeight = 1200;
+    this.rainLines.visible = true;
+    const posAttr = this.rainGeom.attributes.position as THREE.BufferAttribute;
+    const streakLen = 25;
+    const boxHeight = 1200;
 
-        for (let i = 0; i < this.rainInitialOffsets.length; i++) {
-          const init = this.rainInitialOffsets[i];
-          // Pure deterministic displacement from simMs
-          const fallDist = (simMs * init.speed) % boxHeight;
-          let currentY = init.y - fallDist;
-          if (currentY < 0) currentY += boxHeight;
+    for (let i = 0; i < this.rainInitialOffsets.length; i++) {
+      const init = this.rainInitialOffsets[i];
+      const fallDist = (simMs * init.speed) % boxHeight;
+      let currentY = init.y - fallDist;
+      if (currentY < 0) currentY += boxHeight;
 
-          // Top vertex
-          posAttr.setXYZ(i * 2, init.x, currentY, init.z);
-          // Bottom vertex
-          posAttr.setXYZ(i * 2 + 1, init.x - 2, currentY - streakLen, init.z + 2);
-        }
-        posAttr.needsUpdate = true;
-      } else {
-        this.rainLines.visible = false;
-      }
+      posAttr.setXYZ(i * 2, init.x, currentY, init.z);
+      posAttr.setXYZ(i * 2 + 1, init.x - 2, currentY - streakLen, init.z + 2);
     }
+    posAttr.needsUpdate = true;
+  }
+
+  public update(simMs: number, chaosList?: ChaosSpec[]): void {
+    const isNight = this.descriptor.dayNight === 'NIGHT';
+    const { activeFogSeverity, isRaining } = this.resolveActiveChaos(simMs, chaosList);
+    this.updateDynamicFog(activeFogSeverity, isNight);
+    this.updateRainParticles(simMs, isRaining);
   }
 
   public setLowFidelity(lowFi: boolean): void {

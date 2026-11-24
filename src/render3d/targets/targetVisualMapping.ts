@@ -1,17 +1,15 @@
 import type { SafeTrackView } from '../types';
 import type { TrackClass } from '@/sim/types';
 import type { TargetModelCategory } from './targetModelTypes';
+import { resolveTargetPresentation, type SensorObservationContext } from './targetObservation';
 
 /**
  * Resolves the 3D visual target model category according to strict air-gap and truth-separation rules (Rules R3.3, R3.4).
  *
- * LIVE SIMULATION INVARIANT:
+ * LIVE SIMULATION INVARIANT (Task 17.2):
  * During live simulation (or whenever revealTruth is false), the rendered model category
- * MUST strictly reflect the operator's current assessment (traineeLabel).
- * If the operator has not classified the track or chosen UNKNOWN, a neutral geometric
- * contact beacon ('UNKNOWN') is displayed.
- * A wrong trainee classification displays the model matching that wrong classification,
- * NEVER the ground truth vehicle identity.
+ * reflects sensor-observable physical airframe geometry via targetObservation.ts,
+ * NOT operator traineeLabel or hidden truthClass.
  *
  * AAR REPLAY INVARIANT:
  * In post-session After Action Review, authorized truth revelation may project the
@@ -22,6 +20,7 @@ export function resolveTargetModelCategory(
   options?: {
     revealTruth?: boolean;
     truthClass?: TrackClass;
+    context?: SensorObservationContext;
   }
 ): TargetModelCategory {
   // Post-session AAR Ground-Truth Projection (only when explicitly authorized)
@@ -29,7 +28,21 @@ export function resolveTargetModelCategory(
     return mapClassToCategory(options.truthClass);
   }
 
-  // Active Operator View: Strictly follow trainee assessment
+  // If observation context is provided, resolve through sensor-aware observation layer
+  if (options?.context) {
+    return resolveTargetPresentation(track, options.context).presentationCategory;
+  }
+
+  // If track has approved sensorObservation, use sensor-aware presentation with context
+  if (track.sensorObservation) {
+    if (options?.context) {
+      return resolveTargetPresentation(track, options.context).presentationCategory;
+    }
+    // Fail closed: cannot resolve optical presentation without authoritative simulation time context
+    return 'RADAR_SYMBOL';
+  }
+
+  // Backward-compatible fallback for unobserved tracks without context
   const label = track.traineeLabel;
   if (!label || label === 'UNKNOWN_EVIDENCE_INSUFFICIENT') {
     return 'UNKNOWN';
@@ -41,7 +54,7 @@ export function resolveTargetModelCategory(
 /**
  * Maps a canonical classification label to a 3D model category.
  */
-function mapClassToCategory(label: TrackClass): TargetModelCategory {
+export function mapClassToCategory(label: TrackClass): TargetModelCategory {
   switch (label) {
     case 'HOSTILE_ATTACK':
       return 'HOSTILE_ATTACK';

@@ -1,4 +1,34 @@
 import { test, expect } from '@playwright/test';
+import zlib from 'node:zlib';
+
+/**
+ * Validates that a captured PNG screenshot contains non-blank (non-zero/varied) pixel data,
+ * preventing silent black-screen or unrendered viewport regressions.
+ */
+function assertNonBlankPng(pngBuffer: Buffer): void {
+  let pos = 8;
+  const idatChunks: Buffer[] = [];
+  while (pos < pngBuffer.length) {
+    const len = pngBuffer.readUInt32BE(pos);
+    const type = pngBuffer.toString('ascii', pos + 4, pos + 8);
+    if (type === 'IDAT') {
+      idatChunks.push(pngBuffer.subarray(pos + 8, pos + 8 + len));
+    }
+    pos += 12 + len;
+  }
+  expect(idatChunks.length).toBeGreaterThan(0);
+  const decompressed = zlib.inflateSync(Buffer.concat(idatChunks));
+  let nonZeroCount = 0;
+  for (let i = 0; i < decompressed.length; i++) {
+    if (decompressed[i] !== 0) {
+      nonZeroCount++;
+      if (nonZeroCount > 200) {
+        break;
+      }
+    }
+  }
+  expect(nonZeroCount).toBeGreaterThan(200);
+}
 
 test.describe('3D Tactical Environment and Viewport Functionality', () => {
   test('3D view renders, navigates, selects targets, and supports controls without blanking', async ({ page }) => {
@@ -23,6 +53,7 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
 
     // Ensure 3D canvas is visible
     const canvas3d = page.locator('canvas.cursor-grab');
+    const radarFrame = page.locator('.radar-frame');
     await expect(canvas3d).toBeVisible();
 
     // Verify Readout shows 3D CAM: OBLIQUE
@@ -78,6 +109,10 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
       // Dismiss modal via ESC
       await page.keyboard.press('Escape');
       await expect(modalHeader).not.toBeVisible();
+
+      // Assert rendered output is nonblank after cross-section dismissal
+      const postDismissShot = await radarFrame.screenshot();
+      assertNonBlankPng(postDismissShot);
     }
 
     // 6. Test Toggle Controls (Weapons, LOS, Clusters, Aid)
@@ -111,12 +146,106 @@ test.describe('3D Tactical Environment and Viewport Functionality', () => {
     // 8. Toggle back to 3D View to ensure idempotence
     await toggle3DBtn.click();
     await expect(canvas3d).toBeVisible();
+    await expect(page.getByText(/3D VIEW \| CAM:/i)).toBeVisible();
 
-    // Take screenshot of final healthy 3D viewport
-    const radarFrame = page.locator('.radar-frame');
-    await radarFrame.screenshot({ path: 'test-results/3d-view-healthy.png' });
+    // Assert rendered output is nonblank again after returning to 3D; keep screenshot as artifact
+    const finalShot = await radarFrame.screenshot({ path: 'test-results/3d-view-healthy.png' });
+    assertNonBlankPng(finalShot);
 
     // Assert zero uncaught page errors
+    expect(pageErrors).toEqual([]);
+  });
+
+  test('3D renderer context loss and failure teardown recovers safely to 2D without corrupting simulation', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    await page.goto('/');
+
+    // 1. Start session from Mission Briefing
+    const startBtn = page.getByTestId('start-session-btn');
+    await expect(startBtn).toBeVisible({ timeout: 5000 });
+    await startBtn.click();
+
+    // Wait for simulation tick and tracks to populate
+    const trackRow = page.locator('aside').first().locator('.cursor-pointer').first();
+    await expect(trackRow).toBeVisible({ timeout: 10000 });
+
+    // 2. Switch to 3D View
+    const toggle3DBtn = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DBtn).toBeVisible();
+    await toggle3DBtn.click();
+
+    const canvas3d = page.locator('canvas.cursor-grab');
+    await expect(canvas3d).toBeVisible();
+    await expect(page.getByText(/3D VIEW \| CAM:/i)).toBeVisible();
+
+    // 3. Mark the active renderer instance to prove stale renderer is discarded
+    const r3dTag = await page.evaluate(() => {
+      const bridge = window.__DRISHTI_TEST__;
+      const r = bridge?.getRenderer3D?.() as Record<string, unknown> | null;
+      if (!r) return null;
+      r.__testInstanceId = 'instance-lost-target';
+      return r.__testInstanceId;
+    });
+    expect(r3dTag).toBe('instance-lost-target');
+
+    // 4. Dispatch synthetic webglcontextlost on the 3D canvas
+    await page.evaluate(() => {
+      const canvas = document.querySelector('canvas.cursor-grab');
+      if (canvas) {
+        const evt = new Event('webglcontextlost', { bubbles: true, cancelable: true });
+        canvas.dispatchEvent(evt);
+      }
+    });
+
+    // 5. Verify UI restores 2D Canvas baseline
+    const canvas2d = page.locator('canvas.cursor-crosshair');
+    await expect(canvas2d).toBeVisible();
+
+    // Verify context loss advisory toast or banner was set
+    await expect(page.getByText(/WebGL2 context lost/i)).toBeVisible();
+
+    // Verify bridge reports renderer was cleared
+    const rendererAfterLoss = await page.evaluate(() => {
+      const bridge = window.__DRISHTI_TEST__;
+      return bridge?.getRenderer3D?.() ?? null;
+    });
+    expect(rendererAfterLoss).toBeNull();
+
+    // 6. Verify simulation continues running uninterrupted
+    const simStateAfterLoss = await page.evaluate(() => {
+      const bridge = window.__DRISHTI_TEST__;
+      return {
+        trackCount: bridge?.getTrackList?.()?.length ?? 0,
+        isEnded: bridge?.isSessionEnded?.() ?? true,
+        eventsCount: bridge?.getRecordedEvents?.()?.length ?? 0,
+      };
+    });
+    expect(simStateAfterLoss.trackCount).toBeGreaterThan(0);
+    expect(simStateAfterLoss.isEnded).toBe(false);
+    expect(simStateAfterLoss.eventsCount).toBeGreaterThan(0);
+
+    // 7. Toggle 3D again and verify fresh instance is created (NOT reusing lost instance)
+    const toggle3DReEnter = page.getByRole('button', { name: /\[V\] 3D VIEW/i });
+    await expect(toggle3DReEnter).toBeVisible();
+    await toggle3DReEnter.click();
+    await expect(canvas3d).toBeVisible();
+    await expect(page.getByText(/3D VIEW \| CAM:/i)).toBeVisible();
+
+    const isNewInstance = await page.evaluate(() => {
+      const bridge = window.__DRISHTI_TEST__;
+      const r = bridge?.getRenderer3D?.() as Record<string, unknown> | null;
+      return r && r.__testInstanceId !== 'instance-lost-target';
+    });
+    expect(isNewInstance).toBe(true);
+
+    // 8. Return to 2D
+    const toggle2DBtn = page.getByRole('button', { name: /\[V\] 2D RADAR/i });
+    await expect(toggle2DBtn).toBeVisible();
+    await toggle2DBtn.click();
+    await expect(canvas2d).toBeVisible();
+
     expect(pageErrors).toEqual([]);
   });
 });

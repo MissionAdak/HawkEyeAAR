@@ -6,10 +6,16 @@ import {
   buildSwarmElementModel,
   buildCivilUasModel,
 } from './multirotorModels';
-import { buildFriendlyUasModel, buildBirdModel, buildUnknownContactModel } from './specialContactModels';
+import {
+  buildFriendlyUasModel,
+  buildBirdModel,
+  buildUnknownContactModel,
+  buildRadarContactSymbolModel,
+  buildUnresolvedAirframeModel,
+} from './specialContactModels';
+import { buildLoiteringMunitionModel } from './fixedWingModels';
 
 // Tactical NATO-inspired colors (Rule R3.4)
-const COLOR_THREAT = 0xff3b30;    // Hostile crimson
 const COLOR_FRIEND = 0x00f0ff;    // Friendly cyan
 const COLOR_CIVIL = 0x00ff66;     // Civilian green
 const COLOR_UNKNOWN = 0xffb700;   // Amber unclassified
@@ -40,21 +46,21 @@ export class TargetModelFactory {
   public getPaletteForCategory(category: TargetModelCategory): TargetModelPalette {
     switch (category) {
       case 'HOSTILE_ATTACK': {
-        const body = this.getMaterial('body_threat', () => new THREE.MeshLambertMaterial({ color: 0x1d2127 }));
-        const accent = this.getMaterial('accent_threat', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
-        const rotors = this.getMaterial('rotors_threat', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT, transparent: true, opacity: 0.35 }));
+        const body = this.getMaterial('body_fpv', () => new THREE.MeshLambertMaterial({ color: 0x1d2127 }));
+        const accent = this.getMaterial('accent_fpv', () => new THREE.MeshBasicMaterial({ color: 0x3a424d }));
+        const rotors = this.getMaterial('rotors_fpv', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.35 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'HOSTILE_ISR': {
         const body = this.getMaterial('body_isr', () => new THREE.MeshLambertMaterial({ color: 0x242a33 }));
-        const accent = this.getMaterial('accent_isr', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
-        const rotors = this.getMaterial('rotors_isr', () => new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.3 }));
+        const accent = this.getMaterial('accent_isr', () => new THREE.MeshBasicMaterial({ color: 0x48525e }));
+        const rotors = this.getMaterial('rotors_isr', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.3 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'SWARM_ELEMENT': {
         const body = this.getMaterial('body_swarm', () => new THREE.MeshLambertMaterial({ color: 0x181a1e }));
-        const accent = this.getMaterial('accent_swarm', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT }));
-        const rotors = this.getMaterial('rotors_swarm', () => new THREE.MeshBasicMaterial({ color: COLOR_THREAT, transparent: true, opacity: 0.4 }));
+        const accent = this.getMaterial('accent_swarm', () => new THREE.MeshBasicMaterial({ color: 0x363d47 }));
+        const rotors = this.getMaterial('rotors_swarm', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.4 }));
         return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
       }
       case 'CIVIL_UAS': {
@@ -74,6 +80,29 @@ export class TargetModelFactory {
         const accent = this.getMaterial('accent_bird', () => new THREE.MeshBasicMaterial({ color: 0x48525e }));
         return { body, accent, hitProxy: this.hitProxyMaterial };
       }
+      case 'LOITERING_MUNITION':
+      case 'OBSERVED_FIXED_WING': {
+        const body = this.getMaterial('body_fixedwing', () => new THREE.MeshLambertMaterial({ color: 0x1e2329 }));
+        const accent = this.getMaterial('accent_fixedwing', () => new THREE.MeshBasicMaterial({ color: 0x3d4652 }));
+        const rotors = this.getMaterial('rotors_fixedwing', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 }));
+        return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
+      }
+      case 'OBSERVED_MULTIROTOR': {
+        const body = this.getMaterial('body_observed_multi', () => new THREE.MeshLambertMaterial({ color: 0x22272e }));
+        const accent = this.getMaterial('accent_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
+        const rotors = this.getMaterial('rotors_observed_multi', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 }));
+        return { body, accent, rotors, hitProxy: this.hitProxyMaterial };
+      }
+      case 'RADAR_SYMBOL': {
+        const body = this.getMaterial('body_radar_symbol', () => new THREE.MeshBasicMaterial({ color: COLOR_UNKNOWN }));
+        const accent = this.getMaterial('accent_radar_symbol', () => new THREE.MeshBasicMaterial({ color: COLOR_UNKNOWN }));
+        return { body, accent, hitProxy: this.hitProxyMaterial };
+      }
+      case 'UNKNOWN_AIRFRAME': {
+        const body = this.getMaterial('body_unresolved', () => new THREE.MeshLambertMaterial({ color: 0x363d47 }));
+        const accent = this.getMaterial('accent_unresolved', () => new THREE.MeshBasicMaterial({ color: 0x8a99a8 }));
+        return { body, accent, hitProxy: this.hitProxyMaterial };
+      }
       case 'UNKNOWN':
       default: {
         const body = this.getMaterial('body_unknown', () => new THREE.MeshLambertMaterial({ color: COLOR_BODY_DARK }));
@@ -85,9 +114,14 @@ export class TargetModelFactory {
 
   /**
    * Instantiates a specialized procedural 3D model for the given target category.
+   * If category is OBSERVED_MULTIROTOR, the observable physical signature selects the appropriate morphology variant.
    * Tags all pickable sub-meshes with userData.trackNo for seamless 3D raycast designation.
    */
-  public createModel(category: TargetModelCategory, trackNo: string): BuiltTargetModel {
+  public createModel(
+    category: TargetModelCategory,
+    trackNo: string,
+    signature?: string
+  ): BuiltTargetModel {
     const palette = this.getPaletteForCategory(category);
     let model: BuiltTargetModel;
 
@@ -110,6 +144,59 @@ export class TargetModelFactory {
       case 'BIRD':
         model = buildBirdModel(palette);
         break;
+      case 'LOITERING_MUNITION':
+      case 'OBSERVED_FIXED_WING':
+        model = buildLoiteringMunitionModel(palette);
+        break;
+      case 'OBSERVED_MULTIROTOR':
+        if (signature === 'MULTIROTOR_COMPACT') {
+          const fpvPalette = {
+            body: this.getMaterial('body_fpv_obs', () => new THREE.MeshLambertMaterial({ color: 0x1d2127 })),
+            accent: this.getMaterial('accent_fpv_obs', () => new THREE.MeshBasicMaterial({ color: 0xff3b30 })),
+            rotors: this.getMaterial('rotors_fpv_obs', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.4 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildFpvAttackModel(fpvPalette);
+        } else if (signature === 'MULTIROTOR_MICRO' || signature === 'SWARM_ELEMENT') {
+          const swarmPalette = {
+            body: this.getMaterial('body_swarm_obs', () => new THREE.MeshLambertMaterial({ color: 0x181a1e })),
+            accent: this.getMaterial('accent_swarm_obs', () => new THREE.MeshBasicMaterial({ color: 0xff9500 })),
+            rotors: this.getMaterial('rotors_swarm_obs', () => new THREE.MeshBasicMaterial({ color: 0x22272e, transparent: true, opacity: 0.45 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildSwarmElementModel(swarmPalette);
+        } else if (signature === 'MULTIROTOR_STANDARD') {
+          const civilPalette = {
+            body: this.getMaterial('body_civil_obs', () => new THREE.MeshLambertMaterial({ color: 0xe6edf5 })),
+            accent: this.getMaterial('accent_civil_obs', () => new THREE.MeshBasicMaterial({ color: 0x00ff88 })),
+            rotors: this.getMaterial('rotors_civil_obs', () => new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.3 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildCivilUasModel(civilPalette);
+        } else if (signature === 'FRIENDLY_UAS') {
+          const friendPalette = {
+            body: this.getMaterial('body_friend_obs', () => new THREE.MeshLambertMaterial({ color: 0x2b3b48 })),
+            accent: this.getMaterial('accent_friend_obs', () => new THREE.MeshBasicMaterial({ color: COLOR_FRIEND })),
+            rotors: this.getMaterial('rotors_friend_obs', () => new THREE.MeshBasicMaterial({ color: COLOR_FRIEND, transparent: true, opacity: 0.3 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildFriendlyUasModel(friendPalette);
+        } else {
+          const reconPalette = {
+            body: this.getMaterial('body_recon_obs', () => new THREE.MeshLambertMaterial({ color: 0x2d3748 })),
+            accent: this.getMaterial('accent_recon_obs', () => new THREE.MeshBasicMaterial({ color: 0x00d2ff })),
+            rotors: this.getMaterial('rotors_recon_obs', () => new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.35 })),
+            hitProxy: this.hitProxyMaterial,
+          };
+          model = buildReconQuadModel(reconPalette);
+        }
+        break;
+      case 'RADAR_SYMBOL':
+        model = buildRadarContactSymbolModel(palette, trackNo);
+        break;
+      case 'UNKNOWN_AIRFRAME':
+        model = buildUnresolvedAirframeModel(palette);
+        break;
       case 'UNKNOWN':
       default:
         model = buildUnknownContactModel(palette);
@@ -117,6 +204,7 @@ export class TargetModelFactory {
     }
 
     // Tag pickable meshes with trackNo for raycaster hit-testing
+    model.category = category;
     model.bodyMesh.userData = { trackNo, targetCategory: category };
     model.accentMesh.userData = { trackNo, targetCategory: category };
     model.hitProxy.userData = { trackNo, targetCategory: category };

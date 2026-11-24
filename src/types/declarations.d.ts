@@ -1,3 +1,5 @@
+declare const __DRISHTI_E2E_BUILD__: boolean;
+
 declare module 'eslint' {
   export class ESLint {
     constructor(options?: Record<string, unknown>);

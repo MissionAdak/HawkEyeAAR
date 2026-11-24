@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { useSessionStore, engineInstance } from '@/store/sessionStore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useSessionStore, engineInstance, getActiveRecorder } from '@/store/sessionStore';
+import { exportSessionJson, exportSessionCsv } from '@/db/io';
 import { aggregateAARMetrics } from '@/sim/metrics';
 import { TRUE_CLASSES, PRED_COLUMNS, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { computeOracleEffector, computeCostRegret } from '@/sim/oracle';
-import type { EffectorId, ScenarioSpec, ZoneSpec } from '@/sim/types';
+import type { EffectorId, ScenarioSpec, ZoneSpec, WeaknessVector } from '@/sim/types';
 import demo1Spec from '@/director/bundled/demo1.json';
 import { AarEngagementInspector } from './aar/AarEngagementInspector';
 import {
@@ -11,6 +12,22 @@ import {
   type AarEngagementInspectionData,
 } from './aar/engagementInspectorData';
 import { AarReplaySection } from './aar/AarReplaySection';
+import { TrendChart } from './aar/charts/TrendChart';
+import { SessionTable } from './aar/panels/SessionTable';
+import { UnitView } from './aar/panels/UnitView';
+import { RedTeamPlan } from './aar/RedTeamPlan';
+import {
+  getTraineeSessions,
+  getUnitTraineeSummaries,
+  getCohortStats,
+  seedDemoSessionsIfEmpty,
+  getTraineeDifficulty,
+  getTraineeProfile,
+  callsignToUid,
+  type UnitTraineeSummary,
+  type UnitCohortStats,
+} from '@/db/sessionRepo';
+import type { SessionRow } from '@/db/dexie';
 
 interface HotWashProps {
   onClose: () => void;
@@ -22,12 +39,67 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   const openScenarioModal = useSessionStore((s) => s.openScenarioModal);
   const returnToBriefing = useSessionStore((s) => s.returnToBriefing);
   const currentScenarioId = useSessionStore((s) => s.currentScenarioId);
+  const currentCallsign = useSessionStore((s) => s.currentCallsign);
+  const setCallsign = useSessionStore((s) => s.setCallsign);
+  const latestSavedSessionUid = useSessionStore((s) => s.latestSavedSessionUid);
+  const sessionPersistenceStatus = useSessionStore((s) => s.sessionPersistenceStatus);
+  const retrySaveSession = useSessionStore((s) => s.retrySaveSession);
+  const startAdaptedTrainingSession = useSessionStore((s) => s.startAdaptedTrainingSession);
+
+  const [traineeSessions, setTraineeSessions] = useState<SessionRow[]>([]);
+  const [unitSummaries, setUnitSummaries] = useState<UnitTraineeSummary[]>([]);
+  const [cohortStats, setCohortStats] = useState<UnitCohortStats>({
+    cohortMeanEvalScore: null,
+    cohortEvalPassRate: null,
+    totalEvalSessions: 0,
+    activeTraineesCount: 0,
+  });
+  const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null);
+  const [cohortScope, setCohortScope] = useState<'REAL' | 'DEMO'>('REAL');
+  const [traineeDifficulty, setTraineeDifficulty] = useState<number>(0.3);
+  const [traineeProfile, setTraineeProfile] = useState<WeaknessVector | null>(null);
+
+  // Load historical sessions, unit summaries & trainee progression profile
+  useEffect(() => {
+    let isMounted = true;
+    const loadData = async () => {
+      try {
+        await seedDemoSessionsIfEmpty();
+        const sessions = await getTraineeSessions(currentCallsign, 'asc', cohortScope);
+        const summaries = await getUnitTraineeSummaries(cohortScope);
+        const stats = await getCohortStats(cohortScope);
+        const diff = await getTraineeDifficulty(currentCallsign);
+        const prof = await getTraineeProfile(currentCallsign);
+        if (isMounted) {
+          setTraineeSessions(sessions);
+          setUnitSummaries(summaries);
+          setCohortStats(stats);
+          setTraineeDifficulty(diff);
+          setTraineeProfile(prof);
+        }
+      } catch (err) {
+        console.error('[HotWash] Failed to load historical sessions:', err);
+      }
+    };
+    void loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentCallsign, latestSavedSessionUid, sessionPersistenceStatus, cohortScope]);
 
   // Reconstruct metrics from raw event log
   const metrics = aggregateAARMetrics(
     engineInstance.events,
     engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)
   );
+
+  // Exact deterministic recommendation seed for current session AAR (TASK 21-PT-R2 Section 2)
+  const recommendationSeed = useMemo(() => {
+    if (typeof engineInstance.spec?.seed === 'number') {
+      return ((engineInstance.spec.seed * 1664525 + 1013904223) >>> 0) || 12345;
+    }
+    return 424242;
+  }, [engineInstance.spec?.seed]);
 
   const getGradeBadge = (grade: string) => {
     switch (grade) {
@@ -56,6 +128,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   };
 
   const [inspectingEngagement, setInspectingEngagement] = useState<AarEngagementInspectionData | null>(null);
+  const [activeTab, setActiveTab] = useState<'SCORECARD' | 'REPLAY' | 'TRENDS' | 'UNIT'>('SCORECARD');
 
   // Find all engaged tracks to show Oracle decision comparison
   const engagedTracks = engineInstance.curr.filter((e) => e.engagements > 0);
@@ -71,7 +144,7 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-carbon-950/90 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+    <div data-testid="aar-modal" className="fixed inset-0 z-50 bg-carbon-950/95 flex items-center justify-center p-4 select-none">
       <div className="w-[960px] max-h-[90vh] bg-carbon-900 border border-line flex flex-col font-mono text-xs overflow-hidden">
         {/* Modal Header */}
         <div className="h-[42px] px-4 border-b border-line bg-carbon-800/80 flex items-center justify-between">
@@ -85,6 +158,64 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             <span className="text-[10px] text-phosphor border border-line px-1.5 py-0.5 font-bold bg-carbon-950">
               SCENARIO: {engineInstance.spec?.id ?? currentScenarioId}
             </span>
+            <div className="flex items-center gap-1 ml-2">
+              <span className="text-[10px] text-text-dim border border-line px-1.5 py-0.5">
+                OPERATOR:
+              </span>
+              <select
+                value={currentCallsign}
+                onChange={(e) => setCallsign(e.target.value)}
+                className="bg-carbon-950 border border-line text-phosphor font-bold text-[10px] px-1 py-0.5 cursor-pointer outline-none hover:border-phosphor/60"
+                data-testid="operator-callsign-select"
+              >
+                {unitSummaries.map((u) => (
+                  <option key={u.callsign} value={u.callsign}>
+                    {u.callsign} ({u.unitName})
+                  </option>
+                ))}
+                {!unitSummaries.some((u) => u.callsign === currentCallsign) && (
+                  <option value={currentCallsign}>{currentCallsign}</option>
+                )}
+              </select>
+            </div>
+
+            {/* Persistence Status Indicator (Task 20-A1 High-priority E) */}
+            <div className="flex items-center gap-1.5 ml-2">
+              {sessionPersistenceStatus === 'SAVING' && (
+                <span
+                  data-testid="persistence-status-saving"
+                  className="text-[10px] text-amber border border-amber/40 bg-carbon-950 px-2 py-0.5 font-bold"
+                >
+                  PERSISTENCE: SAVING...
+                </span>
+              )}
+              {sessionPersistenceStatus === 'SAVED' && (
+                <span
+                  data-testid="persistence-status-saved"
+                  className="text-[10px] text-phosphor border border-phosphor/40 bg-carbon-950 px-2 py-0.5 font-bold"
+                >
+                  PERSISTED (IDB)
+                </span>
+              )}
+              {sessionPersistenceStatus === 'ERROR' && (
+                <div className="flex items-center gap-1" data-testid="persistence-status-error-container">
+                  <span
+                    data-testid="persistence-status-error"
+                    className="text-[10px] text-threat border border-threat bg-threat/10 px-2 py-0.5 font-bold"
+                  >
+                    PERSISTENCE FAILED
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="persistence-retry-btn"
+                    onClick={() => void retrySaveSession()}
+                    className="px-2 py-0.5 text-[10px] font-bold border border-threat hover:bg-threat hover:text-carbon-950 text-threat transition-colors"
+                  >
+                    RETRY SAVE
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           <button
@@ -95,9 +226,72 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
           </button>
         </div>
 
+        {/* Modal Navigation Tabs */}
+        <div className="px-4 py-1.5 border-b border-line bg-carbon-800/60 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="tab-scorecard"
+              onClick={() => setActiveTab('SCORECARD')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'SCORECARD'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              SCORECARD
+            </button>
+            <button
+              type="button"
+              data-testid="tab-replay"
+              onClick={() => setActiveTab('REPLAY')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'REPLAY'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              REPLAY
+            </button>
+            <button
+              type="button"
+              data-testid="tab-trends"
+              onClick={() => setActiveTab('TRENDS')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'TRENDS'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              TRENDS & HISTORY
+            </button>
+            <button
+              type="button"
+              data-testid="tab-unit"
+              onClick={() => setActiveTab('UNIT')}
+              className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                activeTab === 'UNIT'
+                  ? 'bg-phosphor text-carbon-950 border-phosphor'
+                  : 'bg-carbon-900 text-text-dim border-line hover:text-text-main'
+              }`}
+            >
+              UNIT READINESS
+            </button>
+          </div>
+
+          <div className="text-[10px] text-text-dim">
+            {activeTab === 'SCORECARD' && 'SINGLE-DRILL MISSION DEBRIEF'}
+            {activeTab === 'REPLAY' && '2D/3D SYNCHRONIZED TIMELINE'}
+            {activeTab === 'TRENDS' && `OPERATOR ${currentCallsign} MULTI-SESSION PROGRESSION`}
+            {activeTab === 'UNIT' && 'ALPHA COY STANDARDIZED EVALUATION LEADERBOARD'}
+          </div>
+        </div>
+
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-          {/* 1. Scorecard Hero Strip */}
+          {activeTab === 'SCORECARD' && (
+            <>
+              {/* 1. Scorecard Hero Strip */}
           <div className="p-4 border border-line bg-carbon-950 flex items-center justify-between">
             <div className="flex items-center gap-6">
               <div>
@@ -128,19 +322,19 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             <div className="grid grid-cols-4 gap-2 text-center">
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">DETECTION [D]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.dScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.dScore ?? '—'}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">CLASSIFY [C]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.cScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.cScore ?? '—'}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">ENGAGE [G]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.econScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.gScore ?? '—'}</div>
               </div>
               <div className="p-2 border border-line bg-carbon-900 min-w-[70px]">
                 <div className="text-[9px] text-text-dim">ROE [R]</div>
-                <div className="text-sm font-bold text-text-main">{metrics.rScore}</div>
+                <div className="text-sm font-bold text-text-main">{metrics.rScore ?? '—'}</div>
               </div>
             </div>
           </div>
@@ -308,13 +502,6 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
             </div>
           </div>
 
-          {/* Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */}
-          <AarReplaySection
-            events={engineInstance.events}
-            spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
-            zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
-          />
-
           {/* 4. Trainee vs Oracle Decision & Cost Regret */}
           <div>
             <div className="text-[11px] font-display font-semibold text-text-main mb-2 tracking-wider">
@@ -402,7 +589,91 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
               )}
             </div>
           </div>
+
+          {/* 5. Adaptive Red Team Progression & Training Plan (TASK 21-PT / F-07) */}
+          <RedTeamPlan
+            traineeId={callsignToUid(currentCallsign)}
+            callsign={currentCallsign}
+            currentDifficulty={traineeDifficulty}
+            sessionStartDifficulty={engineInstance.spec?.difficulty ?? 0.3}
+            mode={engineInstance.mode}
+            profile={traineeProfile}
+            lastScore={metrics.score}
+            recommendationSeed={recommendationSeed}
+            onSelectRecommendedScenario={(scenId, targetDiff, options) => {
+              onClose();
+              void startAdaptedTrainingSession({
+                scenarioId: scenId,
+                difficultyOverride: targetDiff,
+                targetLever: options?.targetLever,
+                seed: options?.seed ?? recommendationSeed,
+              });
+            }}
+          />
+        </>
+      )}
+
+      {/* Tab 2: Synchronized 2D/3D AAR Mission Timeline Replay (Task F7) */}
+      {activeTab === 'REPLAY' && (
+        <AarReplaySection
+          events={engineInstance.events}
+          spec={engineInstance.spec ?? (demo1Spec as unknown as ScenarioSpec)}
+          zones={engineInstance.spec?.zones ?? (demo1Spec.zones as unknown as ZoneSpec[])}
+        />
+      )}
+
+      {/* Tab 3: Longitudinal Trend Chart and Session Drill Table (Task 20 / P3-09) */}
+      {activeTab === 'TRENDS' && (
+        <div className="space-y-4" data-testid="aar-trends-panel">
+          <RedTeamPlan
+            traineeId={callsignToUid(currentCallsign)}
+            callsign={currentCallsign}
+            currentDifficulty={traineeDifficulty}
+            sessionStartDifficulty={engineInstance.spec?.difficulty ?? 0.3}
+            mode={engineInstance.mode}
+            profile={traineeProfile}
+            lastScore={metrics.score}
+            recommendationSeed={recommendationSeed}
+            onSelectRecommendedScenario={(scenId, targetDiff, options) => {
+              onClose();
+              void startAdaptedTrainingSession({
+                scenarioId: scenId,
+                difficultyOverride: targetDiff,
+                targetLever: options?.targetLever,
+                seed: options?.seed ?? recommendationSeed,
+              });
+            }}
+          />
+          <TrendChart
+            sessions={traineeSessions}
+            selectedSessionUid={selectedSession?.uid}
+            onSelectSession={(s) => setSelectedSession(s)}
+          />
+          <SessionTable
+            sessions={traineeSessions}
+            selectedSessionUid={selectedSession?.uid}
+            onSelectSession={(s) => setSelectedSession(s)}
+          />
         </div>
+      )}
+
+      {/* Tab 4: Unit Readiness View & Cohort Leaderboard (Task 20 / P3-10 / Rules.md R4.4) */}
+      {activeTab === 'UNIT' && (
+        <div data-testid="aar-unit-panel">
+          <UnitView
+            summaries={unitSummaries}
+            cohortStats={cohortStats}
+            selectedTraineeCallsign={currentCallsign}
+            datasetScope={cohortScope}
+            onSelectScope={(scope) => setCohortScope(scope)}
+            onSelectTrainee={(callsign) => {
+              setCallsign(callsign);
+              setActiveTab('TRENDS');
+            }}
+          />
+        </div>
+      )}
+    </div>
 
         {/* Modal Footer */}
         <div className="h-[46px] px-4 border-t border-line bg-carbon-800/80 flex items-center justify-between">
@@ -411,6 +682,28 @@ export const HotWash: React.FC<HotWashProps> = ({ onClose }) => {
           </div>
 
           <div className="flex gap-2 items-center">
+            <button
+              onClick={() => {
+                const sessionUid = getActiveRecorder()?.getSessionUid() ?? metrics.sessionUid;
+                void exportSessionJson(sessionUid);
+              }}
+              data-testid="aar-export-json-btn"
+              className="px-2.5 py-1 font-display font-semibold text-[11px] border border-line hover:border-phosphor text-text-dim hover:text-phosphor transition-colors"
+              title="Export AAR Session JSON with SHA-256 Checksum"
+            >
+              [X] EXPORT JSON
+            </button>
+            <button
+              onClick={() => {
+                const sessionUid = getActiveRecorder()?.getSessionUid() ?? metrics.sessionUid;
+                void exportSessionCsv(sessionUid);
+              }}
+              data-testid="aar-export-csv-btn"
+              className="px-2.5 py-1 font-display font-semibold text-[11px] border border-line hover:border-phosphor text-text-dim hover:text-phosphor transition-colors"
+              title="Export AAR Session CSV"
+            >
+              [C] EXPORT CSV
+            </button>
             <button
               onClick={() => {
                 onClose();

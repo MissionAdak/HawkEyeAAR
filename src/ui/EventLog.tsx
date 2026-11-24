@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useSessionStore } from '@/store/sessionStore';
-import type { SimEvent } from '@/sim/types';
+import type { OperatorEventView } from '@/sim/types';
 
 export const EventLog: React.FC = () => {
   const events = useSessionStore((s) => s.ui.recentEvents);
   const [filter, setFilter] = useState<'ALL' | 'TRK' | 'ENG' | 'CHAOS' | 'ROE'>('ALL');
 
-  const filteredEvents = events.filter((ev: SimEvent) => {
+  const filteredEvents = events.filter((ev: OperatorEventView) => {
     if (filter === 'ALL') return true;
     if (filter === 'TRK') return ev.type === 'DETECT' || ev.type === 'TRACK_INIT' || ev.type === 'MASKED' || ev.type === 'REACQUIRE';
     if (filter === 'ENG') return ev.type === 'ENGAGE' || ev.type === 'ENGAGE_RESULT' || ev.type === 'ASSESS';
@@ -35,21 +35,29 @@ export const EventLog: React.FC = () => {
     }
   };
 
-  const formatPayload = (ev: SimEvent) => {
+  const formatPayload = (ev: OperatorEventView) => {
+    if (ev.message) return ev.message;
     const parts: string[] = [];
     if (ev.trackNo) parts.push(`TRK ${ev.trackNo}`);
-    for (const [key, val] of Object.entries(ev.payload)) {
-      if (typeof val === 'number') {
-        parts.push(`${key}: ${val.toFixed(1)}`);
-      } else if (typeof val === 'boolean' || typeof val === 'string') {
-        parts.push(`${key}: ${val}`);
+    if (ev.payload) {
+      for (const [key, val] of Object.entries(ev.payload)) {
+        if (key === 'trackNo') continue;
+        if (typeof val === 'number') {
+          parts.push(`${key}: ${val.toFixed(1)}`);
+        } else if (typeof val === 'boolean' || typeof val === 'string') {
+          parts.push(`${key}: ${val}`);
+        }
       }
     }
     return parts.join(' | ');
   };
 
   return (
-    <footer className="h-[110px] w-full bg-carbon-900 border-t border-line flex flex-col font-mono text-[11px] select-none">
+    <footer
+      id="event-log"
+      data-testid="event-log"
+      className="h-[110px] w-full bg-carbon-900 border-t border-line flex flex-col font-mono text-[11px] select-none"
+    >
       {/* Top Bar inside Footer: Filter Tabs & Status */}
       <div className="h-[20px] px-3 flex items-center justify-between border-b border-line bg-carbon-800 text-[10px]">
         <div className="flex items-center gap-1 font-display">
@@ -78,13 +86,13 @@ export const EventLog: React.FC = () => {
         {filteredEvents.length === 0 ? (
           <div className="text-text-dim italic text-[10px]">AWAITING SIMULATION EVENTS...</div>
         ) : (
-          filteredEvents.slice(-8).map((ev: SimEvent) => {
+          filteredEvents.slice(-8).map((ev: OperatorEventView) => {
             const totalSec = Math.floor(ev.tMs / 1000);
             const ms = ev.tMs % 1000;
             const timeStr = `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 
             return (
-              <div key={`${ev.seq}-${ev.tMs}`} className="flex items-center gap-2 truncate">
+              <div key={`${ev.seq}-${ev.tMs}`} className="event-log-entry flex items-center gap-2 truncate">
                 <span className="text-text-dim shrink-0">{timeStr}</span>
                 <span className={`shrink-0 font-bold ${getEventColor(ev.type)}`}>
                   {ev.type.padEnd(14, ' ')}

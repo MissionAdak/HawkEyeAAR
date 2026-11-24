@@ -9,7 +9,12 @@ import type {
   SensorMode,
   EffectorId,
   TrackClass,
+  SessionMode,
+  WeaknessVector,
 } from '@/sim/types';
+import { SIM_VERSION, SCHEMA_VERSION } from '@/sim/types';
+import { CONFIG_HASH } from '@/config';
+import { computeScenarioSnapshotHash } from '@/sim/snapshotHash';
 import {
   DEFAULT_SCENARIO_ID,
   getScenarioCatalogEntry,
@@ -18,12 +23,34 @@ import {
 } from '@/director/catalog';
 import { validate } from '@/director/validate';
 import { type OperatorFeedback, createOperatorFeedback } from '@/sim/operatorFeedback';
+import { aggregateAARMetrics } from '@/sim/metrics';
+import {
+  callsignToUid,
+  saveCompletedSession,
+  seedDemoSessionsIfEmpty,
+  getTraineeDifficulty,
+  getTraineeProfile,
+  getTraineeSessions,
+} from '@/db/sessionRepo';
+import { generateScenario } from '@/director/generator';
+import { sampleAdaptiveLevers, DEFAULT_METRIC_EMA, WEAKNESS_LEVER_MAP, type WeaknessDimension } from '@/director/adaptive';
+import type { SessionRow } from '@/db/dexie';
 
 // Global singleton instances of SimEngine and SimClock
 export const engineInstance = new SimEngine();
 export { clockInstance };
 let activeRecorder: EventRecorder | null = null;
 let isFinalizingSession = false;
+let activeSessionScenarioSnapshot: ScenarioSpec | null = null;
+let activeSessionSnapshotHash: string | null = null;
+
+export function getActiveSessionScenarioSnapshot(): ScenarioSpec | null {
+  return activeSessionScenarioSnapshot;
+}
+
+export function getActiveSessionSnapshotHash(): string | null {
+  return activeSessionSnapshotHash;
+}
 
 export function getActiveRecorder(): EventRecorder | null {
   return activeRecorder;
@@ -31,6 +58,48 @@ export function getActiveRecorder(): EventRecorder | null {
 
 export function getIsFinalizingSession(): boolean {
   return isFinalizingSession;
+}
+
+/**
+ * Coordinated atomic persistence pipeline for completed sessions (TASK 20-A2, TASK 20-A3).
+ * Transitions status to 'SAVED' strictly when both event queue drain and session metadata succeed.
+ */
+export async function persistCompletedSession(
+  sessionRow: SessionRow,
+  recorder: EventRecorder,
+  sessionCallsign: string
+): Promise<boolean> {
+  useSessionStore.setState({
+    sessionPersistenceStatus: 'SAVING',
+    lastFailedSessionRow: null,
+    lastFailedRecorder: null,
+  });
+
+  try {
+    // 1. Drain and persist all buffered events first
+    await recorder.stop();
+    // 2. Persist session metadata
+    await saveCompletedSession(sessionRow, sessionCallsign);
+    // 3. Mark SAVED only when BOTH event stream and metadata succeed
+    useSessionStore.setState({
+      latestSavedSessionUid: sessionRow.uid,
+      sessionPersistenceStatus: 'SAVED',
+      lastFailedSessionRow: null,
+      lastFailedRecorder: null,
+    });
+    return true;
+  } catch (error) {
+    console.error(
+      '[SessionStore] Failed to persist session to sessionRepo / recorder:',
+      error
+    );
+    useSessionStore.setState({
+      sessionPersistenceStatus: 'ERROR',
+      lastFailedSessionRow: sessionRow,
+      lastFailedRecorder: recorder,
+    });
+    return false;
+  }
 }
 
 export type SessionStatus = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'ABORTED';
@@ -56,10 +125,13 @@ const initialSnapshot: UiSnapshot = {
   activeEffector: 'RF_SOFTKILL',
 };
 
+export type SessionPersistenceStatus = 'IDLE' | 'SAVING' | 'SAVED' | 'ERROR';
+
 export interface SessionState {
   ui: UiSnapshot;
   isSimRunning: boolean;
   sessionStatus: SessionStatus;
+  sessionPersistenceStatus: SessionPersistenceStatus;
 
   isAarOpen: boolean;
   isQuickGuideOpen: boolean;
@@ -68,6 +140,13 @@ export interface SessionState {
   currentScenarioId: string;
   selectedScenarioId: string;
   simSpeed: number;
+  currentCallsign: string;
+  currentSessionTraineeUid: string;
+  latestSavedSessionUid: string | null;
+  lastFailedSessionRow: SessionRow | null;
+  lastFailedRecorder: EventRecorder | null;
+  retrySaveSession: () => Promise<boolean>;
+  setCallsign: (callsign: string) => void;
 
   // Intelligent Operator Feedback
   feedbackList: OperatorFeedback[];
@@ -98,12 +177,18 @@ export interface SessionState {
 
   // Session lifecycle
   selectScenario: (id: string) => void;
-  startSession: (scenarioId?: string, customSeed?: number) => Promise<boolean>;
+  startSession: (scenarioId?: string, customSeed?: number, modeOverride?: SessionMode) => Promise<boolean>;
   returnToBriefing: () => void;
   loadScenario: (spec: ScenarioSpec) => Promise<void>;
   loadScenarioById: (id: string, customSeed?: number) => Promise<boolean>;
   restartSession: (options?: { freshSeed?: boolean }) => Promise<boolean>;
   rerunExactSeedSession: () => Promise<boolean>;
+  startAdaptedTrainingSession: (options?: {
+    seed?: number;
+    difficultyOverride?: number;
+    targetLever?: string;
+    scenarioId?: string;
+  }) => Promise<boolean>;
   setUiSnapshot: (snapshot: UiSnapshot) => void;
 }
 
@@ -112,11 +197,39 @@ function getQuantisedTick(): { tRawMs: number; applyTick: number } | null {
     return null;
   }
   const currentTick = engineInstance.tickIndex;
-  const tRawMs = typeof performance !== 'undefined'
+  const tRawMs = typeof performance !== 'undefined' && clockInstance.isRunning
     ? clockInstance.getRawMs()
     : currentTick * 50;
   const applyTick = applyTickFor(tRawMs, currentTick);
   return { tRawMs, applyTick };
+}
+
+function parseAdaptiveOptions(options?: {
+  seed?: number;
+  targetLever?: string;
+  scenarioId?: string;
+}): { seed: number; targetLever: string | undefined } {
+  let seed = typeof options?.seed === 'number' ? options.seed : undefined;
+  let targetLever = options?.targetLever;
+
+  if (options?.scenarioId?.startsWith('ADAPTIVE-')) {
+    const parts = options.scenarioId.split('-');
+    if (!targetLever && parts[1]) {
+      targetLever = parts[1];
+    }
+    if (typeof seed !== 'number' && parts[2]) {
+      const parsedSeed = Number.parseInt(parts[2], 10);
+      if (Number.isFinite(parsedSeed)) {
+        seed = parsedSeed;
+      }
+    }
+  }
+
+  if (typeof seed !== 'number') {
+    seed = generateLocalSeed();
+  }
+
+  return { seed, targetLever };
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -130,6 +243,63 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isScenarioModalOpen: false,
   currentScenarioId: DEFAULT_SCENARIO_ID,
   simSpeed: 1.0,
+  currentCallsign: 'VIPER-2',
+  currentSessionTraineeUid: 'trainee-viper-2',
+  latestSavedSessionUid: null,
+  sessionPersistenceStatus: 'IDLE',
+  lastFailedSessionRow: null,
+  lastFailedRecorder: null,
+  retrySaveSession: async () => {
+    if (get().sessionPersistenceStatus === 'SAVED') {
+      return true;
+    }
+    const failedRow = get().lastFailedSessionRow;
+    if (!failedRow) {
+      return false;
+    }
+    set({ sessionPersistenceStatus: 'SAVING' });
+    const failedRecorder = get().lastFailedRecorder;
+
+    try {
+      // 1. Drain / flush unpersisted events if recorder was retained
+      if (failedRecorder) {
+        await failedRecorder.flush();
+      }
+
+      // 2. Strict immutable operator attribution: use failedRow.traineeUid, NEVER get().currentCallsign!
+      const callsign = failedRow.traineeUid.startsWith('trainee-')
+        ? failedRow.traineeUid.replace(/^trainee-/, '').toUpperCase()
+        : 'VIPER-2';
+
+      // 3. Persist session metadata
+      await saveCompletedSession(failedRow, callsign);
+
+      set({
+        latestSavedSessionUid: failedRow.uid,
+        sessionPersistenceStatus: 'SAVED',
+        lastFailedSessionRow: null,
+        lastFailedRecorder: null,
+      });
+      return true;
+    } catch (error) {
+      console.error('[SessionStore] Retry save failed:', error);
+      set({ sessionPersistenceStatus: 'ERROR' });
+      return false;
+    }
+  },
+  setCallsign: (callsign: string) => {
+    set({ currentCallsign: callsign });
+    void (async () => {
+      try {
+        const d = await getTraineeDifficulty(callsign);
+        if (typeof d === 'number' && Number.isFinite(d)) {
+          set((s) => ({ ui: { ...s.ui, difficulty: d } }));
+        }
+      } catch {
+        // fail-safe
+      }
+    })();
+  },
   feedbackList: [],
   activeFeedback: null,
 
@@ -191,12 +361,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       target &&
       (target.lifecycle !== 'ACTIVE' || target.step === 'CLOSED' || target.step === 'ASSESS')
     ) {
-      const reasonCode = target.step === 'ASSESS' ? 'DUPLICATE_PENDING_FIRE' : 'INACTIVE_TARGET';
+      let reasonCode = 'INACTIVE_TARGET';
+      if (target.step === 'ASSESS') {
+        reasonCode = 'DUPLICATE_PENDING_FIRE';
+      } else if (target.step === 'CLOSED' || target.lifecycle === 'LEAKED') {
+        reasonCode = 'PNR_VIOLATION';
+      }
+      const est = engineInstance.tracker.getTrackEstimate(trackNo);
       const fb = createOperatorFeedback({
         category: 'RELEASE_BLOCKED',
         reasonCode,
         timestampMs: currentSimMs,
         trackNo,
+        effectorId: get().ui.activeEffector,
+        rangeM: est?.estRangeM,
       });
       set((state) => ({
         feedbackList: [fb, ...state.feedbackList].slice(0, 20),
@@ -306,7 +484,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sessionStatus: 'ABORTED',
       isSimRunning: false,
       isAarOpen: true,
-      ui: engineInstance.buildUiSnapshot(),
+      ui: {
+        ...engineInstance.buildUiSnapshot(),
+        difficulty: get().ui.difficulty,
+      },
     });
   },
 
@@ -314,7 +495,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ selectedScenarioId: id });
   },
 
-  startSession: async (scenarioId?: string, customSeed?: number): Promise<boolean> => {
+  startSession: async (scenarioId?: string, customSeed?: number, modeOverride?: SessionMode): Promise<boolean> => {
+    // Seed initial demo data in the background if the local database is fresh
+    void seedDemoSessionsIfEmpty();
+
     const state = get();
     if (state.sessionStatus === 'STARTING' || isFinalizingSession) {
       console.warn('[SessionStore] Session is already starting.');
@@ -330,6 +514,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     try {
       const { spec } = loadCatalogScenario(targetId, customSeed);
+      if (modeOverride) {
+        spec.mode = modeOverride;
+      }
       if (!validate(spec)) {
         console.error(`[SessionStore] Refusing to load invalid scenario: ${spec.id}`);
         return false;
@@ -353,6 +540,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     engineInstance.events = [];
     engineInstance.tickIndex = 0;
     engineInstance.selectedTrackNo = null;
+    engineInstance.tracker.clear();
+    engineInstance.rfMeasurements = [];
+    activeRecorder = null;
+    activeSessionScenarioSnapshot = null;
+    activeSessionSnapshotHash = null;
     clockInstance.reset();
     set({
       sessionStatus: 'READY',
@@ -360,7 +552,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       isBriefingOpen: true,
       isAarOpen: false,
       isScenarioModalOpen: false,
-      ui: engineInstance.buildUiSnapshot(),
+      ui: {
+        ...engineInstance.buildUiSnapshot(),
+        difficulty: get().ui.difficulty,
+      },
     });
   },
 
@@ -382,6 +577,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.error(`[SessionStore] Refusing to load invalid scenario: ${spec.id}`);
       return;
     }
+
+    // Critical A (Task 20-A4): Pre-sim scenario snapshot capture.
+    // Deep-clone and capture snapshot BEFORE engineInstance.load(spec) to guarantee mutation immunity.
+    const preSimSnapshot: ScenarioSpec = structuredClone(spec);
+    const preSimSnapshotHash = computeScenarioSnapshotHash(preSimSnapshot);
+    activeSessionScenarioSnapshot = preSimSnapshot;
+    activeSessionSnapshotHash = preSimSnapshotHash;
 
     isFinalizingSession = true;
     set({ sessionStatus: 'STARTING' });
@@ -412,6 +614,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     }
 
+    const sessionTraineeUid = callsignToUid(get().currentCallsign);
+    set({ currentSessionTraineeUid: sessionTraineeUid });
+
     const recorderForSession = new EventRecorder();
     activeRecorder = recorderForSession;
 
@@ -426,9 +631,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           sessionStatus: isAborted ? 'ABORTED' : 'COMPLETED',
           isSimRunning: false,
         });
-        void recorderForSession.stop().catch((error) => {
-          console.error('[Recorder] Failed to finish session:', error);
-        });
+
+        // Persist session to sessionRepo & drain recorder (Rules.md R4.4, Task 20-A2, Task 20-A3, Task 20-A4)
+        try {
+          const snapshotToUse = activeSessionScenarioSnapshot ?? structuredClone(spec);
+          const snapshotHashToUse = activeSessionSnapshotHash ?? computeScenarioSnapshotHash(snapshotToUse);
+          const metrics = aggregateAARMetrics(engineInstance.events, snapshotToUse);
+          const sessionUid = recorderForSession.getSessionUid();
+          const immutableTraineeUid =
+            get().currentSessionTraineeUid || callsignToUid(get().currentCallsign);
+          const sessionCallsign = immutableTraineeUid.startsWith('trainee-')
+            ? immutableTraineeUid.replace(/^trainee-/, '').toUpperCase()
+            : get().currentCallsign;
+
+          const sessionRow: SessionRow = {
+            uid: sessionUid,
+            traineeUid: immutableTraineeUid,
+            mode: engineInstance.mode,
+            startedAt: recorderForSession.getStartedAt(),
+            durationMs: engineInstance.tickIndex * 50,
+            score: metrics.score,
+            grade: metrics.grade,
+            dStart: snapshotToUse.difficulty ?? 0.3,
+            metrics,
+            scenarioId: snapshotToUse.id,
+            aborted: isAborted,
+            unverified: false,
+            isSynthetic: false,
+            scenarioSpecSnapshot: snapshotToUse,
+            scenarioSeed: snapshotToUse.seed,
+            scenarioDifficulty: snapshotToUse.difficulty,
+            scenarioConfigHash: CONFIG_HASH,
+            scenarioSnapshotHash: snapshotHashToUse,
+            scenarioSimVersion: snapshotToUse.simVersion ?? SIM_VERSION,
+            scenarioSchemaVersion: snapshotToUse.schemaVersion ?? SCHEMA_VERSION,
+          };
+
+          void persistCompletedSession(sessionRow, recorderForSession, sessionCallsign);
+        } catch (metricsError) {
+          console.error('[SessionStore] Failed to aggregate metrics on SESSION_END:', metricsError);
+          set({
+            sessionPersistenceStatus: 'ERROR',
+            lastFailedSessionRow: null,
+            lastFailedRecorder: recorderForSession,
+          });
+        }
       }
     };
 
@@ -441,7 +688,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     recorderForSession.start();
 
-    engineInstance.load(spec);
+    engineInstance.load(spec, {
+      snapshotHash: preSimSnapshotHash,
+      appConfigHash: CONFIG_HASH,
+    });
     try {
       await recorderForSession.flush();
     } catch (flushError) {
@@ -503,6 +753,88 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     return await get().startSession(currentId, exactSeed);
   },
 
+  startAdaptedTrainingSession: async (options?: {
+    seed?: number;
+    difficultyOverride?: number;
+    targetLever?: string;
+    scenarioId?: string;
+  }): Promise<boolean> => {
+    void seedDemoSessionsIfEmpty();
+
+    const state = get();
+    if (state.sessionStatus === 'STARTING' || isFinalizingSession) {
+      console.warn('[SessionStore] Session is already starting.');
+      return false;
+    }
+
+    if (engineInstance.mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0) {
+      console.warn('[SessionStore] Changing scenario mid-EVAL is strictly prohibited.');
+      return false;
+    }
+
+    const traineeUid = callsignToUid(state.currentCallsign);
+    const persistedD = await getTraineeDifficulty(traineeUid);
+    const targetDifficulty = typeof options?.difficultyOverride === 'number'
+      ? options.difficultyOverride
+      : persistedD;
+
+    const profile = await getTraineeProfile(traineeUid);
+    const effectiveProfile: WeaknessVector = profile ?? {
+      d: DEFAULT_METRIC_EMA,
+      c: DEFAULT_METRIC_EMA,
+      econ: DEFAULT_METRIC_EMA,
+      r: DEFAULT_METRIC_EMA,
+      sal: DEFAULT_METRIC_EMA,
+      sat: DEFAULT_METRIC_EMA,
+    };
+
+    const { seed, targetLever: parsedLever } = parseAdaptiveOptions(options);
+    const targetLever = parsedLever ?? sampleAdaptiveLevers(effectiveProfile, seed, 1)[0].leverId;
+
+    // Historical features for novelty filter
+    const historySessions = await getTraineeSessions(state.currentCallsign, 'asc', 'ALL');
+    const historyFeatures = historySessions
+      .map((s) => s.scenarioSpecSnapshot?.features)
+      .filter((f): f is number[] => Array.isArray(f) && f.length === 33);
+
+    const sessionIdx = historySessions.length + 1;
+    const spec = generateScenario(
+      traineeUid,
+      sessionIdx,
+      targetDifficulty,
+      historyFeatures,
+      seed,
+      {
+        weaknessVector: effectiveProfile,
+        targetLever,
+      }
+    );
+
+    spec.id = `ADAPTIVE-${targetLever}-${seed}`;
+    spec.mode = 'TRAIN';
+    spec.seed = seed;
+    spec.difficulty = targetDifficulty;
+    spec.levers = [
+      {
+        id: targetLever,
+        reason:
+          WEAKNESS_LEVER_MAP[
+            (Object.keys(WEAKNESS_LEVER_MAP) as WeaknessDimension[]).find(
+              (k) => WEAKNESS_LEVER_MAP[k].leverId === targetLever
+            ) ?? 'd'
+          ]?.reason ?? 'Adapted to trainee weakness profile',
+      },
+    ];
+
+    if (!validate(spec)) {
+      console.error(`[SessionStore] Adapted scenario failed validation: ${spec.id}`);
+      return false;
+    }
+
+    await state.loadScenario(spec);
+    return true;
+  },
+
   setSpeed: (speed: number) => {
     // Speed is strictly locked to 1x in EVAL mode
     if (engineInstance.mode === 'EVAL') {
@@ -545,6 +877,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setUiSnapshot: (snapshot: UiSnapshot) => {
-    set({ ui: snapshot });
+    set((state) => ({
+      ui: {
+        ...snapshot,
+        difficulty:
+          engineInstance.spec &&
+          typeof snapshot.difficulty === 'number' &&
+          Number.isFinite(snapshot.difficulty)
+            ? snapshot.difficulty
+            : state.ui.difficulty,
+      },
+    }));
   },
 }));

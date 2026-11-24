@@ -3,6 +3,7 @@ import { useSessionStore } from '@/store/sessionStore';
 import { getScenarioCatalogEntry, DEFAULT_SCENARIO_ID } from '@/director/catalog';
 import { SHORT_CODES, type TrueClass } from '@/sim/taxonomy';
 import { getScenarioEnvironmentDescriptor } from '@/render3d/environment/descriptor';
+import type { SessionMode } from '@/sim/types';
 
 interface MissionBriefingProps {
   onClose?: () => void;
@@ -17,6 +18,16 @@ function isInteractiveElement(target: EventTarget | null): boolean {
   );
 }
 
+function getAtmosphereDescription(weather: string, fogSeverity?: number): string {
+  if (weather === 'FOG') {
+    return `🌫 Dense Fog (Severity ${(fogSeverity ?? 1).toFixed(1)}x - Optical Range Reduced)`;
+  }
+  if (weather === 'RAIN') {
+    return '🌧 Precipitation / Rain (Radar Backscatter Present)';
+  }
+  return '🌤 Clear Visibility (Nominal Propagation)';
+}
+
 export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => {
   const selectedScenarioId = useSessionStore((s) => s.selectedScenarioId) || DEFAULT_SCENARIO_ID;
   const startSession = useSessionStore((s) => s.startSession);
@@ -27,6 +38,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
 
   const [isStarting, setIsStarting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [exerciseMode, setExerciseMode] = useState<SessionMode>('TRAIN');
 
   const entry = getScenarioCatalogEntry(selectedScenarioId);
   const isRandom = selectedScenarioId.startsWith('RANDOM-');
@@ -54,7 +66,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
     setIsStarting(true);
     setErrorMessage(null);
     try {
-      const ok = await startSession(selectedScenarioId);
+      const ok = await startSession(selectedScenarioId, undefined, exerciseMode);
       if (!ok) {
         setErrorMessage(`Failed to start scenario "${selectedScenarioId}". Validation or initialization failed.`);
       }
@@ -112,16 +124,16 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
   }, [selectedScenarioId, isStarting, sessionStatus, isScenarioModalOpen, onClose, closeBriefing]);
 
   return (
-    <div
-      role="dialog"
+    <dialog
+      open
       aria-modal="true"
       aria-label="Mission Briefing & Exercise Control"
       tabIndex={-1}
-      className="fixed inset-0 z-50 bg-carbon-950/85 backdrop-blur-sm flex items-center justify-center p-4 select-none font-mono text-xs outline-none"
+      className="fixed inset-0 z-50 bg-carbon-950/95 flex items-center justify-center p-4 m-0 border-0 max-w-none max-h-none w-screen h-screen select-none font-mono text-xs outline-none"
     >
       <div
         tabIndex={-1}
-        className="w-[840px] max-h-[92vh] bg-carbon-900 border border-phosphor/60 flex flex-col shadow-2xl overflow-hidden outline-none"
+        className="w-[840px] max-h-[92vh] bg-carbon-900 border border-phosphor/60 flex flex-col overflow-hidden outline-none"
       >
         {/* Header */}
         <div className="h-[46px] px-4 border-b border-line bg-carbon-800/90 flex items-center justify-between shrink-0">
@@ -188,6 +200,47 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
             </button>
           </div>
 
+          {/* Exercise Mode Selection Strip (TRAIN vs EVAL Benchmark) */}
+          <div className="p-3 bg-carbon-950 border border-line flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <div className="text-[10px] font-display font-bold text-text-dim tracking-wider">
+                EXERCISE EVALUATION MODE
+              </div>
+              <div className="text-[11px] text-text-dim">
+                {exerciseMode === 'EVAL'
+                  ? 'Standardized benchmark: Speed locked at 1×, decision aids locked, scores persist to Unit Readiness Leaderboard.'
+                  : 'Adaptive practice drill: Adaptive difficulty scaling and training aids permitted.'}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                data-testid="briefing-mode-train-btn"
+                onClick={() => setExerciseMode('TRAIN')}
+                className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                  exerciseMode === 'TRAIN'
+                    ? 'border-friend text-friend bg-friend/20 font-bold'
+                    : 'border-line text-text-dim bg-carbon-900 hover:text-text-main'
+                }`}
+              >
+                TRAIN (PRACTICE)
+              </button>
+              <button
+                type="button"
+                data-testid="briefing-mode-eval-btn"
+                onClick={() => setExerciseMode('EVAL')}
+                className={`px-3 py-1 font-display font-bold text-xs tracking-wider border transition-colors ${
+                  exerciseMode === 'EVAL'
+                    ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+                    : 'border-line text-text-dim bg-carbon-900 hover:text-text-main'
+                }`}
+              >
+                EVAL (BENCHMARK)
+              </button>
+            </div>
+          </div>
+
           {/* Section: Training Objective */}
           <div className="p-3 bg-carbon-850 border border-line">
             <div className="text-[10px] font-display font-bold text-text-dim tracking-wider mb-1">
@@ -247,7 +300,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
               </div>
               <ul className="text-[11px] space-y-1 text-text-main list-disc list-inside pt-1">
                 <li><span className="text-text-dim">Lighting:</span> {envDesc.dayNight === 'NIGHT' ? '🌙 Night Operations (Thermal EO/IR Priority)' : '☀️ Daylight Standard (Visual & EO/IR Active)'}</li>
-                <li><span className="text-text-dim">Atmosphere:</span> {envDesc.weather === 'FOG' ? `🌫 Dense Fog (Severity ${(envDesc.fogSeverity ?? 1).toFixed(1)}x - Optical Range Reduced)` : envDesc.weather === 'RAIN' ? '🌧 Precipitation / Rain (Radar Backscatter Present)' : '🌤 Clear Visibility (Nominal Propagation)'}</li>
+                <li><span className="text-text-dim">Atmosphere:</span> {getAtmosphereDescription(envDesc.weather, envDesc.fogSeverity)}</li>
                 <li><span className="text-text-dim">Coverage Radius:</span> 5,000 meters tactical radius (S-Band 30 RPM)</li>
                 <li><span className="text-text-dim">Exclusion Zone:</span> 500m Point-of-No-Return (PNR) Defense Core</li>
               </ul>
@@ -322,7 +375,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
               className={`px-6 py-2 font-display font-bold text-sm tracking-wider border transition-all ${
                 isStarting
                   ? 'border-line text-text-dim bg-carbon-800 cursor-wait'
-                  : 'border-phosphor bg-phosphor text-carbon-950 hover:bg-phosphor/90 shadow-md shadow-phosphor/20 active:scale-95'
+                  : 'border-phosphor bg-phosphor text-carbon-950 hover:bg-phosphor/90 active:scale-95'
               }`}
             >
               {isStarting ? 'INITIALIZING...' : 'START SESSION ►'}
@@ -330,6 +383,6 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({ onClose }) => 
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };

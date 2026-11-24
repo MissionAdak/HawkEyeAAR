@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CLASSES, TRUE_CLASSES, SHORT_CODES, CLASS_LABELS } from '@/sim/taxonomy';
 import { applyTickFor } from '@/sim/inputQueue';
 import { SimEngine } from '@/sim/engine';
+import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
 import demo1Json from '@/director/bundled/demo1.json';
 import type { ScenarioSpec } from '@/sim/types';
 
@@ -155,6 +156,89 @@ describe('Architectural Guardrails & Invariants (Rules.md R1, R2, R3)', () => {
       expect(endEvent).toBeDefined();
       expect(endEvent?.payload.reason).toBe('TAB_BACKGROUNDED');
       expect(endEvent?.payload.aborted).toBe(true);
+    });
+  });
+
+  describe('R10: Information-Boundary Static Guard (Domain A vs C Separation)', () => {
+    it('strictly forbids importing TrackEntity into live UI and live renderers (allowing only post-session AAR)', () => {
+      const liveDirs = [
+        path.resolve('src/ui'),
+        path.resolve('src/render'),
+        path.resolve('src/render3d'),
+      ];
+
+      const bannedImportRegex = /import\s+(?:type\s+)?(?:\{[^}]*\bTrackEntity\b[^}]*\}|\bTrackEntity\b)\s+from/s;
+
+      for (const dir of liveDirs) {
+        const files = getAllSourceFiles(dir);
+        for (const file of files) {
+          // Explicit allowlist: only post-session AAR review components may inspect ground truth entities
+          if (file.includes('src/ui/aar') || file.includes('src\\ui\\aar') || file.includes('aarScene3d')) {
+            continue;
+          }
+
+          const content = fs.readFileSync(file, 'utf-8');
+          const hasTrackEntityImport = bannedImportRegex.test(content);
+          expect(
+            hasTrackEntityImport,
+            `File ${path.relative(process.cwd(), file)} must not import TrackEntity (Rule R10.3 Domain Separation)`
+          ).toBe(false);
+        }
+      }
+    });
+
+    it('verifies Console.tsx passes getOperatorEvents() to 3D event provider instead of raw sim events', () => {
+      const consoleFile = path.resolve('src/ui/Console.tsx');
+      const content = fs.readFileSync(consoleFile, 'utf-8');
+      expect(content).toContain('r3d.setEventsProvider(() => engineInstance.getOperatorEvents());');
+      expect(content).not.toContain('r3d.setEventsProvider(() => engineInstance.events);');
+    });
+
+    it('verifies handleFire in engine.ts derives operator feedback range from tracker estimates instead of Math.hypot', () => {
+      const engineFile = path.resolve('src/sim/engine.ts');
+      const content = fs.readFileSync(engineFile, 'utf-8');
+
+      // Ensure handleFire does not pass Math.hypot as rangeM to createOperatorFeedback
+      expect(content).not.toMatch(/createOperatorFeedback\([^)]*Math\.hypot/s);
+      // Ensure handleFire uses est?.estRangeM
+      expect(content).toContain('const operatorRangeM = est?.estRangeM;');
+    });
+
+    it('verifies production debug globals are strictly guarded by __DRISHTI_E2E_BUILD__', () => {
+      const bridgeFile = path.resolve('src/testBridge/drishtiTestBridge.ts');
+      const content = fs.readFileSync(bridgeFile, 'utf-8');
+      expect(content).toContain("typeof __DRISHTI_E2E_BUILD__ === 'undefined' || !__DRISHTI_E2E_BUILD__");
+
+      const origE2E = (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+      try {
+        delete (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+        delete (globalThis as Record<string, unknown>).__DRISHTI_TEST__;
+        const dummyEngine = {} as unknown as SimEngine;
+        const cleanup = installDrishtiTestBridge(dummyEngine, () => null);
+        expect((globalThis as Record<string, unknown>).__DRISHTI_TEST__).toBeUndefined();
+        cleanup();
+      } finally {
+        if (origE2E === undefined) {
+          delete (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__;
+        } else {
+          (globalThis as Record<string, unknown>).__DRISHTI_E2E_BUILD__ = origE2E;
+        }
+      }
+    });
+  });
+
+  describe('Test Isolation & Screenshot Protection Guard', () => {
+    it('strictly prohibits automated E2E tests from writing to reports/screenshots/', () => {
+      const e2eDir = path.resolve('tests/e2e');
+      const files = getAllSourceFiles(e2eDir);
+      expect(files.length).toBeGreaterThan(0);
+      for (const file of files) {
+        const content = fs.readFileSync(file, 'utf-8');
+        expect(
+          content.includes('reports/screenshots'),
+          `Automated test file ${path.relative(process.cwd(), file)} must not write directly to reports/screenshots/ to prevent repository evidence pollution.`
+        ).toBe(false);
+      }
     });
   });
 });

@@ -16,20 +16,42 @@ export function createSessionUid(): string {
 
 // Fallback in-memory storage for test/Node environments where indexedDB is not available
 const inMemoryFallbackEvents: StoredSimEvent[] = [];
-let mockPersistenceFailure = false;
+
+export type MockPersistenceFailureMode = 'NONE' | 'EVENTS' | 'EVENT' | 'SESSION' | 'BOTH' | null;
+let mockPersistenceFailureMode: MockPersistenceFailureMode = 'NONE';
+
+export function setMockPersistenceFailureMode(mode: MockPersistenceFailureMode): void {
+  if (mode === 'EVENT') {
+    mockPersistenceFailureMode = 'EVENTS';
+  } else if (!mode) {
+    mockPersistenceFailureMode = 'NONE';
+  } else {
+    mockPersistenceFailureMode = mode;
+  }
+}
+
+export function getMockPersistenceFailureMode(): MockPersistenceFailureMode {
+  return mockPersistenceFailureMode;
+}
 
 export class EventRecorder {
   private readonly sessionUid: string;
+  private readonly startedAt: number;
   private buffer: StoredSimEvent[] = [];
   private flushIntervalId: number | null = null;
   private flushPromise: Promise<void> | null = null;
 
-  constructor(sessionUid: string = createSessionUid()) {
+  constructor(sessionUid: string = createSessionUid(), startedAt?: number) {
     this.sessionUid = sessionUid;
+    this.startedAt = startedAt ?? Date.now();
   }
 
   public getSessionUid(): string {
     return this.sessionUid;
+  }
+
+  public getStartedAt(): number {
+    return this.startedAt;
   }
 
   public start(): void {
@@ -58,9 +80,13 @@ export class EventRecorder {
   }
 
   public async flush(): Promise<void> {
-    // Reuse an in-progress flush instead of starting a competing write.
     if (this.flushPromise) {
-      return this.flushPromise;
+      await this.flushPromise;
+      return this.flush();
+    }
+
+    if (this.buffer.length === 0) {
+      return;
     }
 
     this.flushPromise = this.flushPendingEvents();
@@ -70,6 +96,10 @@ export class EventRecorder {
     } finally {
       this.flushPromise = null;
     }
+
+    if (this.buffer.length > 0) {
+      return this.flush();
+    }
   }
 
   private async flushPendingEvents(): Promise<void> {
@@ -77,16 +107,38 @@ export class EventRecorder {
       const batch = this.buffer.splice(0, this.buffer.length);
 
       try {
-        if (mockPersistenceFailure) {
-          throw new Error('Simulated IndexedDB persistence failure');
+        if (
+          mockPersistenceFailureMode === 'EVENTS' ||
+          mockPersistenceFailureMode === 'BOTH'
+        ) {
+          throw new Error('Simulated EventRecorder persistence failure');
         }
 
         if (typeof indexedDB === 'undefined') {
-          inMemoryFallbackEvents.push(...batch);
+          for (const item of batch) {
+            if (
+              !inMemoryFallbackEvents.some(
+                (e) => e.sessionUid === item.sessionUid && e.seq === item.seq
+              )
+            ) {
+              inMemoryFallbackEvents.push(item);
+            }
+          }
         } else {
           // eslint-disable-next-line no-await-in-loop
           await db.transaction('rw', db.events, async () => {
-            await db.events.bulkAdd(batch);
+            const existingSeqs = new Set(
+              (
+                await db.events
+                  .where('sessionUid')
+                  .equals(this.sessionUid)
+                  .toArray()
+              ).map((e) => e.seq)
+            );
+            const toAdd = batch.filter((e) => !existingSeqs.has(e.seq));
+            if (toAdd.length > 0) {
+              await db.events.bulkAdd(toAdd);
+            }
           });
         }
       } catch (error) {
@@ -127,7 +179,11 @@ export function clearFallbackEventsForTest(): void {
   inMemoryFallbackEvents.length = 0;
 }
 
+export function addFallbackEventsForTest(events: StoredSimEvent[]): void {
+  inMemoryFallbackEvents.push(...events);
+}
+
 export function setMockPersistenceFailureForTest(fail: boolean): void {
-  mockPersistenceFailure = fail;
+  mockPersistenceFailureMode = fail ? 'BOTH' : 'NONE';
 }
 

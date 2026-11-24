@@ -21,13 +21,13 @@ test.describe('Tactical C2 Zero-Overflow Layout Audit', () => {
     expect(overflowMetrics.scrollHeight).toBeLessThanOrEqual(overflowMetrics.innerHeight);
     expect(overflowMetrics.bodyScrollHeight).toBeLessThanOrEqual(overflowMetrics.innerHeight);
 
-    // 3. Verify Radar Frame dimensions (520x520)
+    // 3. Verify Radar Frame dimensions (responsive square scope, at least 520px without overflow)
     const radarFrame = page.locator('.radar-frame');
     const frameBox = await radarFrame.boundingBox();
     expect(frameBox).not.toBeNull();
     if (frameBox) {
-      expect(Math.round(frameBox.width)).toBe(520);
-      expect(Math.round(frameBox.height)).toBe(520);
+      expect(Math.round(frameBox.width)).toBeGreaterThanOrEqual(520);
+      expect(Math.round(frameBox.height)).toBe(Math.round(frameBox.width));
     }
 
     // 4. Verify Left Rail (Track Table) width is 240px

@@ -1,4 +1,6 @@
-import type { ZoneSpec } from '@/sim/types';
+import type { ZoneSpec, WeatherType } from '@/sim/types';
+
+export type { WeatherType };
 
 export type EnvironmentPreset =
   | 'URBAN_DENSE'
@@ -8,7 +10,27 @@ export type EnvironmentPreset =
   | 'COASTAL_AIRFIELD'
   | 'OPEN_RURAL';
 
-export type WeatherType = 'CLEAR' | 'FOG' | 'RAIN' | 'OVERCAST';
+export type ScenarioFamily =
+  | 'DEMO-1'
+  | 'DEMO-2'
+  | 'SWARM'
+  | 'SPECTRUM'
+  | 'PROCEDURAL'
+  | 'RANDOM'
+  | 'FORMATION'
+  | 'POPUP'
+  | 'CUSTOM';
+
+export type ScenarioVisualProfile =
+  | 'DEMO_1_URBAN_METRO'
+  | 'DEMO_2_SUBURBAN_LOGISTICS'
+  | 'SWARM_MOUNTAIN_VALLEY'
+  | 'SPECTRUM_FOREST_RIVER'
+  | 'PROCEDURAL_COASTAL_AIRFIELD'
+  | 'RANDOM_SEEDED_LANDSCAPE'
+  | 'FORMATION_ALPINE_PASS'
+  | 'POPUP_URBAN_CORRIDOR'
+  | 'RURAL_OPEN_PLAIN';
 
 export type EnvironmentCategory =
   | 'BUILDING'
@@ -18,7 +40,8 @@ export type EnvironmentCategory =
   | 'TERRAIN_ZONE'
   | 'RIDGE'
   | 'AIRFIELD'
-  | 'PROTECTED_FACILITY';
+  | 'PROTECTED_FACILITY'
+  | 'WATER_FEATURE';
 
 export interface EnvironmentObjectInfo {
   id: string;
@@ -51,4 +74,7 @@ export interface EnvironmentDescriptor {
   mapRadiusM: number;
   rMinM: number;
   seed: number;
+  visualProfile?: ScenarioVisualProfile;
+  scenarioFamily?: ScenarioFamily;
+  scenarioId?: string;
 }

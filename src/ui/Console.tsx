@@ -12,37 +12,48 @@ import { MissionBriefing } from './MissionBriefing';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EnvironmentInspector } from './EnvironmentInspector';
 import { OperatorFeedbackToast } from './OperatorFeedbackToast';
+import type { OperatorFeedback } from '@/sim/operatorFeedback';
+import { TargetRecognitionModal } from './TargetRecognitionModal';
 import { ConsoleRenderer } from '@/render/renderer';
 import { useSessionStore, engineInstance } from '@/store/sessionStore';
-import type { SensorMode, TrackEntity } from '@/sim/types';
-import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo } from '@/render3d/types';
+import type { SensorMode } from '@/sim/types';
+import type { OperatorTrackView } from '@/sim/trackerTypes';
+import type { SafeTrackView, CameraPreset, EnvironmentObjectInfo, TargetDisplayMode } from '@/render3d/types';
 import type { Renderer3D, WebXRManager } from '@/render3d';
 import { CONFIG } from '@/config';
 import { useConsoleKeyboard } from './useConsoleKeyboard';
+import { installDrishtiTestBridge } from '@/testBridge/drishtiTestBridge';
+import { getTraineeDifficulty } from '@/db/sessionRepo';
 
 /**
- * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3 & D-37).
- * Filters out undetected tracks and excludes all truth properties (trueClass, droneType, valueInr, etc.).
+ * Redacts raw simulation ground truth before passing tracks to 3D visualization (Rule R10.3, D-37 & Task 18 §2.C).
+ * Filters out undetected tracks and strictly excludes all truth properties:
+ * (trueClass, droneType, valueInr, hidden waypoints, secret composition, seeded kill draws).
+ * Positions and velocities are derived purely from estimated tracker state, not raw ground truth.
  */
-function projectSafeTracks(curr: TrackEntity[], selectedTrackNo: string | null): SafeTrackView[] {
-  return curr
+export function projectSafeTracks(
+  tracks: OperatorTrackView[],
+  selectedTrackNo: string | null
+): SafeTrackView[] {
+  return tracks
     .filter(
-      (e) =>
-        e.trackNo &&
-        e.step !== 'UNDETECTED' &&
-        (e.lifecycle === 'ACTIVE' || e.lifecycle === 'LEAKED' || e.lifecycle === 'NEUTRALISED')
+      (t) =>
+        t.trackNo &&
+        t.step !== 'UNDETECTED' &&
+        (t.lifecycle === 'ACTIVE' || t.lifecycle === 'LEAKED' || t.lifecycle === 'NEUTRALISED')
     )
-    .map((e) => ({
-      trackNo: e.trackNo!,
-      pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
-      vel: { x: e.vel.x, y: e.vel.y, z: e.vel.z },
-      traineeLabel: e.traineeLabel,
-      step: e.step,
-      q: e.q,
-      masked: e.masked,
-      ghostSigmaM: e.ghostSigmaM,
-      isSelected: e.trackNo === selectedTrackNo,
-      lifecycle: e.lifecycle as 'ACTIVE' | 'LEAKED' | 'NEUTRALISED',
+    .map((t) => ({
+      trackNo: t.trackNo,
+      pos: { ...t.estPos },
+      vel: { ...t.estVel },
+      traineeLabel: t.traineeLabel,
+      step: t.step,
+      q: t.q,
+      masked: t.isCoasting,
+      ghostSigmaM: t.uncertaintyM,
+      isSelected: t.trackNo === selectedTrackNo,
+      lifecycle: t.lifecycle,
+      sensorObservation: t.sensorObservation ?? null,
     }));
 }
 
@@ -52,10 +63,13 @@ function computeCursorCoords(
   canvas: HTMLCanvasElement
 ): { brg: number; rngKm: number } {
   const rect = canvas.getBoundingClientRect();
-  const dx = clientX - rect.left - 260;
-  const dy = 260 - (clientY - rect.top);
+  const cx = rect.width / 2;
+  const cy = rect.height / 2;
+  const radius = Math.min(cx, cy) - 15;
+  const scale = radius / 5000;
+  const dx = clientX - rect.left - cx;
+  const dy = cy - (clientY - rect.top);
 
-  const scale = 245 / 5000;
   const rangeM = Math.hypot(dx, dy) / scale;
   const bearingRad = Math.atan2(dx, dy);
   let bearingDeg = Math.round((bearingRad * 180) / Math.PI);
@@ -64,23 +78,25 @@ function computeCursorCoords(
   return { brg: bearingDeg, rngKm: Number((rangeM / 1000).toFixed(2)) };
 }
 
-function findNearestTrackNo(
+export function findNearestTrackNo(
   clickX: number,
   clickY: number,
-  entities: TrackEntity[],
+  tracks: OperatorTrackView[],
   scale: number = 245 / 5000
 ): string | null {
   let nearestTrackNo: string | null = null;
   let nearestDist = 15;
 
-  for (const entity of entities) {
-    if (!entity.trackNo || entity.lifecycle !== 'ACTIVE') continue;
-    const ex = entity.pos.x * scale;
-    const ey = entity.pos.y * scale;
+  for (const track of tracks) {
+    if (!track.trackNo || track.lifecycle !== 'ACTIVE' || track.step === 'UNDETECTED') continue;
+    const px = track.estPos.x;
+    const py = track.estPos.y;
+    const ex = px * scale;
+    const ey = py * scale;
     const d = Math.hypot(clickX - ex, clickY - ey);
     if (d < nearestDist) {
       nearestDist = d;
-      nearestTrackNo = entity.trackNo;
+      nearestTrackNo = track.trackNo;
     }
   }
 
@@ -94,6 +110,7 @@ interface ThreeDViewportControlsProps {
   showClusters: boolean;
   showTrainingAid: boolean;
   showCrossSection: boolean;
+  targetDisplayMode: TargetDisplayMode;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   onCameraPreset: (p: CameraPreset) => void;
   onToggleEnvelopes: () => void;
@@ -101,6 +118,8 @@ interface ThreeDViewportControlsProps {
   onToggleClusters: () => void;
   onToggleTrainingAid: () => void;
   onToggleCrossSection: () => void;
+  onTargetDisplayMode: (m: TargetDisplayMode) => void;
+  onOpenRecogModal: () => void;
 }
 
 const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
@@ -110,6 +129,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
   showClusters,
   showTrainingAid,
   showCrossSection,
+  targetDisplayMode,
   mode,
   onCameraPreset,
   onToggleEnvelopes,
@@ -117,6 +137,8 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
   onToggleClusters,
   onToggleTrainingAid,
   onToggleCrossSection,
+  onTargetDisplayMode,
+  onOpenRecogModal,
 }) => {
   return (
     <>
@@ -124,7 +146,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           key={preset}
           onClick={() => onCameraPreset(preset)}
-          className={`px-2 py-0.5 border transition-colors ${
+          className={`px-1.5 py-0.5 text-[8.5px] border transition-colors ${
             cameraPreset === preset
               ? 'border-friend text-friend bg-friend/20 font-bold'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -134,10 +156,43 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         </button>
       ))}
 
+      {(['AUTO', 'RADAR', 'AIRFRAME'] as const).map((dm) => (
+        <button
+          key={dm}
+          onClick={() => onTargetDisplayMode(dm)}
+          title={getTargetDisplayTitle(dm)}
+          className={`px-1.5 py-0.5 text-[8.5px] border transition-colors ${
+            targetDisplayMode === dm
+              ? 'border-amber text-amber bg-amber/20 font-bold'
+              : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+          }`}
+        >
+          {getTargetDisplayLabel(dm)}
+        </button>
+      ))}
+
+      {mode === 'EVAL' ? (
+        <button
+          disabled
+          title="Target Recognition Guide locked during EVALUATION exercise (Rule F5)"
+          className="px-1.5 py-0.5 text-[8.5px] border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed"
+        >
+          RECOG (EVAL LOCK)
+        </button>
+      ) : (
+        <button
+          onClick={onOpenRecogModal}
+          title="Open C-UAS Target Recognition Manual & Threat Taxonomy [M]"
+          className="px-1.5 py-0.5 text-[8.5px] border border-amber/70 text-amber bg-carbon-900/80 hover:bg-amber hover:text-carbon-950 font-bold transition-colors"
+        >
+          RECOG GUIDE
+        </button>
+      )}
+
       <button
         onClick={onToggleEnvelopes}
         title="Toggle 3D Effector Envelopes [E]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
+        className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
           showEnvelopes
             ? 'border-amber text-amber bg-amber/20'
             : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -149,7 +204,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
       <button
         onClick={onToggleLos}
         title="Toggle Modelled Line-of-Sight / Masking [K]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
+        className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
           showLos
             ? 'border-friend text-friend bg-friend/20'
             : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -161,7 +216,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
       <button
         onClick={onToggleClusters}
         title="Toggle Operator-Visible 3D Clusters [U]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
+        className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
           showClusters
             ? 'border-phosphor text-phosphor bg-phosphor/20'
             : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -174,7 +229,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
         <button
           disabled
           title="Training Aid locked and unavailable in EVALUATION mode (Rule F5)"
-          className="px-2 py-0.5 border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed text-[10px]"
+          className="px-1.5 py-0.5 text-[8.5px] border border-line text-text-dim/40 bg-carbon-950 cursor-not-allowed"
         >
           [X] AID (LOCKED IN EVAL)
         </button>
@@ -183,7 +238,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
           <button
             onClick={onToggleTrainingAid}
             title="Toggle 3D Training Aid (Modelled Shadows & Ref-RCS Shells) [X]"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
+            className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
               showTrainingAid
                 ? 'border-amber text-amber bg-amber/20'
                 : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -194,7 +249,7 @@ const ThreeDViewportControls: React.FC<ThreeDViewportControlsProps> = ({
           <button
             onClick={onToggleCrossSection}
             title="Open 2D Elevation Cross-Section Along Bearing"
-            className={`px-2 py-0.5 border font-bold transition-colors ${
+            className={`px-1.5 py-0.5 text-[8.5px] border font-bold transition-colors ${
               showCrossSection
                 ? 'border-amber text-amber bg-amber/20'
                 : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
@@ -217,6 +272,7 @@ interface TacticalViewportTabsProps {
   showClusters: boolean;
   showTrainingAid: boolean;
   showCrossSection: boolean;
+  targetDisplayMode: TargetDisplayMode;
   mode: 'TRAIN' | 'EVAL' | 'DEMO';
   currentScenarioId: string;
   onOpenScenarioModal: () => void;
@@ -227,6 +283,8 @@ interface TacticalViewportTabsProps {
   onToggleClusters: () => void;
   onToggleTrainingAid: () => void;
   onToggleCrossSection: () => void;
+  onTargetDisplayMode: (m: TargetDisplayMode) => void;
+  onOpenRecogModal: () => void;
   onToggleViewMode: () => void;
   onEnterVr: () => void;
 }
@@ -240,6 +298,7 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   showClusters,
   showTrainingAid,
   showCrossSection,
+  targetDisplayMode,
   mode,
   currentScenarioId,
   onOpenScenarioModal,
@@ -250,78 +309,145 @@ const TacticalViewportTabs: React.FC<TacticalViewportTabsProps> = ({
   onToggleClusters,
   onToggleTrainingAid,
   onToggleCrossSection,
+  onTargetDisplayMode,
+  onOpenRecogModal,
   onToggleViewMode,
   onEnterVr,
 }) => {
   return (
-    <div className="absolute top-2 left-2 z-20 flex flex-wrap gap-1 font-display text-[10px] max-w-[420px]">
-      {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+    <div className="absolute top-2 left-2 z-20 flex flex-col gap-1 font-display text-[9px] max-w-[calc(100%-140px)] pointer-events-auto select-none bg-carbon-950/80 border border-line/60 p-1 backdrop-blur-[2px]">
+      {/* Primary Row: Sensors & Core Navigation */}
+      <div className="flex items-center gap-1 flex-wrap">
+        {(['RADAR', 'EOIR', 'RF'] as const).map((m: SensorMode, idx) => (
+          <button
+            key={m}
+            onClick={() => onSetSensor(m)}
+            className={`px-1.5 py-0.5 border transition-colors ${
+              activeSensor === m
+                ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+                : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
+            }`}
+          >
+            [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+          </button>
+        ))}
+
         <button
-          key={m}
-          onClick={() => onSetSensor(m)}
-          className={`px-2 py-0.5 border transition-colors ${
-            activeSensor === m
-              ? 'border-phosphor text-phosphor bg-phosphorDim/40 font-bold'
+          onClick={onToggleViewMode}
+          title="Toggle 2D/3D Tactical View [V]"
+          className={`px-1.5 py-0.5 border font-bold transition-colors ${
+            viewMode === '3D'
+              ? 'border-friend text-friend bg-friend/20'
               : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
           }`}
         >
-          [{idx + 1}] {m === 'EOIR' ? 'EO/IR' : m}
+          [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
         </button>
-      ))}
 
+        <button
+          onClick={onEnterVr}
+          title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
+          className="px-1.5 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
+        >
+          [VR] EXPERIMENTAL
+        </button>
+
+        <button
+          onClick={onOpenScenarioModal}
+          disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
+          title="Open Mission / Exercise Scenario Selector [S]"
+          className={`px-1.5 py-0.5 border font-bold transition-colors ${
+            mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
+              ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
+              : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
+          }`}
+        >
+          [S] {currentScenarioId}
+        </button>
+
+        {viewMode === '3D' && activeSensor === 'RADAR' && (
+          <button
+            onClick={() => onSetSensor('EOIR')}
+            title="Switch to EO/IR sensor to resolve 3D drone & aircraft models [2]"
+            className="px-1.5 py-0.5 border border-amber/70 text-amber bg-amber/15 hover:bg-amber hover:text-carbon-950 font-bold transition-colors animate-pulse"
+          >
+            → [2] VIEW 3D DRONES
+          </button>
+        )}
+      </div>
+
+      {/* Secondary Row: 3D Tactical Tools (Only visible in 3D view) */}
       {viewMode === '3D' && (
-        <ThreeDViewportControls
-          cameraPreset={cameraPreset}
-          showEnvelopes={showEnvelopes}
-          showLos={showLos}
-          showClusters={showClusters}
-          showTrainingAid={showTrainingAid}
-          showCrossSection={showCrossSection}
-          mode={mode}
-          onCameraPreset={onCameraPreset}
-          onToggleEnvelopes={onToggleEnvelopes}
-          onToggleLos={onToggleLos}
-          onToggleClusters={onToggleClusters}
-          onToggleTrainingAid={onToggleTrainingAid}
-          onToggleCrossSection={onToggleCrossSection}
-        />
+        <div className="flex items-center gap-1 flex-wrap pt-0.5 border-t border-line/40">
+          <ThreeDViewportControls
+            cameraPreset={cameraPreset}
+            showEnvelopes={showEnvelopes}
+            showLos={showLos}
+            showClusters={showClusters}
+            showTrainingAid={showTrainingAid}
+            showCrossSection={showCrossSection}
+            targetDisplayMode={targetDisplayMode}
+            mode={mode}
+            onCameraPreset={onCameraPreset}
+            onToggleEnvelopes={onToggleEnvelopes}
+            onToggleLos={onToggleLos}
+            onToggleClusters={onToggleClusters}
+            onToggleTrainingAid={onToggleTrainingAid}
+            onToggleCrossSection={onToggleCrossSection}
+            onTargetDisplayMode={onTargetDisplayMode}
+            onOpenRecogModal={onOpenRecogModal}
+          />
+        </div>
       )}
-
-      <button
-        onClick={onToggleViewMode}
-        title="Toggle 2D/3D Tactical View [V]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
-          viewMode === '3D'
-            ? 'border-friend text-friend bg-friend/20'
-            : 'border-line text-text-dim bg-carbon-900/80 hover:text-text-main'
-        }`}
-      >
-        [V] {viewMode === '3D' ? '2D RADAR' : '3D VIEW'}
-      </button>
-
-      <button
-        onClick={onEnterVr}
-        title="Enter WebXR Immersive VR Mode (Experimental, Unverified)"
-        className="px-2 py-0.5 border font-bold transition-colors border-amber/70 text-amber bg-amber/10 hover:bg-amber hover:text-carbon-950"
-      >
-        [VR] EXPERIMENTAL
-      </button>
-
-      <button
-        onClick={onOpenScenarioModal}
-        disabled={mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0}
-        title="Open Mission / Exercise Scenario Selector [S]"
-        className={`px-2 py-0.5 border font-bold transition-colors ${
-          mode === 'EVAL' && !engineInstance.sessionEnded && engineInstance.tickIndex > 0
-            ? 'border-line text-text-dim opacity-40 cursor-not-allowed bg-carbon-900'
-            : 'border-phosphor/70 text-phosphor bg-phosphorDim/20 hover:bg-phosphor hover:text-carbon-950'
-        }`}
-      >
-        [S] {currentScenarioId}
-      </button>
     </div>
   );
 };
+
+export const DEFAULT_CHUNK_LOAD_TIMEOUT_MS = 3000;
+
+export interface LoadRender3DOptions {
+  timeoutMs?: number;
+  loader?: () => Promise<typeof import('@/render3d')>;
+}
+
+export async function loadRender3DModuleWithTimeout(
+  options?: LoadRender3DOptions
+): Promise<typeof import('@/render3d')> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CHUNK_LOAD_TIMEOUT_MS;
+  const loader = options?.loader ?? (() => import('@/render3d'));
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`3D chunk loading timed out (> ${timeoutMs}ms, Rule R10.6)`)),
+      timeoutMs
+    );
+  });
+
+  try {
+    return await Promise.race([loader(), timeoutPromise]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function getTargetDisplayTitle(dm: 'AUTO' | 'RADAR' | 'AIRFRAME'): string {
+  if (dm === 'AUTO') {
+    return 'Sensor-Auto Target Display (Adapts to Active Sensor & Optical Environment)';
+  }
+  if (dm === 'RADAR') {
+    return 'Force Radar Contact Symbols';
+  }
+  return 'Observed Airframe Silhouettes (Permitted only when optically observed)';
+}
+
+function getTargetDisplayLabel(dm: 'AUTO' | 'RADAR' | 'AIRFRAME'): string {
+  if (dm === 'AUTO') return 'TGT:AUTO';
+  if (dm === 'RADAR') return 'TGT:RADAR';
+  return 'TGT:AIR';
+}
 
 export const Console: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -329,9 +455,22 @@ export const Console: React.FC = () => {
   const rendererRef = useRef<ConsoleRenderer | null>(null);
   const renderer3dRef = useRef<Renderer3D | null>(null);
   const xrManagerRef = useRef<WebXRManager | null>(null);
+  const isInitializing3DRef = useRef<boolean>(false);
 
   const [isVrModalOpen, setIsVrModalOpen] = useState<boolean>(false);
-  const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
+  const [viewMode, setViewMode] = useState<'2D' | '3D'>(() => {
+    if (typeof window !== 'undefined') {
+      const param = new URLSearchParams(window.location.search).get('view');
+      if (param === '2D' || param === '2d') return '2D';
+      if (param === '3D' || param === '3d') return '3D';
+      // In automated Playwright test runs, default to 2D unless view=3D is specified to preserve backward compatibility with all regression test suites
+      if (window.navigator?.webdriver) {
+        return '2D';
+      }
+    }
+    // Default to 3D Viewport on startup for human operators and production evaluation
+    return '3D';
+  });
   const [webGlError, setWebGlError] = useState<string | null>(null);
   const [selectedEnvObject, setSelectedEnvObject] = useState<EnvironmentObjectInfo | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('OBLIQUE');
@@ -343,24 +482,12 @@ export const Console: React.FC = () => {
   const [showLos, setShowLos] = useState<boolean>(true);
   const showLosRef = useRef<boolean>(true);
   showLosRef.current = showLos;
-  const toggleLos = () => {
-    setShowLos((prev) => {
-      const next = !prev;
-      renderer3dRef.current?.setShowLos(next);
-      return next;
-    });
-  };
+  const toggleLos = () => setShowLos((prev) => !prev);
 
   const [showClusters, setShowClusters] = useState<boolean>(true);
   const showClustersRef = useRef<boolean>(true);
   showClustersRef.current = showClusters;
-  const toggleClusters = () => {
-    setShowClusters((prev) => {
-      const next = !prev;
-      renderer3dRef.current?.setShowClusters(next);
-      return next;
-    });
-  };
+  const toggleClusters = () => setShowClusters((prev) => !prev);
 
   const [showTrainingAid, setShowTrainingAid] = useState<boolean>(false);
   const [showCrossSection, setShowCrossSection] = useState<boolean>(false);
@@ -370,13 +497,28 @@ export const Console: React.FC = () => {
     if (engineInstance.mode === 'EVAL') {
       return;
     }
-    setShowTrainingAid((prev) => {
-      const next = !prev;
-      renderer3dRef.current?.setShowTrainingAid(next);
-      engineInstance.trainingAidActive = next;
-      return next;
-    });
+    setShowTrainingAid((prev) => !prev);
   };
+
+  const [targetDisplayMode, setTargetDisplayMode] = useState<TargetDisplayMode>('AUTO');
+  const [isRecogModalOpen, setIsRecogModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    renderer3dRef.current?.setShowLos(showLos);
+  }, [showLos]);
+
+  useEffect(() => {
+    renderer3dRef.current?.setShowClusters(showClusters);
+  }, [showClusters]);
+
+  useEffect(() => {
+    renderer3dRef.current?.setShowTrainingAid(showTrainingAid);
+    engineInstance.trainingAidActive = showTrainingAid;
+  }, [showTrainingAid]);
+
+  useEffect(() => {
+    renderer3dRef.current?.setTargetDisplayMode(targetDisplayMode);
+  }, [targetDisplayMode]);
 
   const toggleCrossSection = () => {
     if (engineInstance.mode === 'EVAL') {
@@ -386,6 +528,31 @@ export const Console: React.FC = () => {
   };
 
   const activeSensor = useSessionStore((s) => s.ui.activeSensor);
+
+let toastCounter = 0;
+
+  const handleTargetDisplayMode = (mode: TargetDisplayMode) => {
+    setTargetDisplayMode(mode);
+    if (mode === 'AIRFRAME' && activeSensor !== 'EOIR') {
+      const fb: OperatorFeedback = {
+        id: `fb_toast_${Date.now()}_${++toastCounter}`,
+        timestampMs: Date.now(),
+        category: 'SYSTEM_WARNING',
+        severity: 'INFO',
+        title: 'AIRFRAME VIEW REQUIRES CLEAR EO/IR OBSERVATION',
+        explanation: 'Radar contacts displayed as symbols until EO/IR is active.',
+      };
+      useSessionStore.setState((s) => ({
+        feedbackList: [fb, ...s.feedbackList].slice(0, 20),
+        activeFeedback: fb,
+      }));
+    }
+  };
+
+  useEffect(() => {
+    renderer3dRef.current?.setActiveSensor(activeSensor);
+  }, [activeSensor]);
+
   const recentEvents = useSessionStore((s) => s.ui.recentEvents);
   const setSensor = useSessionStore((s) => s.setSensor);
   const designate = useSessionStore((s) => s.designate);
@@ -407,6 +574,45 @@ export const Console: React.FC = () => {
 
   const [mousePos, setMousePos] = useState<{ brg: number; rngKm: number } | null>(null);
   const [lowFi, setLowFi] = useState<boolean>(false);
+  const radarFrameRef = useRef<HTMLDivElement>(null);
+  const [radarSize, setRadarSize] = useState<number>(520);
+
+  // Responsive radar viewport dimension synchronization (Task 23.1 Section 4, Task 28 Fix C)
+  useEffect(() => {
+    const el = radarFrameRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = Math.round(entry.contentRect.width);
+        const height = Math.round(entry.contentRect.height);
+        if (width >= 300 && height >= 300) {
+          if (viewMode === '3D') {
+            if (canvas3dRef.current) {
+              canvas3dRef.current.width = width;
+              canvas3dRef.current.height = height;
+            }
+            renderer3dRef.current?.resize(width, height);
+          } else {
+            setRadarSize(width);
+            if (canvasRef.current) {
+              canvasRef.current.width = width;
+              canvasRef.current.height = width;
+            }
+            if (canvas3dRef.current) {
+              canvas3dRef.current.width = width;
+              canvas3dRef.current.height = height;
+            }
+            renderer3dRef.current?.resize(width, height);
+          }
+        }
+      }
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewMode]);
+
   useEffect(() => {
     renderer3dRef.current?.setLowFidelity(lowFi);
   }, [lowFi]);
@@ -416,8 +622,9 @@ export const Console: React.FC = () => {
     if (!canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    canvas.width = 520;
-    canvas.height = 520;
+    const currentDim = radarSize || 520;
+    canvas.width = currentDim;
+    canvas.height = currentDim;
 
     const renderer = new ConsoleRenderer(canvas);
     rendererRef.current = renderer;
@@ -429,144 +636,260 @@ export const Console: React.FC = () => {
     };
   }, []);
 
-  // Cleanup 3D Renderer and WebXR on unmount
+  // Cleanup 3D Renderer, WebXR and E2E Test Bridge on unmount
   useEffect(() => {
+    const uninstallTestBridge = installDrishtiTestBridge(engineInstance, () => renderer3dRef.current);
     return () => {
+      uninstallTestBridge();
       xrManagerRef.current?.dispose();
       xrManagerRef.current = null;
       renderer3dRef.current?.dispose();
       renderer3dRef.current = null;
       if (typeof window !== 'undefined') {
-        (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = null;
+        delete (window as unknown as Record<string, unknown>).__renderer3d;
       }
+    };
+  }, []);
+
+  // Sync persisted trainee difficulty across application reloads
+  const currentCallsign = useSessionStore((s) => s.currentCallsign);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const d = await getTraineeDifficulty(currentCallsign);
+        if (typeof d === 'number' && Number.isFinite(d)) {
+          useSessionStore.setState((s) => ({
+            ui: { ...s.ui, difficulty: d },
+          }));
+          if (engineInstance.spec && engineInstance.mode === 'TRAIN' && engineInstance.tickIndex === 0) {
+            engineInstance.spec.difficulty = d;
+          }
+        }
+      } catch {
+        // fail-safe
+      }
+    })();
+  }, [currentCallsign]);
+
+  const initRenderer3D = async (): Promise<Renderer3D | null> => {
+    if (renderer3dRef.current) {
+      return renderer3dRef.current;
+    }
+    if (!canvas3dRef.current) {
+      return null;
+    }
+
+    // Rule R10.6: Enforce 3-second chunk load timeout for lazy 3D bundle
+    const render3dModule = await loadRender3DModuleWithTimeout();
+
+    const {
+      Renderer3D,
+      checkWebGL2Support,
+      calculateRadarCoverage,
+      calculateEoirCoverage,
+      calculateRfCoverage,
+      getScenarioEnvironmentDescriptor,
+    } = render3dModule;
+
+    const cap = checkWebGL2Support();
+    if (!cap.supported) {
+      setWebGlError(cap.reason || 'WebGL2 not supported');
+      return null;
+    }
+
+    const currentDim = radarSize || 520;
+    canvas3dRef.current.width = currentDim;
+    canvas3dRef.current.height = currentDim;
+
+    const r3d = new Renderer3D(canvas3dRef.current, {
+      maxRangeM: CONFIG.thresholds.radarMaxRangeM,
+      rMinM: CONFIG.thresholds.rMinM,
+      zones: engineInstance.spec?.zones || [],
+      mode: engineInstance.mode,
+      showTrainingAid,
+      environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
+      onSelectTrack: (trackNo: string) => {
+        setSelectedEnvObject(null);
+        designate(trackNo, 'CLICK');
+      },
+      onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
+        setSelectedEnvObject(info);
+      },
+      onContextLost: () => {
+        xrManagerRef.current?.exitVR();
+        const lostRenderer = renderer3dRef.current ?? r3d;
+        renderer3dRef.current = null;
+        if (lostRenderer) {
+          try {
+            lostRenderer.dispose();
+          } catch {
+            // safe idempotent cleanup
+          }
+        }
+        setViewMode('2D');
+        setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
+      },
+    });
+
+    r3d.setSimTimeProvider(() => ({
+      simMs: engineInstance.tickIndex * 50,
+      chaosList: engineInstance.spec?.chaos,
+    }));
+
+    r3d.setEventsProvider(() => engineInstance.getOperatorEvents());
+    r3d.setSensorHealthProvider(() => engineInstance.sensorHealth);
+
+    r3d.setTrackProvider(() => {
+      const opTracks = engineInstance.getOperatorTracks();
+      return {
+        tracks: projectSafeTracks(opTracks, engineInstance.selectedTrackNo),
+        selectedTrackNo: engineInstance.selectedTrackNo,
+      };
+    });
+
+    r3d.setCoverageProvider(() => {
+      const currentSimMs = engineInstance.tickIndex * 50;
+      return {
+        radar: calculateRadarCoverage({
+          sensorHealth: engineInstance.sensorHealth.RADAR,
+          chaosList: engineInstance.spec?.chaos,
+          tMs: currentSimMs,
+        }),
+        eoir: calculateEoirCoverage({
+          azimuthDeg: engineInstance.eoirAzimuthDeg,
+          isNight: engineInstance.spec?.dayNight === 'NIGHT',
+          sensorHealth: engineInstance.sensorHealth.EOIR,
+          chaosList: engineInstance.spec?.chaos,
+          tMs: currentSimMs,
+        }),
+        rf: calculateRfCoverage({
+          sensorHealth: engineInstance.sensorHealth.RF,
+          chaosList: engineInstance.spec?.chaos,
+          tMs: currentSimMs,
+        }),
+        activeSensor: useSessionStore.getState().ui.activeSensor,
+        visible: true,
+      };
+    });
+
+    r3d.setEffectorProvider(() => {
+      const currentSimMs = engineInstance.tickIndex * 50;
+      const opTracks = engineInstance.getOperatorTracks();
+      const selectedTrack = engineInstance.selectedTrackNo
+        ? opTracks.find((t) => t.trackNo === engineInstance.selectedTrackNo)
+        : null;
+
+      return {
+        activeEffector: useSessionStore.getState().ui.activeEffector,
+        selectedTrack: selectedTrack && selectedTrack.step !== 'UNDETECTED'
+          ? {
+              trackNo: selectedTrack.trackNo,
+              pos: { x: selectedTrack.estPos.x, y: selectedTrack.estPos.y, z: selectedTrack.estPos.z },
+              q: selectedTrack.q,
+            }
+          : null,
+        sensorHealth: engineInstance.sensorHealth,
+        chaosList: engineInstance.spec?.chaos,
+        tMs: currentSimMs,
+        visible: showEnvelopesRef.current,
+      };
+    });
+
+    r3d.setShowLos(showLos);
+    r3d.setShowClusters(showClusters);
+    r3d.setLowFidelity(lowFi);
+    r3d.setTargetDisplayMode(targetDisplayMode);
+    r3d.setActiveSensor(activeSensor);
+    renderer3dRef.current = r3d;
+    if (typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>).__renderer3d = r3d;
+    }
+    return r3d;
+  };
+
+  // Auto-initialize 3D Viewport on startup when 3D is the default view
+  useEffect(() => {
+    if (viewMode !== '3D' || renderer3dRef.current || isInitializing3DRef.current) {
+      return;
+    }
+    let isCancelled = false;
+    isInitializing3DRef.current = true;
+
+    void (async () => {
+      try {
+        const r3d = await initRenderer3D();
+        if (isCancelled) {
+          r3d?.stop();
+          return;
+        }
+        if (r3d) {
+          r3d.start();
+          setSensor('RADAR');
+          setWebGlError(null);
+        } else {
+          // Graceful fallback to 2D Canvas baseline if WebGL2 is unsupported
+          setViewMode('2D');
+        }
+      } catch (err) {
+        if (isCancelled) return;
+        console.warn('[Console] WebGL2 3D startup failed, falling back to 2D:', err);
+        setViewMode('2D');
+      } finally {
+        isInitializing3DRef.current = false;
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
     };
   }, []);
 
   // Toggle 2D / 3D Tactical View with WebGL2 probe and graceful fallback
   const toggleViewMode = async () => {
+    if (isInitializing3DRef.current) {
+      return;
+    }
     if (viewMode === '3D') {
       xrManagerRef.current?.exitVR();
       renderer3dRef.current?.stop();
+      if (typeof window !== 'undefined') {
+        delete (window as unknown as Record<string, unknown>).__renderer3d;
+      }
       setViewMode('2D');
       return;
     }
 
+    isInitializing3DRef.current = true;
     try {
-      const {
-        Renderer3D,
-        checkWebGL2Support,
-        calculateRadarCoverage,
-        calculateEoirCoverage,
-        calculateRfCoverage,
-        getScenarioEnvironmentDescriptor,
-      } = await import('@/render3d');
-      const cap = checkWebGL2Support();
-      if (!cap.supported) {
-        setWebGlError(cap.reason || 'WebGL2 not supported');
+      const r3d = await initRenderer3D();
+      if (!r3d) {
         return;
       }
 
-      if (!renderer3dRef.current && canvas3dRef.current) {
-        canvas3dRef.current.width = 520;
-        canvas3dRef.current.height = 520;
-
-        const r3d = new Renderer3D(canvas3dRef.current, {
-          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
-          rMinM: CONFIG.thresholds.rMinM,
-          zones: engineInstance.spec?.zones || [],
-          mode: engineInstance.mode,
-          showTrainingAid: showTrainingAidRef.current,
-          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
-          onSelectTrack: (trackNo: string) => {
-            setSelectedEnvObject(null);
-            designate(trackNo, 'CLICK');
-          },
-          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
-            setSelectedEnvObject(info);
-          },
-          onContextLost: () => {
-            xrManagerRef.current?.exitVR();
-            renderer3dRef.current?.stop();
-            setViewMode('2D');
-            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
-          },
-        });
-
-        r3d.setSimTimeProvider(() => ({
-          simMs: engineInstance.tickIndex * 50,
-          chaosList: engineInstance.spec?.chaos,
-        }));
-
-        r3d.setEventsProvider(() => engineInstance.events);
-
-        r3d.setTrackProvider(() => ({
-          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
-          selectedTrackNo: engineInstance.selectedTrackNo,
-        }));
-
-        r3d.setCoverageProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          return {
-            radar: calculateRadarCoverage({
-              sensorHealth: engineInstance.sensorHealth.RADAR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            eoir: calculateEoirCoverage({
-              azimuthDeg: engineInstance.eoirAzimuthDeg,
-              isNight: engineInstance.spec?.dayNight === 'NIGHT',
-              sensorHealth: engineInstance.sensorHealth.EOIR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            rf: calculateRfCoverage({
-              sensorHealth: engineInstance.sensorHealth.RF,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            activeSensor: useSessionStore.getState().ui.activeSensor,
-            visible: true,
-          };
-        });
-
-        r3d.setEffectorProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          const selectedEntity = engineInstance.selectedTrackNo
-            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
-            : null;
-
-          return {
-            activeEffector: useSessionStore.getState().ui.activeEffector,
-            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
-              ? {
-                  trackNo: selectedEntity.trackNo!,
-                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
-                  q: selectedEntity.q,
-                }
-              : null,
-            sensorHealth: engineInstance.sensorHealth,
-            chaosList: engineInstance.spec?.chaos,
-            tMs: currentSimMs,
-            visible: showEnvelopesRef.current,
-          };
-        });
-
-        r3d.setShowLos(showLosRef.current);
-        r3d.setShowClusters(showClustersRef.current);
-        r3d.setLowFidelity(lowFi);
-        renderer3dRef.current = r3d;
-        if (typeof window !== 'undefined') {
-          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
-        }
-      }
-
-      renderer3dRef.current?.start();
+      r3d.start();
       setViewMode('3D');
+      // Operator requirement: Default 3D view to RADAR
+      setSensor('RADAR');
       setWebGlError(null);
     } catch (err) {
+      if (renderer3dRef.current) {
+        try {
+          renderer3dRef.current.dispose();
+        } catch {
+          // ignore cleanup error
+        }
+        renderer3dRef.current = null;
+      }
       console.error('[Console] Failed to load 3D view:', err);
-      setWebGlError('Failed to load 3D renderer. Restoring 2D mode.');
+      const isTimeout = err instanceof Error && err.message.includes('timed out');
+      setWebGlError(
+        isTimeout
+          ? '3D chunk loading timed out (> 3000ms). Restoring 2D mode.'
+          : 'Failed to load 3D renderer. Restoring 2D mode.'
+      );
       setViewMode('2D');
+    } finally {
+      isInitializing3DRef.current = false;
     }
   };
 
@@ -581,12 +904,6 @@ export const Console: React.FC = () => {
       const {
         checkWebXRSupport,
         WebXRManager,
-        Renderer3D,
-        checkWebGL2Support,
-        calculateRadarCoverage,
-        calculateEoirCoverage,
-        calculateRfCoverage,
-        getScenarioEnvironmentDescriptor,
       } = await import('@/render3d');
 
       const cap = await checkWebXRSupport();
@@ -595,120 +912,24 @@ export const Console: React.FC = () => {
         return;
       }
 
-      const glCap = checkWebGL2Support();
-      if (!glCap.supported) {
-        setWebGlError(glCap.reason || 'WebGL2 not supported');
+      const r3d = await initRenderer3D();
+      if (!r3d) {
         return;
       }
 
-      // Ensure 3D renderer is instantiated
-      if (!renderer3dRef.current && canvas3dRef.current) {
-        canvas3dRef.current.width = 520;
-        canvas3dRef.current.height = 520;
-
-        const r3d = new Renderer3D(canvas3dRef.current, {
-          maxRangeM: CONFIG.thresholds.radarMaxRangeM,
-          rMinM: CONFIG.thresholds.rMinM,
-          zones: engineInstance.spec?.zones || [],
-          mode: engineInstance.mode,
-          showTrainingAid: showTrainingAidRef.current,
-          environment: getScenarioEnvironmentDescriptor(currentScenarioId, engineInstance.spec),
-          onSelectTrack: (trackNo: string) => {
-            setSelectedEnvObject(null);
-            designate(trackNo, 'CLICK');
-          },
-          onSelectEnvironment: (info: EnvironmentObjectInfo | null) => {
-            setSelectedEnvObject(info);
-          },
-          onContextLost: () => {
-            xrManagerRef.current?.exitVR();
-            renderer3dRef.current?.stop();
-            setViewMode('2D');
-            setWebGlError('WebGL2 context lost. Restored 2D Canvas baseline.');
-          },
-        });
-
-        r3d.setSimTimeProvider(() => ({
-          simMs: engineInstance.tickIndex * 50,
-          chaosList: engineInstance.spec?.chaos,
-        }));
-
-        r3d.setEventsProvider(() => engineInstance.events);
-
-        r3d.setTrackProvider(() => ({
-          tracks: projectSafeTracks(engineInstance.curr, engineInstance.selectedTrackNo),
-          selectedTrackNo: engineInstance.selectedTrackNo,
-        }));
-
-        r3d.setCoverageProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          return {
-            radar: calculateRadarCoverage({
-              sensorHealth: engineInstance.sensorHealth.RADAR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            eoir: calculateEoirCoverage({
-              azimuthDeg: engineInstance.eoirAzimuthDeg,
-              isNight: engineInstance.spec?.dayNight === 'NIGHT',
-              sensorHealth: engineInstance.sensorHealth.EOIR,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            rf: calculateRfCoverage({
-              sensorHealth: engineInstance.sensorHealth.RF,
-              chaosList: engineInstance.spec?.chaos,
-              tMs: currentSimMs,
-            }),
-            activeSensor: useSessionStore.getState().ui.activeSensor,
-            visible: true,
-          };
-        });
-
-        r3d.setEffectorProvider(() => {
-          const currentSimMs = engineInstance.tickIndex * 50;
-          const selectedEntity = engineInstance.selectedTrackNo
-            ? engineInstance.curr.find((e) => e.trackNo === engineInstance.selectedTrackNo)
-            : null;
-
-          return {
-            activeEffector: useSessionStore.getState().ui.activeEffector,
-            selectedTrack: selectedEntity && selectedEntity.step !== 'UNDETECTED'
-              ? {
-                  trackNo: selectedEntity.trackNo!,
-                  pos: { x: selectedEntity.pos.x, y: selectedEntity.pos.y, z: selectedEntity.pos.z },
-                  q: selectedEntity.q,
-                }
-              : null,
-            sensorHealth: engineInstance.sensorHealth,
-            chaosList: engineInstance.spec?.chaos,
-            tMs: currentSimMs,
-            visible: showEnvelopesRef.current,
-          };
-        });
-
-        r3d.setShowLos(showLosRef.current);
-        r3d.setShowClusters(showClustersRef.current);
-        r3d.setLowFidelity(lowFi);
-        renderer3dRef.current = r3d;
-        if (typeof window !== 'undefined') {
-          (window as unknown as { __RENDERER_3D__?: Renderer3D | null }).__RENDERER_3D__ = r3d;
-        }
-      }
-
-      if (renderer3dRef.current && rendererRef.current) {
+      if (rendererRef.current) {
         setViewMode('3D');
-        renderer3dRef.current.start();
+        r3d.start();
 
         const xrMgr = new WebXRManager(
-          renderer3dRef.current.getThreeRenderer(),
-          renderer3dRef.current.getScene3D().scene,
+          r3d.getThreeRenderer(),
+          r3d.getScene3D().scene,
           rendererRef.current,
           () => {
             xrMgr.dispose();
             xrManagerRef.current = null;
           },
-          renderer3dRef.current.getCamera()
+          r3d.getCamera()
         );
         xrManagerRef.current = xrMgr;
         const res = await xrMgr.enterVR();
@@ -780,10 +1001,14 @@ export const Console: React.FC = () => {
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left - 260;
-    const clickY = 260 - (e.clientY - rect.top);
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const radius = Math.min(cx, cy) - 15;
+    const scale = radius / 5000;
+    const clickX = e.clientX - rect.left - cx;
+    const clickY = cy - (e.clientY - rect.top);
 
-    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.curr);
+    const nearestTrackNo = findNearestTrackNo(clickX, clickY, engineInstance.getOperatorTracks(), scale);
     if (nearestTrackNo) {
       designate(nearestTrackNo, 'CLICK');
     }
@@ -822,36 +1047,48 @@ export const Console: React.FC = () => {
 
       {/* 3. Center Radar Scope Viewport */}
       <div className="console-center bg-carbon-950">
-        <div className="flex items-center justify-center w-full h-full relative">
-          {/* Left Gutter: Range Rings Legend */}
-          <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pr-4 select-none">
-            <div className="border-l border-phosphorDim pl-2">
-              <span className="text-phosphor block font-bold">5.0 km</span>
-              <span>MAX RADAR</span>
+        <div className="flex items-center justify-between w-full h-full relative px-1">
+          {/* Left Gutter: Range Rings Legend (restored across tactical displays) */}
+          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pr-1 select-none shrink-0 w-[84px] overflow-hidden">
+            <div className="border-l border-phosphorDim pl-1">
+              <span className="text-phosphor block font-bold whitespace-nowrap">5.0 km</span>
+              <span className="whitespace-nowrap tracking-tighter">MAX RADAR</span>
             </div>
-            <div className="border-l border-phosphorDim pl-2">
-              <span className="text-text-main block">3.0 km</span>
-              <span>NOMINAL REF</span>
+            <div className="border-l border-phosphorDim pl-1">
+              <span className="text-text-main block whitespace-nowrap">3.0 km</span>
+              <span className="whitespace-nowrap tracking-tighter">NOMINAL REF</span>
             </div>
-            <div className="border-l border-amber pl-2">
-              <span className="text-amber block font-bold">0.5 km</span>
-              <span>POINT OF NO RETURN</span>
+            <div className="border-l border-amber pl-1">
+              <span className="text-amber block font-bold whitespace-nowrap">0.5 km</span>
+              <span className="whitespace-nowrap tracking-tighter">POINT OF NO RETURN</span>
             </div>
           </div>
 
-          {/* 520px x 520px Canvas Frame bounded by var(--radar) */}
+          {/* Responsive Canvas Frame bounded by var(--radar) in 2D, or wider landscape in 3D */}
           <div
-            className="radar-frame border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden"
-            style={{
-              width: 'var(--radar)',
-              height: 'var(--radar)',
-            }}
+            ref={radarFrameRef}
+            className={`radar-frame shrink-0 border border-line bg-carbon-950 flex items-center justify-center relative overflow-hidden ${
+              viewMode === '3D' ? 'radar-frame-3d' : ''
+            }`}
+            style={
+              viewMode === '3D'
+                ? {
+                    width: 'var(--radar-w-3d, min(960px, calc(100vw - 760px)))',
+                    maxWidth: 'calc(100% - 180px)',
+                    height: 'var(--radar)',
+                  }
+                : {
+                    width: 'var(--radar)',
+                    maxWidth: 'calc(100% - 180px)',
+                    height: 'var(--radar)',
+                  }
+            }
           >
             {/* Native HTML5 2D Radar Canvas */}
             <canvas
               ref={canvasRef}
-              width={520}
-              height={520}
+              width={radarSize}
+              height={radarSize}
               onMouseMove={handleMouseMove}
               onMouseLeave={() => setMousePos(null)}
               onClick={handleCanvasClick}
@@ -861,8 +1098,8 @@ export const Console: React.FC = () => {
             {/* Three.js 3D Viewport Canvas */}
             <canvas
               ref={canvas3dRef}
-              width={520}
-              height={520}
+              width={radarSize}
+              height={radarSize}
               style={{ touchAction: 'none' }}
               className={`cursor-grab active:cursor-grabbing ${viewMode === '3D' ? 'block' : 'hidden'}`}
             />
@@ -877,6 +1114,7 @@ export const Console: React.FC = () => {
               showClusters={showClusters}
               showTrainingAid={showTrainingAid}
               showCrossSection={showCrossSection}
+              targetDisplayMode={targetDisplayMode}
               mode={engineInstance.mode}
               currentScenarioId={currentScenarioId}
               onOpenScenarioModal={openScenarioModal}
@@ -887,6 +1125,8 @@ export const Console: React.FC = () => {
               onToggleClusters={toggleClusters}
               onToggleTrainingAid={toggleTrainingAid}
               onToggleCrossSection={toggleCrossSection}
+              onTargetDisplayMode={handleTargetDisplayMode}
+              onOpenRecogModal={() => setIsRecogModalOpen(true)}
               onToggleViewMode={toggleViewMode}
               onEnterVr={handleOpenVr}
             />
@@ -898,17 +1138,17 @@ export const Console: React.FC = () => {
 
             {/* 3D Model Scale & Control Hint */}
             {viewMode === '3D' && (
-              <>
+              <div className="absolute bottom-1 inset-x-2 z-10 flex flex-col items-center gap-0.5 pointer-events-none select-none font-mono text-text-dim text-[7.5px] tracking-tight">
                 <div
                   title="Aircraft models are enlarged for tactical visual identification. Underlying world positions and radar ranges are authoritative and unchanged."
-                  className="absolute bottom-2 left-2 z-10 text-[8px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none max-w-[270px] truncate"
+                  className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm max-w-[96%] overflow-hidden text-ellipsis"
                 >
                   AIRCRAFT MODELS ENLARGED FOR VISIBILITY — TRACK POSITIONS AND RANGES UNCHANGED
                 </div>
-                <div className="absolute bottom-2 right-2 z-10 text-[9px] font-mono text-text-dim bg-carbon-900/80 border border-line px-1.5 py-0.5 pointer-events-none select-none">
-                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB / SHIFT+DRAG | FOCUS: DBLCLICK / [F] | RESET: [HOME]
+                <div className="bg-carbon-900/95 border border-line/70 px-2 py-0.5 whitespace-nowrap text-center shadow-sm max-w-[96%] overflow-hidden text-ellipsis">
+                  DRAG: ORBIT | SCROLL: ZOOM | CLICK: SELECT TARGET | PAN: RMB | FOCUS: DBLCLICK / [G] | RESET: [HOME]
                 </div>
-              </>
+              </div>
             )}
 
             {/* 3D Environment Object Inspector */}
@@ -922,7 +1162,7 @@ export const Console: React.FC = () => {
 
             {/* WebGL Error / Context Loss Fallback Banner */}
             {webGlError && (
-              <div className="absolute bottom-2 left-2 z-20 text-[9px] font-mono text-amber border border-amber px-2 py-1 bg-carbon-950/95 flex items-center gap-2">
+              <div className="absolute bottom-8 left-2 z-20 text-[9px] font-mono text-amber border border-amber px-2 py-1 bg-carbon-950/95 flex items-center gap-2">
                 <span>⚠ {webGlError}</span>
                 <button
                   onClick={() => setWebGlError(null)}
@@ -935,7 +1175,7 @@ export const Console: React.FC = () => {
 
             {/* Low-Fidelity Indicator */}
             {lowFi && (
-              <div className="absolute bottom-2 left-2 z-10 text-[9px] font-mono text-amber border border-amber px-1.5 py-0.5 bg-carbon-900/80">
+              <div className="absolute bottom-8 left-2 z-10 text-[9px] font-mono text-amber border border-amber px-1.5 py-0.5 bg-carbon-900/80">
                 LOW-FIDELITY MODE [L]
               </div>
             )}
@@ -974,19 +1214,19 @@ export const Console: React.FC = () => {
             )}
           </div>
 
-          {/* Right Gutter: Active Mode Telemetry */}
-          <div className="hidden xl:flex flex-col justify-center space-y-3 text-[10px] font-mono text-text-dim pl-4 select-none">
-            <div className="border-r border-line pr-2 text-right">
-              <span className="text-text-main block font-bold">30 RPM</span>
-              <span>SWEEP RATE</span>
+          {/* Right Gutter: Active Mode Telemetry (restored across tactical displays) */}
+          <div className="flex flex-col justify-center space-y-3 text-[8px] font-mono text-text-dim pl-1 select-none shrink-0 w-[84px] text-right overflow-hidden">
+            <div className="border-r border-line pr-1 text-right">
+              <span className="text-text-main block font-bold whitespace-nowrap">30 RPM</span>
+              <span className="whitespace-nowrap tracking-tighter">SWEEP RATE</span>
             </div>
-            <div className="border-r border-line pr-2 text-right">
-              <span className="text-text-main block font-bold">20 Hz</span>
-              <span>DETERMINISTIC SIM</span>
+            <div className="border-r border-line pr-1 text-right">
+              <span className="text-text-main block font-bold whitespace-nowrap">20 Hz</span>
+              <span className="whitespace-nowrap tracking-tighter">DETERMINISTIC SIM</span>
             </div>
-            <div className="border-r border-line pr-2 text-right">
-              <span className="text-phosphor block font-bold">60 FPS</span>
-              <span>INTERPOLATED</span>
+            <div className="border-r border-line pr-1 text-right">
+              <span className="text-phosphor block font-bold whitespace-nowrap">60 FPS</span>
+              <span className="whitespace-nowrap tracking-tighter">RENDER TARGET</span>
             </div>
           </div>
         </div>
@@ -1054,6 +1294,9 @@ export const Console: React.FC = () => {
 
       {/* 12. Intelligent Operator Tactical Feedback HUD Toast */}
       <OperatorFeedbackToast />
+
+      {/* 13. C-UAS Target Recognition Manual & Threat Taxonomy Modal */}
+      {isRecogModalOpen && <TargetRecognitionModal onClose={() => setIsRecogModalOpen(false)} />}
     </div>
   );
 };

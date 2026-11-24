@@ -342,7 +342,7 @@ export interface SimView {
 
 The renderer derives the continuous sweep angle from `tMs` plus the interpolation remainder (`alpha × 50 ms`); the sweep is cosmetic, detection uses the discrete tick interval (§4.1).
 
-The sim keeps a private `Map<trackIdx, truthIdx>` association. `TrackEntity` carries no truth reference, so a UI bug cannot leak ground truth.
+The sim maintains internal authoritative Domain A `TrackEntity` records while strictly exposing only Domain C `OperatorTrackView` / `SafeTrackView` projections to UI and render layers. `OperatorTrackView` carries no ground-truth reference, so a UI bug cannot leak ground truth.
 
 ### 3.3 Sensors and F2T2EA state machine
 
@@ -828,31 +828,80 @@ The native 2D Canvas console is the authoritative, guaranteed baseline. The Thre
 5. **2D baseline resilience:** If WebGL2 is missing, chunk loading fails, or context is lost (`webglcontextlost`), the application seamlessly falls back to 2D Canvas with zero simulation interruption.
 6. **VR as experimental extension:** WebXR VR is classified as experimental and decoupled from desktop 3D milestones until verified on physical headsets.
 
-### 8.2 Safe Track View-Model Boundary
+### 8.2 Deterministic Sensor Measurement & Operator Track-Estimation Decoupling (TASK 18)
 
-To prevent ground-truth leakage through `TrackEntity` (which contains `trueClass`, `droneType`, and true `pos`), live renderers consume a redacted `SafeTrackView`:
+To eliminate ground-truth exposure and enforce strict operator-facing sensor fidelity, the architecture enforces three strictly decoupled data domains (TASK 18 / Resolution of OQ-09):
+
+```
++-----------------------------------------------------------------------------------+
+| DOMAIN A: Authoritative Simulation Ground Truth (SimEngine)                       |
+| - TrackEntity (exact pos, vel, trueClass, droneType, valueInr, secret waypoints)  |
+| - Radar Pd detection, 2-of-3 track initiation, combat Pk, PNR, scoring, AAR       |
++----------------------------------------+------------------------------------------+
+                                         |
+                                         | Deterministic Keyed PRNG Draws
+                                         v
++-----------------------------------------------------------------------------------+
+| DOMAIN B: Synthetic Sensor Measurements (sensorMeasurement.ts)                   |
+| - RadarMeasurement: noisy range (sigma=15m/35m), azimuth (sigma=0.8°/2.0°)        |
+| - EoirMeasurement: optical LOS az/el (sigma=0.15°), laser range, ApprovedObs      |
+| - RfMeasurement: line-of-bearing (sigma=4.5°), freq, dBm, zero range              |
+| * NOTIONAL TRAINING PARAMETERS — NOT CALIBRATED REAL SENSOR HARDWARE              |
++----------------------------------------+------------------------------------------+
+                                         |
+                                         | Alpha-Beta Filter & Gating (20 Hz)
+                                         v
++-----------------------------------------------------------------------------------+
+| DOMAIN C: Track Estimates & Operator Projections (tracker.ts / OperatorTrackView) |
+| - TrackEstimate: smoothed estPos, estVel, estRangeM, estBearingDeg, uncertaintyM  |
+| - Coasting: linear growth (8 m/s, cap 300m) upon radar dropout, gating rejection  |
+| - Operator Projections (OperatorTrackView, SafeTrackView, UiTrackRow):             |
+|   Strict whitelist — zero reference identity or property leakage of Domain A      |
++-----------------------------------------------------------------------------------+
+```
+
+#### SafeTrackView & OperatorTrackView Projection Invariants
+
+Live renderers (2D Radar, 2D EO/IR, 2D RF, and 3D Viewport) and UI controls consume only sanitized operator projections:
 
 ```ts
-export interface SafeTrackView {
+export interface OperatorTrackView {
   trackNo: string;
-  operatorLabel: TrackClass | null;
-  step: F2T2EAStep;
-  // Estimated kinematics from sensor tracker (not ground truth)
+  estPos: Vec3;
+  estVel: Vec3;
+  prevEstPos: Vec3;
   estRangeM: number;
   estBearingDeg: number;
   estSpeedMps: number;
-  estAltBand: 'LOW' | 'MED' | 'HIGH'; // Discretized altitude band
-  // Sensor observation states
-  q: number;                          // Fused track quality [0, 1]
-  cCls: number;                       // Classification confidence [0, 1]
+  estAltBand: 'VLOW' | 'LOW' | 'MED' | 'HIGH';
+  uncertaintyM: number;
   isCoasting: boolean;
-  ghostSigmaM: number;                // Uncertainty radius
-  rfBearingDeg: number | null;
+  coastingSinceMs?: number | null;
+  lastMeasurementMs: number;
+  sensorSources: ('RADAR' | 'EOIR' | 'RF')[];
+  q: number;
+  cCls: number;
+  traineeLabel: TrackClass | null;
+  step: F2T2EAStep;
+  lifecycle: 'ACTIVE' | 'LEAKED' | 'NEUTRALISED';
+  sensorObservation: ApprovedSensorObservation | null;
 }
 ```
 
-> [!IMPORTANT]
-> **Live Tracker Blocker:** In the current implementation (`src/sim/engine.ts`), track positions in `UiTrackRow` are derived directly from ground-truth `pos.x, pos.y` without measurement noise. Before 3D can claim full sensor-noise fidelity, a formal observation estimation filter (Kalman/alpha-beta tracker) must decouple estimated coordinates from ground truth.
+#### Live 3D Event Provider vs Post-Session AAR Replay
+
+1. **Live Session (Domain C Projections):**
+   - The live 3D tactical viewport and console HUD receive sanitized events via `engineInstance.getOperatorEvents()`.
+   - Internal 250ms keyframes (`SNAPSHOT`), entity creation (`SPAWN`), and scenario triggers (`TRIGGER`) are completely filtered out of live operator visibility.
+   - Event payloads are sanitized to `OperatorEventView` to eliminate reference identity and prevent leaking ground-truth entity coordinates, true classes, or secrets.
+   - Operator feedback toasts (`OperatorFeedbackToast.tsx`) derive weapon engagement telemetry strictly from tracker estimates (`estRangeM`), suppressing exact range disclosure on release blocks (`INACTIVE_TARGET`, `OUT_OF_ENVELOPE`).
+
+2. **Post-Session AAR Replay (Domain A + Domain C Dual Path):**
+   - After session completion (`SESSION_END`), `aarReplayData.ts` and the AAR Replay component display both ground truth (`pos.x`, `pos.y`, `pos.z`, `trueClass`) alongside tracker estimates (`estX`, `estY`, `estZ`, `estUncertM`).
+   - This provides comprehensive after-action review, estimation error comparison, and trainee classification debriefing without compromising operational fidelity during live play.
+
+> [!NOTE]
+> **Resolution of Live Tracker Blocker (OQ-09):** All operator displays (2D radar PPI, EO/IR HUD overlay, RF direction finder, Track Directory table `~RNG`/`~SPD`, and 3D viewport airframes/symbols) derive positions and kinematics strictly from `TrackEstimator` estimates. The authoritative ground truth remains isolated in `SimEngine` for combat resolution and post-session AAR debriefing.
 
 ### 8.3 Simulation Mathematics Invariant (Ground Range vs Slant Range)
 
@@ -908,3 +957,89 @@ $$\operatorname{toThree}(x, y, z) = (x, z, -y)$$
 | **F15 — 3D Engagement Visual Effects** | Realistic procedural weapon animations (`GUN` tracers, `LASER` coherent beam, `RF_SOFTKILL` directional wavefront, `INTERCEPTOR` drone launch, `MISSILE` rocket motor/smoke) with restrained non-graphic neutralization/ineffective outcomes and deterministic AAR timeline scrubbing. | Class A (Operator Visible) |
 | **F16 — 3D Tactical Radar Sweep** | 3D rotating antenna assembly atop C2 mast and translucent ground scan sector 100% synchronized with Canvas 2D sweep angle (30 RPM = 2.0s period) and responsive to sensor health. | Class A (Operator Visible) |
 | **F17 — Intelligent Operator Tactical Feedback** | Typed non-disruptive HUD toasts explaining hard weapon release blocks (`Q_MIN_VIOLATION`, `PNR_VIOLATION`, `OUT_OF_ENVELOPE`, `RF_JAMMING_ACTIVE`, `RF_SILENT_TARGET`), soft ROE warnings, and outcomes with actionable metrics and anti-spam throttling. | Class A (Operator Visible) |
+| **F18 — Security Boundary, Sensor-Health Lifecycle & Neutral Recognition** | Hardened sensor-observation pipeline: tri-state sensor health lifecycle (`OK < DEG < OUT`) with deterministic recovery, neutral physical morphology taxonomy (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`) separating physical appearance from tactical threat intent, production debug global removal, and strictly isolated E2E-only test bridge (`__DRISHTI_TEST__`). | Class A (Operator Visible) |
+
+### 8.9 Production Information Boundary & E2E-Only Test Architecture (Task 17.5)
+
+To uphold the operator-facing information boundary, the production deployment (`dist/`) strictly isolates simulation internals:
+1. **Zero Production Debug Globals:**
+   `window.__ENGINE__`, `window.__RENDERER_3D__`, and `window.__DRISHTI_TEST__` are completely absent in the production build.
+2. **Dedicated E2E Build Mode (`dist-e2e/`):**
+   E2E instrumentation is isolated using Vite's static conditional compilation `__DRISHTI_E2E_BUILD__`. When built for production, the entire test bridge is dead-code eliminated.
+3. **Controlled Test Bridge (`window.__DRISHTI_TEST__`):**
+   Available only in the E2E build, the test bridge exposes strictly validated test operations (`positionTrack`, `setSensorCondition`, `setSimChaos`, `getPresentationState`, `inspectOperatorFacingData`). It never returns raw engine references, `TrackEntity` instances, scenario specs, or hidden ground-truth properties.
+4. **Client-Side Threat Model Limitation:**
+   In an offline client-side single-page application executing entirely inside the operator's browser, cryptographic secrecy against a determined user inspecting browser devtools memory is mathematically impossible. The architectural boundary enforces application-level non-disclosure, ensuring no production UI, store snapshot, canvas projection, or telemetry event accidentally leaks ground truth before authorized AAR debrief.
+
+### 8.10 Sensor-Health Lifecycle & Neutral Physical Recognition
+
+1. **Sensor-Health Lifecycle Architecture:**
+   - **Baseline Health:** Intrinsic hardware status (`OK`, `DEG`, `OUT`) set per mission scenario.
+   - **Environmental Health:** Temporary degradation dynamically evaluated from simulation chaos events (`FOG` $\to$ EOIR: DEG, `JAMMING` $\to$ RF: OUT, `RADAR_DROPOUT` $\to$ RADAR: OUT).
+   - **Effective Sensor Health:** Pure deterministic combination evaluated each tick:
+     $$\text{effectiveHealth} = \text{combine}(\text{baselineHealth}, \text{environmentalHealth})$$
+     Severity precedence: $\text{OK} < \text{DEG} < \text{OUT}$.
+   - **Deterministic Recovery:** When temporary fog or jamming ends, effective sensor health automatically recovers to baseline without permanently corrupting baseline state or healing damaged hardware.
+   - **Renderer Purity:** Visual renderers consume effective health as read-only data and never mutate simulation state.
+2. **Neutral Physical Airframe Recognition Taxonomy:**
+   - **Core Doctrine:** Physical airframe morphology does NOT indicate tactical threat intent.
+   - Observable signatures map to neutral categories (`MULTIROTOR_COMPACT`, `MULTIROTOR_WITH_CAMERA_POD`, `MULTIROTOR_STANDARD` $\to$ `OBSERVED_MULTIROTOR`; `FIXED_WING_DELTA` $\to$ `OBSERVED_FIXED_WING`).
+   - Procedural 3D models preserve physical geometry differences (FPV X-frame, reconnaissance gimbal pod, delta wing) using neutral matte palettes, preventing false inferences of threat intent from observable shape.
+   - Operator classifications (`traineeLabel`) remain separate tactical metadata and never alter physical 3D mesh geometry.
+
+### 8.11 Fail-Closed Sensor Provenance & Timestamp Audit (Task 17.5.1)
+
+1. **Fail-Closed Sensor Health Contract:**
+   - Any missing sensor health record, missing mode key (`RADAR`, `EOIR`, `RF`), or non-conforming state string immediately fails closed to `SENSOR_OFFLINE` / `RADAR_SYMBOL`.
+   - Missing health information never defaults to `OK`.
+2. **Authoritative Deterministic Simulation Timestamp Validation:**
+   - Evaluated strictly against simulation time `currentSimMs` at 20 Hz (50 ms ticks); never reads wall-clock `Date.now()`.
+   - Permitted future tolerance: `MAX_OBSERVATION_FUTURE_TOLERANCE_MS = 50 ms` (1 simulation tick for sub-tick frame interpolation).
+   - Permitted staleness: `MAX_OBSERVATION_AGE_MS = 1000 ms` (20 simulation ticks / 1.0 second).
+   - Rejects NaN, Infinite, future, and stale observation timestamps fail-closed to `RADAR_SYMBOL`.
+3. **Comprehensive Observation Contract & Consistency Verification:**
+   - Validates all 11 observation fields: `sensorSource`, `activeSensor`, `sensorHealth`, `sensorAvailability`, `timestampMs`, `confidence`, `signature`, `resolutionLevel`, `resolution`, `visibilityState`, and `estimatedRangeM`.
+   - Enforces field consistency: EOIR `OUT` cannot produce `FULL` or `DEGRADED`; `sensorAvailability === false` cannot produce `FULL` or `CLEAR`; `resolutionLevel` and `resolution` must match; `signature` and `observedSignature` must match; `MASKED` or `OUT_OF_RANGE` cannot produce `FULL` resolution.
+   - All 7 declared visibility states (`CLEAR`, `DEGRADED`, `DEGRADED_FOG`, `DEGRADED_RAIN`, `DEGRADED_NIGHT_THERMAL`, `MASKED`, `OUT_OF_RANGE`) are accepted and handled fail-closed.
+
+### 8.12 Mandatory Simulation Clock & Timestamp Boundary Hardening (Task 17.5.2)
+
+1. **Mandatory Simulation Time Contract (`SensorObservationContext.currentSimMs: number`):**
+   - Authoritative simulation timestamp `currentSimMs` is strictly mandatory across all observation resolution pathways.
+   - Missing, null, negative (< 0), NaN, or infinite simulation timestamps immediately fail closed to `RADAR_SYMBOL`.
+   - Never reads wall-clock `Date.now()` or `performance.now()` in observation validation; strictly enforces deterministic 20 Hz simulation time.
+2. **Renderer Fallback Elimination:**
+   - `Renderer3D.update()` eliminates the silent fallback `simTimeData?.simMs ?? 0`.
+   - When the simulation time provider is unavailable or returns an invalid timestamp, raw values propagate to the observation resolver, failing closed to `RADAR_SYMBOL` with an explicit diagnostic reason without crashing the simulation or 3D canvas.
+3. **Exact Timestamp Boundary Enforcement:**
+   - Permitted future tolerance boundary:
+     - `obs.timestampMs <= currentSimMs + 50 ms`: ACCEPT (1 simulation tick lookahead for sub-tick frame interpolation).
+     - `obs.timestampMs > currentSimMs + 50 ms`: REJECT fail-closed to `RADAR_SYMBOL`.
+   - Permitted staleness boundary:
+     - `obs.timestampMs >= currentSimMs - 1000 ms`: ACCEPT (20 simulation ticks / 1.0 second freshness window).
+     - `obs.timestampMs < currentSimMs - 1000 ms`: REJECT fail-closed to `RADAR_SYMBOL`.
+   - Observations with missing, NaN, or infinite timestamps fail closed immediately.
+
+### 8.13 Observation Timestamp Epoch Validation & Sensor-Health Producer Hardening (Task 17.5.3)
+
+1. **Producer-Side Sensor-Health Validation (`evaluateSensorObservation`):**
+   - The sensor-observation producer strictly validates `sensorHealth` before generating optical observations.
+   - Requires explicit presence and validity of all modes (`RADAR`, `EOIR`, `RF`) with states in `['OK', 'DEG', 'OUT']`.
+   - Rejects missing, null, non-object, array, or partial records fail-closed (returns `null`), eliminating the former `sensorHealth.EOIR ?? 'OK'` fallback.
+   - **Distinction between Valid `OUT` and Malformed Data:**
+     - A valid `OUT` state (sensor explicitly disabled/destroyed) produces an offline unresolved observation (`sensorHealth: 'OUT'`, `sensorAvailability: false`, `signature: 'UNRESOLVED_AIRFRAME'`).
+     - Malformed or missing sensor health produces no observation (`null`), preventing fabricated or default observations.
+2. **Producer-Side Simulation Clock Validation:**
+   - Evaluates `currentSimMs` at the producer boundary before generating observation timestamps.
+   - Rejects missing, null, non-number, NaN, infinite, or negative values fail-closed (returns `null`).
+   - Timestamps are generated strictly from authoritative simulation time (at tick 0, `currentSimMs = 0` generates valid `timestampMs = 0`).
+3. **Observation Timestamp Epoch Invariant (`timestampMs >= 0`):**
+   - In `validateObservationProvenance()`, observation timestamps are validated against the simulation epoch: `timestampMs >= 0`.
+   - Prevents negative observation timestamps (e.g. `timestampMs = -1` or `-50` when `currentSimMs = 0`) from passing window checks.
+   - Preserves exact boundary semantics: `timestampMs <= currentSimMs + 50` and `timestampMs >= currentSimMs - 1000`.
+4. **Fail-Closed Producer-to-Renderer Pipeline:**
+   - Any failure at the producer (`evaluateSensorObservation` returning `null`) leaves `SafeTrackView.sensorObservation` as `null`.
+   - The 3D renderer resolves missing observations to `RADAR_SYMBOL`, ensuring malformed producer inputs can never resolve physical optical models (`OBSERVED_MULTIROTOR`, `OBSERVED_FIXED_WING`, or `BIRD`).
+
+
+

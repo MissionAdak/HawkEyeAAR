@@ -8,11 +8,15 @@ import type {
   SensorCoverageState,
   EffectorVisualOptions,
   EnvironmentObjectInfo,
+  TargetDisplayMode,
 } from './types';
-import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent } from '@/sim/types';
+import type { SensorMode, ChaosSpec, ScenarioSpec, ZoneSpec, SimEvent, OperatorEventView } from '@/sim/types';
+import type { SensorHealthStatus } from '@/sim/engine';
+import { EnvironmentManager } from './environment/environmentManager';
 import { attachContextLossHandler } from './capability';
 import { toThree } from './coords';
 import { getScenarioEnvironmentDescriptor } from './environment';
+import type { SensorObservationContext } from './targets';
 
 export interface Renderer3DOptions extends Scene3DOptions {
   onContextLost?: () => void;
@@ -32,6 +36,11 @@ export class Renderer3D {
   private animFrameId: number | null = null;
   private cleanupContextLoss: (() => void) | null = null;
   private cleanupKeydown: (() => void) | null = null;
+  private isDisposed: boolean = false;
+
+  public get disposed(): boolean {
+    return this.isDisposed;
+  }
 
   // Interaction & Picking State
   private readonly raycaster: THREE.Raycaster = new THREE.Raycaster();
@@ -39,24 +48,45 @@ export class Renderer3D {
   private onSelectEnvironmentCallback?: (info: EnvironmentObjectInfo | null) => void;
   private selectedTrackNo: string | null = null;
   private selectedEnvironmentObject: EnvironmentObjectInfo | null = null;
+  private lastFocusedTrackNo: string | null = null;
+  private pendingFocusTrackNo: string | null = null;
 
   private getTracks?: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null };
   private getCoverage?: () => SensorCoverageState;
   private getEffectorOptions?: () => EffectorVisualOptions;
   private getSimTime?: () => { simMs: number; chaosList?: ChaosSpec[] };
-  private getEvents?: () => SimEvent[];
+  private getEvents?: () => (SimEvent | OperatorEventView)[];
+  private getSensorHealth?: () => Record<SensorMode, SensorHealthStatus>;
 
   private showLos: boolean = true;
   private showClusters: boolean = true;
   private showTrainingAid: boolean = false;
+  private targetDisplayMode: TargetDisplayMode = 'AUTO';
+  private activeSensor: SensorMode = 'RADAR';
   private readonly options: Renderer3DOptions;
 
   public setTrackProvider(fn: () => { tracks: SafeTrackView[]; selectedTrackNo: string | null }): void {
     this.getTracks = fn;
   }
 
-  public setEventsProvider(fn: () => SimEvent[]): void {
+  public getCurrentTracks(): { tracks: SafeTrackView[]; selectedTrackNo: string | null } | null {
+    return this.getTracks ? this.getTracks() : null;
+  }
+
+  public setSensorHealthProvider(fn: () => Record<SensorMode, SensorHealthStatus>): void {
+    this.getSensorHealth = fn;
+  }
+
+  public getEnvironmentManager(): EnvironmentManager {
+    return this.scene3d.getEnvironmentManager();
+  }
+
+  public setEventsProvider(fn: () => (SimEvent | OperatorEventView)[]): void {
     this.getEvents = fn;
+  }
+
+  public getEventsProviderInput(): (SimEvent | OperatorEventView)[] {
+    return this.getEvents ? this.getEvents() : [];
   }
 
   public setCoverageProvider(fn: () => SensorCoverageState): void {
@@ -67,7 +97,7 @@ export class Renderer3D {
     this.getEffectorOptions = fn;
   }
 
-  public setSimTimeProvider(fn: () => { simMs: number; chaosList?: ChaosSpec[] }): void {
+  public setSimTimeProvider(fn?: () => { simMs: number; chaosList?: ChaosSpec[] }): void {
     this.getSimTime = fn;
   }
 
@@ -100,6 +130,22 @@ export class Renderer3D {
 
   public setOnSelectEnvironment(fn: (info: EnvironmentObjectInfo | null) => void): void {
     this.onSelectEnvironmentCallback = fn;
+  }
+
+  public setTargetDisplayMode(mode: TargetDisplayMode): void {
+    this.targetDisplayMode = mode;
+  }
+
+  public getTargetDisplayMode(): TargetDisplayMode {
+    return this.targetDisplayMode;
+  }
+
+  public setActiveSensor(sensor: SensorMode): void {
+    this.activeSensor = sensor;
+  }
+
+  public getActiveSensor(): SensorMode {
+    return this.activeSensor;
   }
 
   public get dragging(): boolean {
@@ -135,60 +181,85 @@ export class Renderer3D {
       this.showTrainingAid = true;
     }
 
-    // 1. Initialize Three.js WebGLRenderer
-    this.renderer =
-      options.threeRenderer ??
-      new THREE.WebGLRenderer({
+    try {
+      // 1. Initialize Three.js WebGLRenderer
+      this.renderer =
+        options.threeRenderer ??
+        new THREE.WebGLRenderer({
+          canvas,
+          antialias: true,
+          alpha: false,
+          powerPreference: 'default',
+        });
+      this.renderer.setSize(canvas.width, canvas.height, false);
+      const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+      this.renderer.setPixelRatio(dpr);
+
+      // 2. Setup Tactical Camera (near plane 5m, far plane 45000m)
+      const aspect = canvas.width / canvas.height;
+      this.camera = new THREE.PerspectiveCamera(45, aspect, 5, 45000);
+
+      // 3. Initialize Camera Controller (Navigation, Pan, Orbit, Zoom to Cursor, Focus)
+      this.cameraController = new CameraController({
         canvas,
-        antialias: true,
-        alpha: false,
-        powerPreference: 'default',
+        camera: this.camera,
+        onSelectTrack: (clientX, clientY) => this.handlePointerClick(clientX, clientY),
+        onDoubleClick: (clientX, clientY) => this.handleDoubleClick(clientX, clientY),
       });
-    this.renderer.setSize(canvas.width, canvas.height, false);
-    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
-    this.renderer.setPixelRatio(dpr);
 
-    // 2. Setup Tactical Camera (near plane 5m, far plane 45000m)
-    const aspect = canvas.width / canvas.height;
-    this.camera = new THREE.PerspectiveCamera(45, aspect, 5, 45000);
+      // 4. Initialize Tactical Scene with Procedural Environment
+      this.scene3d = new Scene3D(options);
 
-    // 3. Initialize Camera Controller (Navigation, Pan, Orbit, Zoom to Cursor, Focus)
-    this.cameraController = new CameraController({
-      canvas,
-      camera: this.camera,
-      onSelectTrack: (clientX, clientY) => this.handlePointerClick(clientX, clientY),
-      onDoubleClick: (clientX, clientY) => this.handleDoubleClick(clientX, clientY),
-    });
+      // 5. Attach Context Loss Listener (Rule R10.1)
+      if (options.onContextLost) {
+        this.cleanupContextLoss = attachContextLossHandler(canvas, () => {
+          this.stop();
+          options.onContextLost?.();
+        });
+      }
 
-    // 4. Initialize Tactical Scene with Procedural Environment
-    this.scene3d = new Scene3D(options);
-
-    // 5. Attach Context Loss Listener (Rule R10.1)
-    if (options.onContextLost) {
-      this.cleanupContextLoss = attachContextLossHandler(canvas, () => {
-        this.stop();
-        options.onContextLost?.();
-      });
-    }
-
-    // 6. Global Navigation Keyboard Handler (F to focus, Home to reset)
-    if (typeof window !== 'undefined') {
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (
-          e.target instanceof HTMLInputElement ||
-          e.target instanceof HTMLTextAreaElement ||
-          (e.target instanceof HTMLElement && e.target.isContentEditable)
-        ) {
-          return;
+      // 6. Global Navigation Keyboard Handler (G to focus, Home to reset)
+      if (typeof window !== 'undefined') {
+        const handleKeyDown = (e: KeyboardEvent) => {
+          if (
+            e.target instanceof HTMLInputElement ||
+            e.target instanceof HTMLTextAreaElement ||
+            (e.target instanceof HTMLElement && e.target.isContentEditable)
+          ) {
+            return;
+          }
+          if (e.key === 'Home') {
+            this.resetCamera();
+          } else if (e.key === 'g' || e.key === 'G') {
+            this.focusSelection();
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        this.cleanupKeydown = () => window.removeEventListener('keydown', handleKeyDown);
+      }
+    } catch (err) {
+      // Internal initialization cleanup: dispose allocated resources if constructor fails
+      try {
+        const self = this as unknown as {
+          cameraController?: CameraController;
+          scene3d?: Scene3D;
+          renderer?: THREE.WebGLRenderer;
+        };
+        self.cameraController?.dispose();
+        if (this.cleanupKeydown) {
+          this.cleanupKeydown();
+          this.cleanupKeydown = null;
         }
-        if (e.key === 'Home') {
-          this.resetCamera();
-        } else if (e.key === 'f' || e.key === 'F') {
-          this.focusSelection();
+        if (this.cleanupContextLoss) {
+          this.cleanupContextLoss();
+          this.cleanupContextLoss = null;
         }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      this.cleanupKeydown = () => window.removeEventListener('keydown', handleKeyDown);
+        self.scene3d?.dispose();
+        self.renderer?.dispose();
+      } catch {
+        // ignore secondary cleanup errors
+      }
+      throw err;
     }
   }
 
@@ -431,8 +502,47 @@ export class Renderer3D {
    * Updates tracks in the 3D scene from safe operator-facing views.
    */
   public update(tracks: SafeTrackView[], selectedTrackNo: string | null): void {
+    if (selectedTrackNo && selectedTrackNo !== this.lastFocusedTrackNo) {
+      this.pendingFocusTrackNo = selectedTrackNo;
+      this.lastFocusedTrackNo = selectedTrackNo;
+    } else if (!selectedTrackNo) {
+      this.lastFocusedTrackNo = null;
+      this.pendingFocusTrackNo = null;
+    }
+
     this.selectedTrackNo = selectedTrackNo;
-    this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height);
+    const health = this.getSensorHealth ? this.getSensorHealth() : undefined;
+    const simTimeData = this.getSimTime ? this.getSimTime() : undefined;
+    const rawSimMs = simTimeData?.simMs;
+    // Task 17.5.2: Strictly require authoritative simulation timestamp.
+    // If getSimTime is missing or returns invalid/non-finite/negative timestamp,
+    // pass rawSimMs (e.g. undefined/NaN) so observation validation fails closed to RADAR_SYMBOL.
+    const currentSimMs = (typeof rawSimMs === 'number' && Number.isFinite(rawSimMs) && rawSimMs >= 0)
+      ? rawSimMs
+      : (rawSimMs as unknown as number);
+    const observationContext: SensorObservationContext = {
+      activeSensor: this.activeSensor,
+      displayMode: this.targetDisplayMode,
+      sensorHealth: health,
+      currentSimMs,
+      weather: this.scene3d.getEnvironmentManager().isFogActive()
+        ? 'FOG'
+        : (this.scene3d.getEnvironmentManager().getDescriptor().weather ?? 'CLEAR'),
+      isNight: this.scene3d.getEnvironmentManager().isNightTime(),
+      mode: this.options.mode,
+    };
+    this.scene3d.updateTracks(tracks, selectedTrackNo, this.camera, this.canvas.height, observationContext);
+
+    // Smoothly focus camera when target selection changes (Task 28 Fix D)
+    if (this.pendingFocusTrackNo) {
+      const record = this.scene3d.getTrackRecord(this.pendingFocusTrackNo);
+      if (record) {
+        const worldPos = new THREE.Vector3();
+        record.aircraftGroup.getWorldPosition(worldPos);
+        this.cameraController.focusOnPoint(worldPos, 350, true);
+        this.pendingFocusTrackNo = null;
+      }
+    }
   }
 
   /**
@@ -472,7 +582,7 @@ export class Renderer3D {
    * INVARIANT: This loop renders visuals ONLY and MUST NOT advance simulation ticks.
    */
   public start(): void {
-    if (this.animFrameId !== null) return;
+    if (this.isDisposed || this.animFrameId !== null) return;
 
     const renderLoop = () => {
       if (this.getTracks) {
@@ -522,6 +632,10 @@ export class Renderer3D {
       this.cameraController.updateTransition();
 
       this.renderer.render(this.scene3d.scene, this.camera);
+      if (this.isDisposed) {
+        this.animFrameId = null;
+        return;
+      }
       this.animFrameId = requestAnimationFrame(renderLoop);
     };
 
@@ -562,6 +676,11 @@ export class Renderer3D {
    * Complete renderer and scene teardown.
    */
   public dispose(): void {
+    if (this.isDisposed) {
+      return;
+    }
+    this.isDisposed = true;
+
     this.stop();
     this.cameraController.dispose();
 

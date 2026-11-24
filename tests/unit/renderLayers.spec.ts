@@ -3,7 +3,7 @@ import { EoirLayer } from '@/render/eoirLayer';
 import { RfLayer } from '@/render/rfLayer';
 import { engineInstance, useSessionStore } from '@/store/sessionStore';
 import demo1Spec from '@/director/bundled/demo1.json';
-import type { ScenarioSpec, TrackEntity } from '@/sim/types';
+import type { ScenarioSpec } from '@/sim/types';
 
 describe('EO/IR Thermal Viewfinder Layer (Task P1-06)', () => {
   it('instantiates cleanly without heap leaks', () => {
@@ -42,47 +42,43 @@ describe('EO/IR Thermal Viewfinder Layer (Task P1-06)', () => {
       globalAlpha: 1,
     } as unknown as CanvasRenderingContext2D;
 
-    const entities: TrackEntity[] = [
+    const opTracks: import('@/sim/trackerTypes').OperatorTrackView[] = [
       {
-        id: 'T1',
         trackNo: 'T-01',
-        trueClass: 'HOSTILE_ATTACK',
-        droneType: 'FPV_ATTACK',
-        pos: { x: 50, y: 1000, z: 80 },
-        prev: { x: 50, y: 1000, z: 80 },
-        vel: { x: 0, y: -20, z: 0 },
-        rcsM2: 0.01,
-        valueInr: 100000,
-        emitsRf: true,
-        remoteId: false,
-        iff: false,
-        profile: 'DIRECT',
-        spawnTMs: 0,
-        lifecycle: 'ACTIVE',
-        traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
-        step: 'FIND',
-        q: 0.8,
+        estPos: { x: 50, y: 800, z: 60 },
+        estVel: { x: 5, y: -20, z: 0 },
+        prevEstPos: { x: 50, y: 800, z: 60 },
+        estRangeM: 801.6,
+        estBearingDeg: 4,
+        estSpeedMps: 21,
+        estAltBand: 'LOW',
+        uncertaintyM: 18,
+        isCoasting: false,
+        lastMeasurementMs: 1000,
+        sensorSources: ['RADAR', 'EOIR', 'RF'],
+        q: 0.85,
         cCls: 0.5,
-        masked: false,
-        coastingSinceMs: null,
-        ghostSigmaM: 0,
-        hitHistory: [true, true, true],
-        tVis: 0,
-        tTrk: 0,
-        tDesig: null,
-        tCls: null,
-        tEng: null,
-        tPnr: null,
-        engagements: 0,
-        weaponUsed: null,
+        traineeLabel: null,
+        step: 'TRACK',
+        lifecycle: 'ACTIVE',
+        sensorObservation: {
+          signature: 'MULTIROTOR_STANDARD',
+          sensorSource: 'EOIR',
+          activeSensor: 'EOIR',
+          confidence: 0.88,
+          timestampMs: 1000,
+          resolutionLevel: 'FULL',
+          visibilityState: 'CLEAR',
+          sensorHealth: 'OK',
+          sensorAvailability: true,
+        },
       },
     ];
 
     // Day Mode with 0 fog
     expect(() => {
       layer.render(mockCtx, 520, 520, {
-        currEntities: entities,
-        prevEntities: entities,
+        tracks: opTracks,
         alpha: 0.5,
         azimuthDeg: 0,
         spec: { ...demo1Spec, dayNight: 'DAY' } as unknown as ScenarioSpec,
@@ -94,8 +90,7 @@ describe('EO/IR Thermal Viewfinder Layer (Task P1-06)', () => {
     // Night Mode with Active Fog Chaos (severity = 0.8)
     expect(() => {
       layer.render(mockCtx, 520, 520, {
-        currEntities: entities,
-        prevEntities: entities,
+        tracks: opTracks,
         alpha: 0.5,
         azimuthDeg: 0,
         spec: { ...demo1Spec, dayNight: 'NIGHT' } as unknown as ScenarioSpec,
@@ -143,112 +138,23 @@ describe('RF Direction-Finding & Spectrum Waterfall Layer (Task P1-07)', () => {
       imageSmoothingEnabled: true,
     } as unknown as CanvasRenderingContext2D;
 
-    const entities: TrackEntity[] = [
+    const rfMeasurements: import('@/sim/measurementTypes').RfMeasurement[] = [
       {
-        id: 'T1',
+        sensorType: 'RF',
         trackNo: 'T-01',
-        trueClass: 'HOSTILE_ATTACK',
-        droneType: 'FPV_ATTACK',
-        pos: { x: 500, y: 1500, z: 80 },
-        prev: { x: 500, y: 1500, z: 80 },
-        vel: { x: 0, y: -20, z: 0 },
-        rcsM2: 0.01,
-        valueInr: 100000,
-        emitsRf: true, // Emits RF!
-        remoteId: false, // LINK
-        iff: false,
-        profile: 'DIRECT',
-        spawnTMs: 0,
-        lifecycle: 'ACTIVE',
-        traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
-        step: 'FIND',
-        q: 0.8,
-        cCls: 0.5,
-        masked: false,
-        coastingSinceMs: null,
-        ghostSigmaM: 0,
-        hitHistory: [true, true, true],
-        tVis: 0,
-        tTrk: 0,
-        tDesig: null,
-        tCls: null,
-        tEng: null,
-        tPnr: null,
-        engagements: 0,
-        weaponUsed: null,
-      },
-      {
-        id: 'T2',
-        trackNo: 'T-02',
-        trueClass: 'CIVIL_UAS',
-        droneType: 'CIVIL_UAS',
-        pos: { x: -800, y: 1000, z: 50 },
-        prev: { x: -800, y: 1000, z: 50 },
-        vel: { x: 10, y: 0, z: 0 },
-        rcsM2: 0.05,
-        valueInr: 50000,
-        emitsRf: true,
-        remoteId: true, // RID!
-        iff: false,
-        profile: 'DIRECT',
-        spawnTMs: 0,
-        lifecycle: 'ACTIVE',
-        traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
-        step: 'FIND',
-        q: 0.8,
-        cCls: 0.5,
-        masked: false,
-        coastingSinceMs: null,
-        ghostSigmaM: 0,
-        hitHistory: [true, true, true],
-        tVis: 0,
-        tTrk: 0,
-        tDesig: null,
-        tCls: null,
-        tEng: null,
-        tPnr: null,
-        engagements: 0,
-        weaponUsed: null,
-      },
-      {
-        id: 'T3',
-        trackNo: 'T-03',
-        trueClass: 'BIRD',
-        droneType: 'BIRD',
-        pos: { x: 200, y: 400, z: 30 },
-        prev: { x: 200, y: 400, z: 30 },
-        vel: { x: 5, y: -5, z: 0 },
-        rcsM2: 0.005,
-        valueInr: null,
-        emitsRf: false, // RF-silent bird! Must never show
-        remoteId: false,
-        iff: false,
-        profile: 'ERRATIC',
-        spawnTMs: 0,
-        lifecycle: 'ACTIVE',
-        traineeLabel: 'UNKNOWN_EVIDENCE_INSUFFICIENT',
-        step: 'FIND',
-        q: 0.8,
-        cCls: 0.5,
-        masked: false,
-        coastingSinceMs: null,
-        ghostSigmaM: 0,
-        hitHistory: [true, true, true],
-        tVis: 0,
-        tTrk: 0,
-        tDesig: null,
-        tCls: null,
-        tEng: null,
-        tPnr: null,
-        engagements: 0,
-        weaponUsed: null,
+        entityId: 'ent-01',
+        timestampMs: 1000,
+        measuredBearingDeg: 12.5,
+        bearingUncertaintyDeg: 4.5,
+        freqMhz: 2412,
+        signalStrengthDb: -72,
+        sensorHealth: 'OK',
       },
     ];
 
     // Standard RF mode (no jamming)
     rf.renderDynamic(mockCtx, 520, 520, {
-      currEntities: entities,
-      prevEntities: entities,
+      rfMeasurements,
       alpha: 0.5,
       simTimeMs: 1000,
       isJamming: false,
@@ -258,8 +164,7 @@ describe('RF Direction-Finding & Spectrum Waterfall Layer (Task P1-07)', () => {
 
     // Jamming active (DF lines must be suppressed, jamming noise active)
     rf.renderDynamic(mockCtx, 520, 520, {
-      currEntities: entities,
-      prevEntities: entities,
+      rfMeasurements,
       alpha: 0.5,
       simTimeMs: 1200,
       isJamming: true,

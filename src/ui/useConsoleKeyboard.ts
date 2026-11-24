@@ -114,34 +114,11 @@ function handlePresetKey(
   return false;
 }
 
-function handleSystemKey(
+function handleToggleActionKey(
   lowerKey: string,
   rawKey: string,
   actions: ConsoleKeyboardActions
 ): boolean {
-  const store = useSessionStore.getState();
-  if (lowerKey === 'm') {
-    store.openAar();
-    return true;
-  }
-  if (lowerKey === 'h' || rawKey === '?') {
-    store.openQuickGuide();
-    return true;
-  }
-  if (lowerKey === 's') {
-    if (engineInstance.mode !== 'EVAL' || engineInstance.sessionEnded) {
-      store.openScenarioModal();
-    }
-    return true;
-  }
-  if (rawKey === 'Escape') {
-    handleEscapeKey();
-    return true;
-  }
-  if (lowerKey === 'p') {
-    handlePauseKey();
-    return true;
-  }
   if (lowerKey === 'l') {
     actions.toggleLowFi?.();
     return true;
@@ -172,6 +149,40 @@ function handleSystemKey(
     }
     return true;
   }
+  return false;
+}
+
+function handleSystemKey(
+  lowerKey: string,
+  rawKey: string,
+  actions: ConsoleKeyboardActions
+): boolean {
+  const store = useSessionStore.getState();
+  if (lowerKey === 'm') {
+    store.openAar();
+    return true;
+  }
+  if (lowerKey === 'h' || rawKey === '?') {
+    store.openQuickGuide();
+    return true;
+  }
+  if (lowerKey === 's') {
+    if (engineInstance.mode !== 'EVAL' || engineInstance.sessionEnded) {
+      store.openScenarioModal();
+    }
+    return true;
+  }
+  if (rawKey === 'Escape') {
+    handleEscapeKey();
+    return true;
+  }
+  if (lowerKey === 'p') {
+    handlePauseKey();
+    return true;
+  }
+  if (handleToggleActionKey(lowerKey, rawKey, actions)) {
+    return true;
+  }
   return handlePresetKey(lowerKey, actions.setCameraPreset);
 }
 
@@ -200,7 +211,7 @@ export function useConsoleKeyboard(
       if (handleEngagementKey(lower, e.repeat)) {
         return;
       }
-      if (lower === 'f' && !e.repeat && actions.focusSelection) {
+      if (lower === 'g' && !e.repeat && actions.focusSelection) {
         actions.focusSelection();
         return;
       }

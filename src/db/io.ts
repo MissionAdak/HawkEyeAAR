@@ -6,6 +6,8 @@
 export {
   exportSessionJson,
   exportSessionCsv,
+  createSessionJsonPayload,
+  createSessionCsvString,
   importSessionJson,
   type AARTransferPayload,
   type AARImportResult,

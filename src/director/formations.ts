@@ -172,6 +172,23 @@ export function computeFormationOffsets(
 }
 
 /**
+ * Resolves canonical default formation spacing (in meters) by formation kind,
+ * unless explicitly overridden by custom spacingM.
+ */
+export function resolveFormationSpacing(kind: FormationKind, spacingM?: number): number {
+  if (typeof spacingM === 'number' && Number.isFinite(spacingM) && spacingM > 0) {
+    return spacingM;
+  }
+  if (kind === 'STACK') {
+    return 60;
+  }
+  if (kind === 'DECOY_LEAD') {
+    return 150;
+  }
+  return 100;
+}
+
+/**
  * Expands a FormationDefinition into concrete independent ThreatSpawn entities.
  * The core simulation treats each entity as an independent spawn; formation parameters
  * are explicit, seed-deterministic metadata preserved for replay and post-mission AAR.
@@ -179,13 +196,7 @@ export function computeFormationOffsets(
 export function expandFormation(definition: FormationDefinition): ThreatSpawn[] {
   const { groupId, kind, count, baseSpawn } = definition;
   const n = Math.max(1, count);
-  let defaultSpacing = 100;
-  if (kind === 'STACK') {
-    defaultSpacing = 60;
-  } else if (kind === 'DECOY_LEAD') {
-    defaultSpacing = 150;
-  }
-  const spacingM = definition.spacingM ?? defaultSpacing;
+  const spacingM = resolveFormationSpacing(kind, definition.spacingM);
 
   const w0 = baseSpawn.waypoints[0] ?? { x: 0, y: 0, z: 80 };
   const w1 = baseSpawn.waypoints[1] ?? { x: 0, y: 0, z: 20 };
@@ -327,19 +338,14 @@ function buildFormationAttemptSpec(
 
   const threats = expandFormation(formationDef);
 
-  let defaultGroupSpacing = 100;
-  if (kind === 'STACK') {
-    defaultGroupSpacing = 60;
-  } else if (kind === 'DECOY_LEAD') {
-    defaultGroupSpacing = 150;
-  }
+  const spacingM = resolveFormationSpacing(kind, formationDef.spacingM);
 
   const groupSpec: FormationGroupSpec = {
     groupId: formationDef.groupId,
     kind,
     leaderId: baseSpawn.id,
     memberIds: threats.map((t) => t.id),
-    spacingM: formationDef.spacingM ?? defaultGroupSpacing,
+    spacingM,
   };
 
   // Safe urban masking zone placed away from the approach axis
