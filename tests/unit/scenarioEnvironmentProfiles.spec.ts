@@ -215,15 +215,17 @@ describe('TASK 30 — Scenario-Specific 3D Environments & Distinct Tactical Maps
       waterRes.disposables.materials.forEach((m) => m.dispose());
     });
 
-    it('creates ocean plane, beach shoreline, and breakwater jetty for COASTAL_AIRFIELD', () => {
+    it('creates ocean plane, beach shoreline, and coastal observation post for COASTAL_AIRFIELD', () => {
       const { spec } = loadCatalogScenario('PROCEDURAL-1');
       const desc = getScenarioEnvironmentDescriptor(spec.id, spec);
       const waterRes = buildProceduralWater(desc);
 
       const ocean = waterRes.objects.find((o) => o.id === 'WATER-OCEAN-COAST');
       const beach = waterRes.objects.find((o) => o.id === 'WATER-BEACH-SHORE');
+      const beacon = waterRes.objects.find((o) => o.id === 'WATER-BEACON-COAST');
       expect(ocean).toBeDefined();
       expect(beach).toBeDefined();
+      expect(beacon).toBeDefined();
 
       waterRes.disposables.geometries.forEach((g) => g.dispose());
       waterRes.disposables.materials.forEach((m) => m.dispose());
@@ -385,23 +387,38 @@ describe('TASK 30 — Scenario-Specific 3D Environments & Distinct Tactical Maps
       expect(rimFloor).toBeGreaterThanOrEqual(24.0);
     });
 
-    it('Fix D: ensures PROCEDURAL coastal airfield runway is flat and seafloor drops cleanly below ocean water', () => {
-      // Flat runway tarmac (X <= 1350)
+    it('Fix D: ensures PROCEDURAL coastal airfield runway is flat and seafloor drops cleanly below ocean water on the west', () => {
+      // Flat runway tarmac and urban masking zone (X >= -1350)
       expect(getCoastalAirfieldElevation(0, 0)).toBe(0);
       expect(getCoastalAirfieldElevation(1300, 500)).toBe(0);
+      expect(getCoastalAirfieldElevation(1800, -200)).toBe(0);
 
-      // Sloping beach (X between 1350 and 1650)
-      const midBeach = getCoastalAirfieldElevation(1500, 0);
+      // Sloping beach (X between -1650 and -1350)
+      const midBeach = getCoastalAirfieldElevation(-1500, 0);
       expect(midBeach).toBeLessThan(0);
       expect(midBeach).toBeGreaterThan(-4.0);
 
-      // Deep seafloor (X >= 1650) drops to -4.0m (rendered Y = -5.0m)
-      const seafloor = getCoastalAirfieldElevation(2000, 0);
+      // Deep seafloor (X <= -1650) drops to -4.0m (rendered Y = -5.0m)
+      const seafloor = getCoastalAirfieldElevation(-2000, 0);
       expect(seafloor).toBe(-4.0);
       const renderedSeafloorY = seafloor - 1;
       expect(renderedSeafloorY).toBe(-5.0);
       // Ocean water at Y = -0.5m sits 4.5m above seafloor
       expect(-0.5 - renderedSeafloorY).toBe(4.5);
+    });
+
+    it('generates coconut palm trees lining the yellow beach for PROCEDURAL_COASTAL_AIRFIELD', () => {
+      const { spec } = loadCatalogScenario('PROCEDURAL-1');
+      const desc = getScenarioEnvironmentDescriptor(spec.id, spec);
+      const vegRes = buildProceduralVegetation(desc);
+
+      const palms = vegRes.objects.find((o) => o.id === 'VEGETATION-COASTAL-PALMS');
+      expect(palms).toBeDefined();
+      expect(palms?.name).toContain('Coconut Palm');
+      expect(vegRes.group.children.length).toBeGreaterThan(0);
+
+      vegRes.disposables.geometries.forEach((g) => g.dispose());
+      vegRes.disposables.materials.forEach((m) => m.dispose());
     });
 
     it('Fix E: ensures DEMO-2 industrial retention reservoir depression is excavated below ground level', () => {

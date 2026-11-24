@@ -15,12 +15,12 @@ export const SPECTRUM_RIVER_POINTS: Array<{ x: number; z: number }> = [
 ];
 
 // Tactical military water palette
-const COLOR_DEEP_OCEAN = 0x0c4a6e;
+const COLOR_DEEP_OCEAN = 0x0284c7; // Vibrant cerulean oceanic water
 const COLOR_RIVER_WATER = 0x0284c7;
 const COLOR_ALPINE_LAKE = 0x0ea5e9;
 const COLOR_RESERVOIR_WATER = 0x1e3a5f;
 const COLOR_CANAL_WATER = 0x164e63;
-const COLOR_BEACH_SAND = 0xd4b886;
+const COLOR_BEACH_SAND = 0xdda15e; // Warm golden tropical yellow beach sand
 const COLOR_RIVERBANK = 0x57534e;
 const COLOR_ROCKY_SHORE = 0x52525b;
 const COLOR_CONCRETE_WALL = 0x475569;
@@ -291,94 +291,97 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
     buildTacticalBridge(-1900, -1500, 160, 24, -0.6, group, geometries, materials);
   }
 
-  // 2. PROCEDURAL / COASTAL_AIRFIELD: Ocean, Beach & Breakwater Jetty
+  // 2. PROCEDURAL / COASTAL_AIRFIELD: Ocean & Beach (Structures placed strictly on landward bluffs, not upon ocean)
   else if (activeProfile === 'PROCEDURAL_COASTAL_AIRFIELD' || (!activeProfile && preset === 'COASTAL_AIRFIELD')) {
-    // 1. Ocean Water Plane on eastern flank: X from 1490m to 5200m (width 3710m, centered at X = 3345m)
+    // 1. Ocean Water Plane on western flank: X from -5200m to -1560m (width 3640m, centered at X = -3380m)
     // Water surface at Y = -0.5m. Seafloor is at Y = -5.0m (elev -4.0m), so depth is 4.5m.
-    const oceanWidth = 3710;
+    // 100% open, unobstructed maritime sea lane with zero floating structures upon the water.
+    const oceanWidth = 3640;
     const oceanLength = 10400;
     const oceanGeom = new THREE.PlaneGeometry(oceanWidth, oceanLength, 32, 32);
     oceanGeom.rotateX(-Math.PI / 2);
     geometries.push(oceanGeom);
 
     const oceanMat = new THREE.MeshLambertMaterial({
-      color: COLOR_DEEP_OCEAN, // Deep oceanic marine blue
+      color: COLOR_DEEP_OCEAN, // Vibrant oceanic marine blue
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.9,
       flatShading: true,
     });
     materials.push(oceanMat);
 
     const oceanMesh = new THREE.Mesh(oceanGeom, oceanMat);
-    oceanMesh.position.set(3345, -0.5, 0);
+    oceanMesh.position.set(-3380, -0.5, 0);
     group.add(oceanMesh);
 
     registerWaterFeature(
       'WATER-OCEAN-COAST',
-      'Eastern Maritime Ocean & Horizon',
+      'Western Maritime Ocean & Horizon',
       'OCEAN',
-      { x: 3345, y: 0, z: -0.5 },
+      { x: -3380, y: 0, z: -0.5 },
       oceanMesh,
       'Active maritime sea lane and open ocean horizon bordering military coastal airfield.'
     );
 
-    // 2. Sandy Beach: Sloping intertidal beach from X = 1350m to X = 1510m (width 160m, centered at X = 1430m)
-    // Meets the flat airfield tarmac at X = 1350 (Y = -0.85m) and slopes down into the water at X = 1500 (Y = -0.95m).
-    const beachWidth = 160;
-    const beachGeom = new THREE.PlaneGeometry(beachWidth, 10400, 16, 32);
+    // 2. Sandy Beach: Sloping intertidal yellow beach from X = -1610m to X = -1350m (width 260m, centered at X = -1480m)
+    // Meets the flat airfield tarmac at X = -1350 (Y = -0.75m to -0.85m) and slopes down into the ocean at X = -1610 (Y = -1.30m).
+    const beachWidth = 260;
+    const beachGeom = new THREE.PlaneGeometry(beachWidth, 10400, 24, 32);
     beachGeom.rotateX(-Math.PI / 2);
     const beachPos = beachGeom.attributes.position;
     for (let i = 0; i < beachPos.count; i++) {
       const lx = beachPos.getX(i);
       const lz = beachPos.getZ(i);
-      const t = (lx + beachWidth / 2) / beachWidth; // 0 at west, 1 at east
+      // lx in [-beachWidth/2, beachWidth/2]: -130 is West (seaward, X=-1610), +130 is East (landward, X=-1350)
+      const t = (lx + beachWidth / 2) / beachWidth; // 0 at west (seaward), 1 at east (landward)
       // Subtle natural dune undulations along Z
-      const undulation = Math.sin(lz * 0.005) * Math.cos(lz * 0.002) * 0.2;
-      const vy = 0.15 - t * 0.55 + undulation * (1 - t * 0.7);
+      const undulation = Math.sin(lz * 0.005) * Math.cos(lz * 0.002) * 0.25;
+      // Slopes down westward: at t=0 (west) vy = -0.45 (world Y = -1.35); at t=1 (east) vy = +0.15 (world Y = -0.75)
+      const vy = -0.45 + t * 0.6 + undulation * (1 - (1 - t) * 0.7);
       beachPos.setY(i, vy);
     }
     beachGeom.computeVertexNormals();
     geometries.push(beachGeom);
 
     const beachMat = new THREE.MeshLambertMaterial({
-      color: COLOR_BEACH_SAND, // Natural warm coastal beach sand
+      color: COLOR_BEACH_SAND, // Golden yellow beach sand
       flatShading: true,
     });
     materials.push(beachMat);
 
     const beachMesh = new THREE.Mesh(beachGeom, beachMat);
-    beachMesh.position.set(1430, -0.9, 0);
+    beachMesh.position.set(-1480, -0.9, 0);
     group.add(beachMesh);
 
     registerWaterFeature(
       'WATER-BEACH-SHORE',
       'Coastal Shoreline & Sandy Beach',
       'BEACH',
-      { x: 1430, y: 0, z: -0.9 },
+      { x: -1480, y: 0, z: -0.9 },
       beachMesh,
       'Intertidal sand bar and sloping coastal beach transitioning from military runway to deep water.'
     );
 
-    // 3. Wet Sand Shoreline Margin (X: 1490m to 1540m, width 50m, centered at X = 1515m)
+    // 3. Wet Sand Shoreline Margin (X: -1620m to -1560m, width 60m, centered at X = -1590m)
     // Darker, damp wet sand lapped by waves just at the waterline
-    const wetSandWidth = 50;
+    const wetSandWidth = 60;
     const wetSandGeom = new THREE.PlaneGeometry(wetSandWidth, 10400, 4, 32);
     wetSandGeom.rotateX(-Math.PI / 2);
     geometries.push(wetSandGeom);
 
     const wetSandMat = new THREE.MeshLambertMaterial({
-      color: 0x9e875a, // Darker wet sand
+      color: 0xb58448, // Warm damp wet sand
       flatShading: true,
     });
     materials.push(wetSandMat);
 
     const wetSandMesh = new THREE.Mesh(wetSandGeom, wetSandMat);
-    wetSandMesh.position.set(1515, -0.65, 0);
+    wetSandMesh.position.set(-1590, -0.65, 0);
     group.add(wetSandMesh);
 
-    // 4. Surf Foam / Breaking Wave Wash Ribbon (X: 1495m to 1515m, width 20m, centered at X = 1505m)
+    // 4. Surf Foam / Breaking Wave Wash Ribbon (X: -1592m to -1568m, width 24m, centered at X = -1580m)
     // Translucent wave froth along the shoreline where water meets the beach
-    const foamWidth = 20;
+    const foamWidth = 24;
     const foamGeom = new THREE.PlaneGeometry(foamWidth, 10400, 2, 32);
     foamGeom.rotateX(-Math.PI / 2);
     geometries.push(foamGeom);
@@ -386,64 +389,48 @@ export function buildProceduralWater(descriptor: EnvironmentDescriptor): WaterBu
     const foamMat = new THREE.MeshBasicMaterial({
       color: 0xf0fdfa,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.75,
     });
     materials.push(foamMat);
 
     const foamMesh = new THREE.Mesh(foamGeom, foamMat);
-    foamMesh.position.set(1505, -0.48, 0);
+    foamMesh.position.set(-1580, -0.48, 0);
     group.add(foamMesh);
 
-    // 5. Heavy Armored Breakwater Jetty extending into the sea at Z = -600 (X: 1460 to 1960, length 500m)
-    const jettyLen = 500;
-    const jettyGeom = new THREE.BoxGeometry(jettyLen, 4.5, 36);
-    geometries.push(jettyGeom);
-    const jettyMat = new THREE.MeshLambertMaterial({ color: 0x334155 }); // Slate armored breakwater stone
-    materials.push(jettyMat);
+    // 5. Coastal Observation Beacon / Lookout Post placed on landward coastal headland bluff (X = -1340, Z = -1800)
+    // Firmly on dry land overlooking the sea - NO structures floating upon the ocean.
+    const beaconBaseGeom = new THREE.BoxGeometry(14, 4, 14);
+    geometries.push(beaconBaseGeom);
+    const beaconBaseMat = new THREE.MeshLambertMaterial({ color: COLOR_ROCKY_SHORE });
+    materials.push(beaconBaseMat);
+    const beaconBaseMesh = new THREE.Mesh(beaconBaseGeom, beaconBaseMat);
+    beaconBaseMesh.position.set(-1340, 2, -1800);
+    group.add(beaconBaseMesh);
 
-    const jettyMesh = new THREE.Mesh(jettyGeom, jettyMat);
-    jettyMesh.position.set(1460 + jettyLen / 2, 1.2, -600);
-    group.add(jettyMesh);
-
-    // Upper concrete pier walkway on jetty
-    const pierGeom = new THREE.BoxGeometry(jettyLen - 20, 1.2, 22);
-    geometries.push(pierGeom);
-    const pierMat = new THREE.MeshLambertMaterial({ color: COLOR_CONCRETE_WALL });
-    materials.push(pierMat);
-    const pierMesh = new THREE.Mesh(pierGeom, pierMat);
-    pierMesh.position.set(1460 + jettyLen / 2, 3.6, -600);
-    group.add(pierMesh);
-
-    // Lighthouse / Navigation beacon tower on jetty tip
-    const beaconGeom = new THREE.CylinderGeometry(2.0, 3.2, 16, 12);
+    const beaconGeom = new THREE.CylinderGeometry(2.5, 3.5, 18, 12);
     geometries.push(beaconGeom);
     const beaconMat = new THREE.MeshLambertMaterial({ color: 0xf1f5f9 });
     materials.push(beaconMat);
     const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
-    beaconMesh.position.set(1940, 11, -600);
+    beaconMesh.position.set(-1340, 13, -1800);
     group.add(beaconMesh);
 
-    // Flashing lantern atop lighthouse
-    const lanternGeom = new THREE.SphereGeometry(1.6, 8, 8);
+    const lanternGeom = new THREE.SphereGeometry(1.8, 8, 8);
     geometries.push(lanternGeom);
     const lanternMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
     materials.push(lanternMat);
     const lanternMesh = new THREE.Mesh(lanternGeom, lanternMat);
-    lanternMesh.position.set(1940, 20, -600);
+    lanternMesh.position.set(-1340, 23, -1800);
     group.add(lanternMesh);
 
-    // 6. Offshore Navigational Channel Buoys
-    const buoyGeom = new THREE.CylinderGeometry(1.2, 1.8, 4, 8);
-    geometries.push(buoyGeom);
-    const greenMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
-    const redMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
-    materials.push(greenMat, redMat);
-
-    const buoyPort = new THREE.Mesh(buoyGeom, greenMat);
-    buoyPort.position.set(2300, 1.0, -450);
-    const buoyStbd = new THREE.Mesh(buoyGeom, redMat);
-    buoyStbd.position.set(2300, 1.0, -750);
-    group.add(buoyPort, buoyStbd);
+    registerWaterFeature(
+      'WATER-BEACON-COAST',
+      'Coastal Maritime Observation Post',
+      'COASTLINE',
+      { x: -1340, y: 1800, z: 0 },
+      beaconMesh,
+      'Landward coastal navigation beacon and maritime surveillance post on the coastal headland overlooking the sea.'
+    );
   }
 
   // 3. FORMATION_ALPINE_PASS: Alpine Glacial Lake

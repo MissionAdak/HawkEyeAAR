@@ -27,7 +27,18 @@ async function main() {
     stdio: 'pipe',
   });
 
-  await wait(3500);
+  // Wait for preview server to accept HTTP connections
+  for (let retry = 0; retry < 20; retry++) {
+    try {
+      const res = await fetch('http://localhost:4173/HawkEyeAAR/');
+      if (res.status < 500) {
+        console.log('[Capture] Preview server ready at http://localhost:4173/HawkEyeAAR/');
+        break;
+      }
+    } catch {
+      await wait(1000);
+    }
+  }
 
   const browser = await chromium.launch({
     headless: true,
@@ -150,6 +161,22 @@ async function main() {
         await obliqueBtn.click();
         await wait(1500);
       }
+
+      // Pan camera directly toward the western beach and coconut palms
+      const canvas = page.locator('canvas').first();
+      const box = await canvas.boundingBox();
+      if (box) {
+        await page.keyboard.down('Shift');
+        await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+        await page.mouse.down({ button: 'left' });
+        await page.mouse.move(box.x + box.width * 0.85, box.y + box.height * 0.5, { steps: 15 });
+        await page.mouse.up({ button: 'left' });
+        await page.keyboard.up('Shift');
+        await wait(500);
+        // Zoom in to clearly resolve the yellow sand beach and coconut palms
+        await page.mouse.wheel(0, -1800);
+        await wait(2000);
+      }
       await saveScreenshot(page, 'coastal_beach_and_ocean_detail.png');
     }
 
@@ -168,6 +195,7 @@ async function main() {
   await browser.close();
   preview.kill();
   console.log('[Capture] All scenario screenshots captured successfully.');
+  process.exit(0);
 }
 
 main().catch((err) => {

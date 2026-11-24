@@ -182,9 +182,9 @@ export function getForestRiverElevation(simX: number, simY: number): number {
 }
 
 export function getCoastalAirfieldElevation(simX: number, _simY: number): number {
-  if (simX <= 1350) return 0;
-  if (simX >= 1650) return -4.0;
-  const t = (simX - 1350) / 300;
+  if (simX >= -1350) return 0;
+  if (simX <= -1650) return -4.0;
+  const t = (-1350 - simX) / 300;
   const smoothT = t * t * (3 - 2 * t);
   return -4.0 * smoothT;
 }
