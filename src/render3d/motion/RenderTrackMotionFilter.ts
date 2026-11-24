@@ -13,11 +13,11 @@ export interface FilteredTrackTransform {
 }
 
 export interface RenderTrackMotionFilterOptions {
-  posTauSec?: number;       // Position exponential filter time constant (default: 0.09s)
-  altTauSec?: number;       // Altitude filter time constant (default: 0.12s)
-  headingTauSec?: number;   // Heading filter time constant (default: 0.25s)
-  pitchTauSec?: number;     // Pitch filter time constant (default: 0.25s)
-  scaleTauSec?: number;     // Scale filter time constant (default: 0.15s)
+  posTauSec?: number;       // Position exponential filter time constant (default: 0.14s)
+  altTauSec?: number;       // Altitude filter time constant (default: 0.16s)
+  headingTauSec?: number;   // Heading filter time constant (default: 0.30s)
+  pitchTauSec?: number;     // Pitch filter time constant (default: 0.30s)
+  scaleTauSec?: number;     // Scale filter time constant (default: 0.25s)
   enterSpeedMps?: number;   // Speed threshold to enter moving state (default: 3.5 m/s)
   exitSpeedMps?: number;    // Speed threshold to exit moving state (default: 2.0 m/s)
   snapDistanceM?: number;   // Snap teleport threshold (default: 250m)
@@ -62,11 +62,11 @@ export class RenderTrackMotionFilter {
 
   constructor(options?: RenderTrackMotionFilterOptions) {
     this.options = {
-      posTauSec: options?.posTauSec ?? 0.09,
-      altTauSec: options?.altTauSec ?? 0.12,
-      headingTauSec: options?.headingTauSec ?? 0.25,
-      pitchTauSec: options?.pitchTauSec ?? 0.25,
-      scaleTauSec: options?.scaleTauSec ?? 0.15,
+      posTauSec: options?.posTauSec ?? 0.14,
+      altTauSec: options?.altTauSec ?? 0.16,
+      headingTauSec: options?.headingTauSec ?? 0.30,
+      pitchTauSec: options?.pitchTauSec ?? 0.30,
+      scaleTauSec: options?.scaleTauSec ?? 0.25,
       enterSpeedMps: options?.enterSpeedMps ?? 3.5,
       exitSpeedMps: options?.exitSpeedMps ?? 2.0,
       snapDistanceM: options?.snapDistanceM ?? 250,
@@ -190,8 +190,8 @@ export class RenderTrackMotionFilter {
       while (dHeading > Math.PI) dHeading -= 2 * Math.PI;
       while (dHeading < -Math.PI) dHeading += 2 * Math.PI;
 
-      // Angular deadband: filter out high-frequency Kalman velocity innovation noise below 0.035 rad (~2.0 deg)
-      if (Math.abs(dHeading) < 0.035) {
+      // Angular deadband: filter out high-frequency Kalman velocity innovation noise below 0.05 rad (~2.86 deg)
+      if (Math.abs(dHeading) < 0.05) {
         dHeading = 0;
       }
 
@@ -199,7 +199,7 @@ export class RenderTrackMotionFilter {
       state.stableHeadingRad += dHeading * headingAlpha;
 
       let dPitch = targetPitch - state.stablePitchRad;
-      if (Math.abs(dPitch) < 0.02) {
+      if (Math.abs(dPitch) < 0.03) {
         dPitch = 0;
       }
       const pitchAlpha = 1 - Math.exp(-dt / this.options.pitchTauSec);
@@ -213,7 +213,7 @@ export class RenderTrackMotionFilter {
     // Screen-space scale from stabilized position with smooth continuous damping
     const rawScale = this.computeScale(state.filteredPos, camera, viewportHeightPx, targetPixelSize);
     const scaleDiff = Math.abs(rawScale - state.stableScale) / Math.max(1, state.stableScale);
-    if (scaleDiff > 0.015) {
+    if (scaleDiff > 0.02) {
       const scaleAlpha = 1 - Math.exp(-dt / this.options.scaleTauSec);
       state.stableScale += (rawScale - state.stableScale) * scaleAlpha;
     }

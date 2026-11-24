@@ -810,8 +810,8 @@ let toastCounter = 0;
 
       r3d.start();
       setViewMode('3D');
-      // Operator requirement: Default to EO/IR sensor in 3D view so 3D airframes are immediately visible
-      setSensor('EOIR');
+      // Operator requirement: Default 3D view to RADAR
+      setSensor('RADAR');
       setWebGlError(null);
     } catch (err) {
       if (renderer3dRef.current) {
